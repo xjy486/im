@@ -10,6 +10,8 @@ import java.time.Duration;
 
 final class ContractDependencies {
 
+    static final String ADMIN_API_KEY = "contract-test-admin-key";
+
     private static final DockerImageName POSTGRES_IMAGE = DockerImageName.parse("postgres:17-alpine");
     private static final DockerImageName MINIO_IMAGE = DockerImageName.parse(
             "minio/minio:RELEASE.2025-04-22T22-12-26Z");
@@ -50,6 +52,7 @@ final class ContractDependencies {
         registry.add("jitong.media.access-key", () -> minioAccessKey);
         registry.add("jitong.media.secret-key", () -> minioSecretKey);
         registry.add("jitong.media.bucket", () -> bucket);
+        registry.add("jitong.admin.api-key", () -> ADMIN_API_KEY);
     }
 
     static String minioEndpoint(GenericContainer<?> minio) {

@@ -14,8 +14,14 @@ if [ ! -f "$ENV_FILE" ]; then
         printf '%s\n' "MINIO_ROOT_USER=jitong"
         printf '%s\n' "MINIO_ROOT_PASSWORD=$MINIO_ROOT_PASSWORD"
         printf '%s\n' "MINIO_BUCKET=jitong-media"
+        printf '%s\n' "ADMIN_API_KEY=$(openssl rand -hex 32)"
     } > "$ENV_FILE"
     printf '%s\n' "Created local credentials in $ENV_FILE"
+fi
+
+if ! grep -q '^ADMIN_API_KEY=' "$ENV_FILE"; then
+    printf '%s\n' "ADMIN_API_KEY=$(openssl rand -hex 32)" >> "$ENV_FILE"
+    chmod 600 "$ENV_FILE"
 fi
 
 DOCKER_BIN=${DOCKER_BIN:-docker}

@@ -2,6 +2,7 @@ package com.jitong.im.audit;
 
 import org.springframework.jdbc.core.simple.JdbcClient;
 import org.springframework.stereotype.Component;
+import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.sql.Types;
@@ -18,7 +19,7 @@ class JdbcSecurityAuditSink implements SecurityAuditSink {
     }
 
     @Override
-    @Transactional
+    @Transactional(propagation = Propagation.REQUIRES_NEW)
     public void record(SecurityAuditEvent event) {
         jdbc.sql("""
                         INSERT INTO audit_logs (

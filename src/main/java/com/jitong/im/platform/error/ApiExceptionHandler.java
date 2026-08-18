@@ -1,6 +1,9 @@
 package com.jitong.im.platform.error;
 
 import com.jitong.im.platform.observability.RequestContextFilter;
+import com.jitong.im.auth.ExpiredAccessTokenException;
+import com.jitong.im.auth.InvalidCredentialsException;
+import com.jitong.im.auth.RateLimitExceededException;
 import jakarta.servlet.http.HttpServletRequest;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -13,6 +16,7 @@ import org.springframework.web.bind.MissingServletRequestParameterException;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
 import org.springframework.web.servlet.resource.NoResourceFoundException;
+import org.springframework.web.server.ResponseStatusException;
 
 @RestControllerAdvice
 class ApiExceptionHandler {
@@ -36,6 +40,30 @@ class ApiExceptionHandler {
     @ExceptionHandler(HttpMediaTypeNotSupportedException.class)
     ResponseEntity<ApiErrorResponse> unsupportedMediaType(HttpServletRequest request) {
         return response(ApiErrorDefinition.UNSUPPORTED_MEDIA_TYPE, request);
+    }
+
+    @ExceptionHandler(InvalidCredentialsException.class)
+    ResponseEntity<ApiErrorResponse> invalidCredentials(HttpServletRequest request) {
+        return response(ApiErrorDefinition.AUTH_INVALID, request);
+    }
+
+    @ExceptionHandler(ExpiredAccessTokenException.class)
+    ResponseEntity<ApiErrorResponse> expiredAccessToken(HttpServletRequest request) {
+        return response(ApiErrorDefinition.TOKEN_EXPIRED, request);
+    }
+
+    @ExceptionHandler(RateLimitExceededException.class)
+    ResponseEntity<ApiErrorResponse> rateLimited(HttpServletRequest request) {
+        return response(ApiErrorDefinition.RATE_LIMITED, request);
+    }
+
+    @ExceptionHandler(ResponseStatusException.class)
+    ResponseEntity<ApiErrorResponse> responseStatus(
+            ResponseStatusException exception,
+            HttpServletRequest request
+    ) {
+        ApiErrorDefinition definition = ApiErrorDefinition.forStatus(exception.getStatusCode());
+        return response(definition, request);
     }
 
     @ExceptionHandler(NoResourceFoundException.class)

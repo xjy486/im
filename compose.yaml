@@ -40,6 +40,7 @@ services:
       MINIO_ACCESS_KEY: ${MINIO_ROOT_USER:?run scripts/dev-up.sh first}
       MINIO_SECRET_KEY: ${MINIO_ROOT_PASSWORD:?run scripts/dev-up.sh first}
       MINIO_BUCKET: ${MINIO_BUCKET:-jitong-media}
+      ADMIN_API_KEY: ${ADMIN_API_KEY:?run scripts/dev-up.sh first}
       JAVA_TOOL_OPTIONS: -Xms256m -Xmx640m -XX:MaxMetaspaceSize=192m
     networks:
       - backend

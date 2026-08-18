@@ -1,10 +1,12 @@
 package com.jitong.im.platform.error;
 
 import org.springframework.http.HttpStatus;
+import org.springframework.http.HttpStatusCode;
 
 public enum ApiErrorDefinition {
     INVALID_REQUEST(HttpStatus.BAD_REQUEST, "Request could not be processed"),
     AUTH_INVALID(HttpStatus.UNAUTHORIZED, "Authentication is invalid"),
+    TOKEN_EXPIRED(HttpStatus.UNAUTHORIZED, "Authentication token has expired"),
     FORBIDDEN(HttpStatus.FORBIDDEN, "Access is forbidden"),
     METHOD_NOT_ALLOWED(HttpStatus.METHOD_NOT_ALLOWED, "Request method is not supported"),
     RESOURCE_NOT_FOUND(HttpStatus.NOT_FOUND, "Requested resource was not found"),
@@ -34,7 +36,11 @@ public enum ApiErrorDefinition {
         return message;
     }
 
-    static ApiErrorDefinition forStatus(HttpStatus status) {
+    public static ApiErrorDefinition forStatus(HttpStatusCode statusCode) {
+        HttpStatus status = HttpStatus.resolve(statusCode.value());
+        if (status == null) {
+            return INTERNAL_ERROR;
+        }
         return switch (status) {
             case BAD_REQUEST -> INVALID_REQUEST;
             case UNAUTHORIZED -> AUTH_INVALID;
