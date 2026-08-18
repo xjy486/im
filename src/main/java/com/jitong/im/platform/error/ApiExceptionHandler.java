@@ -2,8 +2,11 @@ package com.jitong.im.platform.error;
 
 import com.jitong.im.platform.observability.RequestContextFilter;
 import com.jitong.im.auth.ExpiredAccessTokenException;
+import com.jitong.im.auth.DeviceReplacementRequiredException;
+import com.jitong.im.auth.DeviceReplacementResponse;
 import com.jitong.im.auth.InvalidCredentialsException;
 import com.jitong.im.auth.RateLimitExceededException;
+import com.jitong.im.auth.RefreshTokenException;
 import com.jitong.im.auth.UserRetirementException;
 import com.jitong.im.auth.UserRetirementResult;
 import jakarta.servlet.http.HttpServletRequest;
@@ -52,6 +55,28 @@ class ApiExceptionHandler {
     @ExceptionHandler(ExpiredAccessTokenException.class)
     ResponseEntity<ApiErrorResponse> expiredAccessToken(HttpServletRequest request) {
         return response(ApiErrorDefinition.TOKEN_EXPIRED, request);
+    }
+
+    @ExceptionHandler(DeviceReplacementRequiredException.class)
+    ResponseEntity<?> replacementRequired(
+            DeviceReplacementRequiredException exception,
+            HttpServletRequest request
+    ) {
+        String requestId = RequestContextFilter.requestId(request);
+        return ResponseEntity.status(ApiErrorDefinition.DEVICE_REPLACEMENT_REQUIRED.status())
+                .body(new DeviceReplacementResponse(
+                        1,
+                        ApiErrorDefinition.DEVICE_REPLACEMENT_REQUIRED.code(),
+                        ApiErrorDefinition.DEVICE_REPLACEMENT_REQUIRED.message(),
+                        requestId,
+                        java.time.Instant.now(),
+                        exception.challenge(),
+                        exception.deviceClass().name()));
+    }
+
+    @ExceptionHandler(RefreshTokenException.class)
+    ResponseEntity<ApiErrorResponse> refreshTokenFailure(HttpServletRequest request) {
+        return response(ApiErrorDefinition.AUTH_INVALID, request);
     }
 
     @ExceptionHandler(RateLimitExceededException.class)

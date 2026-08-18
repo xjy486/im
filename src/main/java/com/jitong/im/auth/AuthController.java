@@ -29,6 +29,28 @@ class AuthController {
                 request.accountNo(),
                 request.password(),
                 clientIp(servletRequest),
+                java.util.UUID.fromString(RequestContextFilter.requestId(servletRequest)),
+                request.deviceClass(),
+                request.installationId()));
+    }
+
+    @PostMapping("/device-replacement/confirm")
+    ResponseEntity<LoginResponse> confirmReplacement(
+            @Valid @RequestBody ReplacementConfirmationRequest request,
+            HttpServletRequest servletRequest
+    ) {
+        return ResponseEntity.ok(authService.confirmReplacement(
+                request.replacementChallenge(),
+                java.util.UUID.fromString(RequestContextFilter.requestId(servletRequest))));
+    }
+
+    @PostMapping("/refresh")
+    ResponseEntity<LoginResponse> refresh(
+            @Valid @RequestBody RefreshRequest request,
+            HttpServletRequest servletRequest
+    ) {
+        return ResponseEntity.ok(authService.refresh(
+                request.refreshToken(),
                 java.util.UUID.fromString(RequestContextFilter.requestId(servletRequest))));
     }
 

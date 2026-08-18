@@ -7,6 +7,7 @@ public enum ApiErrorDefinition {
     INVALID_REQUEST(HttpStatus.BAD_REQUEST, "Request could not be processed"),
     AUTH_INVALID(HttpStatus.UNAUTHORIZED, "Authentication is invalid"),
     TOKEN_EXPIRED(HttpStatus.UNAUTHORIZED, "Authentication token has expired"),
+    DEVICE_REPLACEMENT_REQUIRED(HttpStatus.CONFLICT, "Device replacement confirmation is required"),
     FORBIDDEN(HttpStatus.FORBIDDEN, "Access is forbidden"),
     METHOD_NOT_ALLOWED(HttpStatus.METHOD_NOT_ALLOWED, "Request method is not supported"),
     RESOURCE_NOT_FOUND(HttpStatus.NOT_FOUND, "Requested resource was not found"),

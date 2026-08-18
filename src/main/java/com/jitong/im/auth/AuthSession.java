@@ -5,7 +5,9 @@ import java.util.UUID;
 
 record AuthSession(
         UUID userId,
+        UUID deviceId,
         Instant expiresAt,
-        String status
+        String status,
+        String deviceTrustState
 ) {
 }

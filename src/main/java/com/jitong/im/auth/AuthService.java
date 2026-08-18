@@ -6,12 +6,13 @@ import com.jitong.im.audit.SecurityAuditEvent;
 import com.jitong.im.audit.SecurityAuditEventType;
 import com.jitong.im.audit.SecurityAuditSink;
 import com.jitong.im.platform.error.ApiErrorDefinition;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
-import org.springframework.beans.factory.annotation.Autowired;
 
 import java.time.Clock;
+import java.time.Duration;
 import java.time.Instant;
 import java.util.UUID;
 
@@ -68,43 +69,196 @@ class AuthService {
         return repository.insertUser(displayName, passwordEncoder.encode(password), publicNumberGenerator);
     }
 
-    @Transactional
-    LoginResponse login(String accountNo, String password, String ipAddress, UUID requestId) {
+    @Transactional(noRollbackFor = DeviceReplacementRequiredException.class)
+    LoginResponse login(
+            String accountNo,
+            String password,
+            String ipAddress,
+            UUID requestId,
+            String requestedDeviceClass,
+            String requestedInstallationId
+    ) {
         try {
             rateLimiter.check(accountNo, ipAddress);
         } catch (RateLimitExceededException exception) {
-            recordLogin(null, requestId, AuditOutcome.REJECTED, ApiErrorDefinition.RATE_LIMITED);
+            recordLogin(null, requestId, AuditOutcome.REJECTED, ApiErrorDefinition.RATE_LIMITED, null);
             throw exception;
         }
         User user = repository.findActiveUser(accountNo);
         if (user == null || !passwordEncoder.matches(password, user.passwordHash())) {
             rateLimiter.recordFailure(accountNo, ipAddress);
-            recordLogin(user, requestId, AuditOutcome.REJECTED, ApiErrorDefinition.AUTH_INVALID);
+            recordLogin(user, requestId, AuditOutcome.REJECTED, ApiErrorDefinition.AUTH_INVALID, null);
             throw new InvalidCredentialsException();
         }
 
         rateLimiter.recordSuccess(accountNo, ipAddress);
+        DeviceClass deviceClass = DeviceClass.fromNullable(requestedDeviceClass);
+        String installationIdHash = TokenDigests.sha256(normalizeInstallationId(requestedInstallationId));
         Instant now = clock.instant();
+        repository.lockUser(user.id());
+        DeviceSession device = repository.findDeviceSession(user.id(), deviceClass, installationIdHash);
+        if (device == null) {
+            UUID activeDeviceId = repository.findActiveDeviceId(user.id(), deviceClass);
+            if (activeDeviceId != null) {
+                String challenge = TokenDigests.newOpaqueToken();
+                repository.insertReplacementChallenge(
+                        UuidV7.random(),
+                        user.id(),
+                        activeDeviceId,
+                        installationIdHash,
+                        deviceClass,
+                        TokenDigests.sha256(challenge),
+                        now.plus(Duration.ofMinutes(5)));
+                recordLogin(
+                        user,
+                        requestId,
+                        AuditOutcome.REJECTED,
+                        ApiErrorDefinition.DEVICE_REPLACEMENT_REQUIRED,
+                        activeDeviceId);
+                throw new DeviceReplacementRequiredException(challenge, deviceClass);
+            }
+            device = new DeviceSession(UuidV7.random(), user.id(), deviceClass);
+            repository.insertDevice(device.deviceId(), user.id(), deviceClass, installationIdHash, now);
+        } else {
+            repository.touchDevice(device.deviceId(), now);
+        }
+
+        TokenPair tokens = issueTokens(device.deviceId(), user.id(), deviceClass, now);
+        recordLogin(user, requestId, AuditOutcome.SUCCEEDED, null, device.deviceId());
+        return LoginResponse.of(
+                user,
+                tokens.accessToken(),
+                tokens.refreshToken(),
+                tokens.accessTokenExpiresAt(),
+                tokens.refreshTokenExpiresAt(),
+                tokens.deviceId(),
+                tokens.deviceClass());
+    }
+
+    @Transactional
+    LoginResponse confirmReplacement(String rawChallenge, UUID requestId) {
+        Instant now = clock.instant();
+        String challengeHash = TokenDigests.sha256(rawChallenge);
+        AuthRepository.ChallengeRecord challenge = repository.findChallenge(challengeHash);
+        if (challenge == null
+                || challenge.usedAt() != null
+                || !challenge.expiresAt().isAfter(now)) {
+            throw new InvalidCredentialsException();
+        }
+
+        repository.lockUser(challenge.userId());
+        challenge = repository.findChallengeForUpdate(challengeHash, now);
+        if (challenge == null
+                || !challenge.expiresAt().isAfter(now)) {
+            throw new InvalidCredentialsException();
+        }
+        UUID activeDeviceId = repository.findActiveDeviceId(
+                challenge.userId(),
+                challenge.deviceClass());
+        if (!challenge.replacedDeviceId().equals(activeDeviceId)) {
+            throw new InvalidCredentialsException();
+        }
+        repository.revokeDevice(challenge.replacedDeviceId(), now);
+        UUID deviceId = UuidV7.random();
+        repository.insertDevice(
+                deviceId,
+                challenge.userId(),
+                challenge.deviceClass(),
+                challenge.installationIdHash(),
+                now);
+        repository.markChallengeUsed(challenge.id(), now);
+        User user = repository.findActiveUserById(challenge.userId());
+        if (user == null) {
+            throw new InvalidCredentialsException();
+        }
+
+        TokenPair tokens = issueTokens(deviceId, user.id(), challenge.deviceClass(), now);
+        recordDeviceReplacement(
+                user.id(),
+                challenge.replacedDeviceId(),
+                requestId,
+                AuditOutcome.SUCCEEDED,
+                null);
+        return LoginResponse.of(
+                user,
+                tokens.accessToken(),
+                tokens.refreshToken(),
+                tokens.accessTokenExpiresAt(),
+                tokens.refreshTokenExpiresAt(),
+                tokens.deviceId(),
+                tokens.deviceClass());
+    }
+
+    @Transactional(noRollbackFor = RefreshTokenException.class)
+    LoginResponse refresh(String rawRefreshToken, UUID requestId) {
+        Instant now = clock.instant();
+        RefreshTokenRecord token = repository.findRefreshToken(rawRefreshToken);
+        if (token == null) {
+            throw new RefreshTokenException();
+        }
+        repository.lockUser(token.userId());
+        repository.lockDevice(token.deviceId());
+        repository.lockSessions(token.deviceId());
+        token = repository.findRefreshTokenForUpdate(TokenDigests.sha256(rawRefreshToken));
+        if (token == null
+                || !token.expiresAt().isAfter(now)
+                || !"ACTIVE".equals(token.state())
+                || !"ACTIVE".equals(token.sessionStatus())
+                || !"ACTIVE".equals(token.deviceTrustState())) {
+            if (token != null && ("CONSUMED".equals(token.state())
+                    || !"ACTIVE".equals(token.sessionStatus())
+                    || !"ACTIVE".equals(token.deviceTrustState()))) {
+                repository.revokeFamily(token.familyId(), token.deviceId(), now);
+                recordTokenReplay(
+                        token.userId(),
+                        token.deviceId(),
+                        requestId,
+                        AuditOutcome.REJECTED,
+                        ApiErrorDefinition.AUTH_INVALID);
+            }
+            throw new RefreshTokenException();
+        }
+
         String accessToken = TokenDigests.newOpaqueToken();
         String refreshToken = TokenDigests.newOpaqueToken();
         Instant accessExpiresAt = now.plus(properties.accessTokenLifetime());
-        Instant refreshExpiresAt = now.plus(properties.refreshTokenLifetime());
-        repository.insertSession(
-                UuidV7.random(),
-                user.id(),
-                TokenDigests.sha256(accessToken),
-                accessExpiresAt,
+        Instant refreshExpiresAt = token.expiresAt();
+        UUID newSessionId = UuidV7.random();
+        repository.rotateRefreshToken(
+                token.tokenId(),
+                newSessionId,
+                token.familyId(),
                 TokenDigests.sha256(refreshToken),
-                UuidV7.random(),
-                refreshExpiresAt);
-        recordLogin(user, requestId, AuditOutcome.SUCCEEDED, null);
-        return LoginResponse.of(user, accessToken, refreshToken, accessExpiresAt, refreshExpiresAt);
+                refreshExpiresAt,
+                newSessionId,
+                token.deviceId(),
+                token.userId(),
+                TokenDigests.sha256(accessToken),
+                accessExpiresAt);
+        recordLogin(
+                new User(token.userId(), null, null, null),
+                requestId,
+                AuditOutcome.SUCCEEDED,
+                null,
+                token.deviceId());
+        return new LoginResponse(
+                1,
+                token.userId(),
+                repository.findUserAccountNo(token.userId()),
+                accessToken,
+                refreshToken,
+                accessExpiresAt,
+                refreshExpiresAt,
+                token.deviceId(),
+                repository.findDeviceClass(token.deviceId()));
     }
 
     User requireUser(String authorizationHeader) {
         String accessToken = bearerToken(authorizationHeader);
         AuthSession session = repository.findSessionByAccessTokenHash(TokenDigests.sha256(accessToken));
-        if (session == null || !"ACTIVE".equals(session.status())) {
+        if (session == null
+                || !"ACTIVE".equals(session.status())
+                || !"ACTIVE".equals(session.deviceTrustState())) {
             throw new InvalidCredentialsException();
         }
         if (!session.expiresAt().isAfter(clock.instant())) {
@@ -126,6 +280,30 @@ class AuthService {
         recordRetirement(userId, requestId, AuditOutcome.SUCCEEDED, null);
     }
 
+    private TokenPair issueTokens(UUID deviceId, UUID userId, DeviceClass deviceClass, Instant now) {
+        String accessToken = TokenDigests.newOpaqueToken();
+        String refreshToken = TokenDigests.newOpaqueToken();
+        Instant accessExpiresAt = now.plus(properties.accessTokenLifetime());
+        Instant refreshExpiresAt = now.plus(properties.refreshTokenLifetime());
+        repository.insertSession(
+                UuidV7.random(),
+                deviceId,
+                userId,
+                TokenDigests.sha256(accessToken),
+                accessExpiresAt,
+                TokenDigests.sha256(refreshToken),
+                UuidV7.random(),
+                UuidV7.random(),
+                refreshExpiresAt);
+        return new TokenPair(
+                deviceId,
+                deviceClass.name(),
+                accessToken,
+                refreshToken,
+                accessExpiresAt,
+                refreshExpiresAt);
+    }
+
     private String bearerToken(String authorizationHeader) {
         if (authorizationHeader == null
                 || !authorizationHeader.startsWith("Bearer ")
@@ -135,20 +313,67 @@ class AuthService {
         return authorizationHeader.substring("Bearer ".length());
     }
 
+    private String normalizeInstallationId(String installationId) {
+        return installationId == null || installationId.isBlank()
+                ? "legacy-installation"
+                : installationId.trim();
+    }
+
     private void recordLogin(
             User user,
             UUID requestId,
             AuditOutcome outcome,
-            ApiErrorDefinition error
+            ApiErrorDefinition error,
+            UUID deviceId
     ) {
         auditSink.record(new SecurityAuditEvent(
                 UuidV7.random(),
                 SecurityAuditEventType.LOGIN,
                 outcome,
                 user == null ? null : user.id(),
-                null,
+                deviceId,
                 user == null ? null : AuditSubjectType.USER,
                 user == null ? null : user.id(),
+                requestId,
+                error,
+                clock.instant()));
+    }
+
+    private void recordDeviceReplacement(
+            UUID userId,
+            UUID deviceId,
+            UUID requestId,
+            AuditOutcome outcome,
+            ApiErrorDefinition error
+    ) {
+        auditSink.record(new SecurityAuditEvent(
+                UuidV7.random(),
+                SecurityAuditEventType.DEVICE_REPLACEMENT,
+                outcome,
+                userId,
+                deviceId,
+                AuditSubjectType.DEVICE,
+                deviceId,
+                requestId,
+                error,
+                clock.instant()));
+    }
+
+    private void recordTokenReplay(
+            UUID userId,
+            UUID deviceId,
+            UUID requestId,
+            AuditOutcome outcome,
+            ApiErrorDefinition error
+    ) {
+        auditSink.record(new SecurityAuditEvent(
+                UuidV7.random(),
+                SecurityAuditEventType.TOKEN_REPLAY,
+                outcome,
+                userId,
+                deviceId,
+                AuditSubjectType.DEVICE,
+                deviceId,
                 requestId,
                 error,
                 clock.instant()));

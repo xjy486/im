@@ -10,14 +10,18 @@ public record LoginResponse(
         String accessToken,
         String refreshToken,
         Instant accessTokenExpiresAt,
-        Instant refreshTokenExpiresAt
+        Instant refreshTokenExpiresAt,
+        UUID deviceId,
+        String deviceClass
 ) {
     static LoginResponse of(
             User user,
             String accessToken,
             String refreshToken,
             Instant accessTokenExpiresAt,
-            Instant refreshTokenExpiresAt
+            Instant refreshTokenExpiresAt,
+            UUID deviceId,
+            String deviceClass
     ) {
         return new LoginResponse(
                 1,
@@ -26,6 +30,8 @@ public record LoginResponse(
                 accessToken,
                 refreshToken,
                 accessTokenExpiresAt,
-                refreshTokenExpiresAt);
+                refreshTokenExpiresAt,
+                deviceId,
+                deviceClass);
     }
 }
