@@ -22,29 +22,39 @@ class AuthRepository {
         UUID userId = UuidV7.random();
         for (int attempt = 0; attempt < 10; attempt++) {
             String accountNo = numbers.next();
-            try {
+            int claimed = jdbc.sql("""
+                            INSERT INTO public_identifiers (public_no, entity_type, entity_id)
+                            VALUES (:publicNo, 'USER', :entityId)
+                            ON CONFLICT (public_no) DO NOTHING
+                            """)
+                    .param("publicNo", accountNo)
+                    .param("entityId", userId)
+                    .update();
+            if (claimed == 0) {
+                continue;
+            }
+
+            int inserted = jdbc.sql("""
+                            INSERT INTO users (id, account_no, display_name, password_hash)
+                            VALUES (:id, :accountNo, :displayName, :passwordHash)
+                            ON CONFLICT (account_no) DO NOTHING
+                            """)
+                    .param("id", userId)
+                    .param("accountNo", accountNo)
+                    .param("displayName", displayName)
+                    .param("passwordHash", passwordHash)
+                    .update();
+            if (inserted == 0) {
                 jdbc.sql("""
-                                INSERT INTO users (id, account_no, display_name, password_hash)
-                                VALUES (:id, :accountNo, :displayName, :passwordHash)
-                                """)
-                        .param("id", userId)
-                        .param("accountNo", accountNo)
-                        .param("displayName", displayName)
-                        .param("passwordHash", passwordHash)
-                        .update();
-                jdbc.sql("""
-                                INSERT INTO public_identifiers (public_no, entity_type, entity_id)
-                                VALUES (:publicNo, 'USER', :entityId)
+                                DELETE FROM public_identifiers
+                                WHERE public_no = :publicNo AND entity_id = :entityId
                                 """)
                         .param("publicNo", accountNo)
                         .param("entityId", userId)
                         .update();
-                return new User(userId, accountNo, displayName, passwordHash);
-            } catch (org.springframework.dao.DuplicateKeyException collision) {
-                jdbc.sql("DELETE FROM users WHERE id = :id")
-                        .param("id", userId)
-                        .update();
+                continue;
             }
+            return new User(userId, accountNo, displayName, passwordHash);
         }
         throw new IllegalStateException("Could not allocate a public account number");
     }
@@ -112,8 +122,8 @@ class AuthRepository {
                 .orElse(null);
     }
 
-    void retireUser(UUID userId, Instant retiredAt) {
-        jdbc.sql("""
+    UserRetirementResult retireUser(UUID userId, Instant retiredAt) {
+        int retired = jdbc.sql("""
                         UPDATE users
                         SET status = 'RETIRED', retired_at = :retiredAt
                         WHERE id = :userId AND status = 'ACTIVE'
@@ -121,6 +131,16 @@ class AuthRepository {
                 .param("userId", userId)
                 .param("retiredAt", OffsetDateTime.ofInstant(retiredAt, ZoneOffset.UTC), Types.TIMESTAMP_WITH_TIMEZONE)
                 .update();
+        if (retired == 0) {
+            String status = jdbc.sql("SELECT status FROM users WHERE id = :userId")
+                    .param("userId", userId)
+                    .query(String.class)
+                    .optional()
+                    .orElse(null);
+            return status == null
+                    ? UserRetirementResult.NOT_FOUND
+                    : UserRetirementResult.ALREADY_RETIRED;
+        }
         jdbc.sql("""
                         UPDATE public_identifiers
                         SET retired_at = :retiredAt
@@ -137,5 +157,18 @@ class AuthRepository {
                 .param("userId", userId)
                 .param("retiredAt", OffsetDateTime.ofInstant(retiredAt, ZoneOffset.UTC), Types.TIMESTAMP_WITH_TIMEZONE)
                 .update();
+        jdbc.sql("""
+                        UPDATE refresh_tokens
+                        SET state = 'REVOKED'
+                        WHERE session_id IN (
+                            SELECT id
+                            FROM auth_sessions
+                            WHERE user_id = :userId
+                        )
+                          AND state <> 'REVOKED'
+                        """)
+                .param("userId", userId)
+                .update();
+        return UserRetirementResult.RETIRED;
     }
 }

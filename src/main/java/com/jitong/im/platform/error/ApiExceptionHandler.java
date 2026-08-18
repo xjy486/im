@@ -4,6 +4,8 @@ import com.jitong.im.platform.observability.RequestContextFilter;
 import com.jitong.im.auth.ExpiredAccessTokenException;
 import com.jitong.im.auth.InvalidCredentialsException;
 import com.jitong.im.auth.RateLimitExceededException;
+import com.jitong.im.auth.UserRetirementException;
+import com.jitong.im.auth.UserRetirementResult;
 import jakarta.servlet.http.HttpServletRequest;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -55,6 +57,17 @@ class ApiExceptionHandler {
     @ExceptionHandler(RateLimitExceededException.class)
     ResponseEntity<ApiErrorResponse> rateLimited(HttpServletRequest request) {
         return response(ApiErrorDefinition.RATE_LIMITED, request);
+    }
+
+    @ExceptionHandler(UserRetirementException.class)
+    ResponseEntity<ApiErrorResponse> userRetirementConflict(
+            UserRetirementException exception,
+            HttpServletRequest request
+    ) {
+        ApiErrorDefinition definition = exception.result() == UserRetirementResult.NOT_FOUND
+                ? ApiErrorDefinition.USER_NOT_FOUND
+                : ApiErrorDefinition.CONFLICT;
+        return response(definition, request);
     }
 
     @ExceptionHandler(ResponseStatusException.class)

@@ -114,8 +114,16 @@ class AuthService {
     }
 
     @Transactional
-    void retireUser(UUID userId) {
-        repository.retireUser(userId, clock.instant());
+    void retireUser(UUID userId, UUID requestId) {
+        UserRetirementResult result = repository.retireUser(userId, clock.instant());
+        if (result != UserRetirementResult.RETIRED) {
+            ApiErrorDefinition error = result == UserRetirementResult.NOT_FOUND
+                    ? ApiErrorDefinition.USER_NOT_FOUND
+                    : ApiErrorDefinition.CONFLICT;
+            recordRetirement(userId, requestId, AuditOutcome.REJECTED, error);
+            throw new UserRetirementException(result);
+        }
+        recordRetirement(userId, requestId, AuditOutcome.SUCCEEDED, null);
     }
 
     private String bearerToken(String authorizationHeader) {
@@ -141,6 +149,25 @@ class AuthService {
                 null,
                 user == null ? null : AuditSubjectType.USER,
                 user == null ? null : user.id(),
+                requestId,
+                error,
+                clock.instant()));
+    }
+
+    private void recordRetirement(
+            UUID userId,
+            UUID requestId,
+            AuditOutcome outcome,
+            ApiErrorDefinition error
+    ) {
+        auditSink.record(new SecurityAuditEvent(
+                UuidV7.random(),
+                SecurityAuditEventType.ACCOUNT_DELETION,
+                outcome,
+                null,
+                null,
+                AuditSubjectType.USER,
+                userId,
                 requestId,
                 error,
                 clock.instant()));

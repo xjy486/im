@@ -11,6 +11,7 @@ public enum ApiErrorDefinition {
     METHOD_NOT_ALLOWED(HttpStatus.METHOD_NOT_ALLOWED, "Request method is not supported"),
     RESOURCE_NOT_FOUND(HttpStatus.NOT_FOUND, "Requested resource was not found"),
     CONFLICT(HttpStatus.CONFLICT, "Request conflicts with current state"),
+    USER_NOT_FOUND(HttpStatus.NOT_FOUND, "Requested user was not found"),
     UNSUPPORTED_MEDIA_TYPE(HttpStatus.UNSUPPORTED_MEDIA_TYPE, "Request media type is not supported"),
     RATE_LIMITED(HttpStatus.TOO_MANY_REQUESTS, "Request rate limit was exceeded"),
     SERVICE_UNAVAILABLE(HttpStatus.SERVICE_UNAVAILABLE, "Service dependencies are not ready"),
