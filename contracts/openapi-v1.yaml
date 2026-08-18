@@ -1,0 +1,46 @@
+openapi: 3.1.0
+info:
+  title: Jitong Server Contract
+  version: 1.0.0
+  description: Baseline operational contract. Business endpoints are added in later tracer bullets.
+paths:
+  /api/v1/system/health:
+    get:
+      operationId: getServiceHealth
+      summary: Report service and dependency health
+      responses:
+        '200':
+          description: PostgreSQL and MinIO are ready
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: false
+                required: [version, status, components]
+                properties:
+                  version:
+                    const: 1
+                  status:
+                    type: string
+                    const: UP
+                  components:
+                    type: object
+                    additionalProperties:
+                      type: string
+                    required: [postgresql, minio]
+        '503':
+          $ref: '#/components/responses/ApiError'
+components:
+  responses:
+    ApiError:
+      description: Versioned error response
+      headers:
+        X-Request-Id:
+          description: UUIDv4 request correlation identifier
+          schema:
+            type: string
+            format: uuid
+      content:
+        application/json:
+          schema:
+            $ref: './schemas/error-response-v1.schema.json'

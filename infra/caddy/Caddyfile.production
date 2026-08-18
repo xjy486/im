@@ -1,0 +1,8 @@
+{
+	admin off
+	email {$CADDY_EMAIL}
+}
+
+{$JITONG_DOMAIN} {
+	import routes.caddy
+}

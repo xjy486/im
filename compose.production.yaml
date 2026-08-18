@@ -1,0 +1,17 @@
+services:
+  caddy:
+    command:
+      - caddy
+      - run
+      - --config
+      - /etc/caddy/Caddyfile.production
+      - --adapter
+      - caddyfile
+    environment:
+      JITONG_DOMAIN: ${JITONG_DOMAIN:?set JITONG_DOMAIN to the public hostname}
+      CADDY_EMAIL: ${CADDY_EMAIL:?set CADDY_EMAIL for certificate notifications}
+    ports: !override
+      - "80:80"
+      - "443:443"
+    healthcheck:
+      test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://server:8080/actuator/health"]

@@ -1,0 +1,49 @@
+spring:
+  application:
+    name: jitong-im-server
+  datasource:
+    url: ${DB_URL:jdbc:postgresql://localhost:5432/jitong}
+    username: ${DB_USERNAME:jitong}
+    password: ${DB_PASSWORD:}
+    hikari:
+      maximum-pool-size: ${DB_MAX_POOL_SIZE:16}
+      minimum-idle: ${DB_MIN_IDLE:2}
+  flyway:
+    enabled: true
+  lifecycle:
+    timeout-per-shutdown-phase: 20s
+
+server:
+  shutdown: graceful
+  error:
+    include-message: never
+    include-binding-errors: never
+    include-stacktrace: never
+    include-exception: false
+
+jitong:
+  media:
+    endpoint: ${MINIO_ENDPOINT:http://localhost:9000}
+    access-key: ${MINIO_ACCESS_KEY:jitong-local}
+    secret-key: ${MINIO_SECRET_KEY:}
+    bucket: ${MINIO_BUCKET:jitong-media}
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,prometheus
+  endpoint:
+    health:
+      probes:
+        enabled: true
+      show-components: always
+      show-details: never
+  metrics:
+    tags:
+      application: ${spring.application.name}
+
+logging:
+  level:
+    root: INFO
+    org.springframework.web: INFO

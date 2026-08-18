@@ -1,0 +1,39 @@
+name: contract-tests
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+          cache: maven
+      - name: Run contract suite
+        run: ./mvnw --batch-mode --no-transfer-progress verify
+      - name: Validate production TLS configuration
+        env:
+          POSTGRES_PASSWORD: validation-only
+          MINIO_ROOT_USER: validation
+          MINIO_ROOT_PASSWORD: validation-only-secret
+          JITONG_DOMAIN: im.example.com
+          CADDY_EMAIL: ops@example.com
+        run: |
+          docker compose -f compose.yaml -f compose.production.yaml config --quiet
+          docker run --rm \
+            -e JITONG_DOMAIN \
+            -e CADDY_EMAIL \
+            -v "$PWD/infra/caddy:/etc/caddy:ro" \
+            caddy:2.10.2-alpine \
+            caddy validate --config /etc/caddy/Caddyfile.production
+      - name: Run Compose startup and restart smoke
+        run: ./scripts/dev-smoke.sh

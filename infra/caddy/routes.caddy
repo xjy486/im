@@ -1,0 +1,11 @@
+	encode zstd gzip
+	header -Server
+
+	@legacy_health path /actuator/health
+	rewrite @legacy_health /api/v1/system/health
+
+	reverse_proxy server:8080 {
+		health_uri /actuator/health
+		health_interval 10s
+		health_timeout 3s
+	}
