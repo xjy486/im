@@ -16,6 +16,9 @@ T07 的 Android 登录与设备替换最小可运行客户端。工程使用 Kot
 `0.0.0.0:8080`；Android Emulator 连接宿主机后端时仍使用
 `http://10.0.2.2:8080/`。真机则使用宿主机局域网 IP。
 
+当前联调使用的 AVD 是 `jitong_api35`。完整的复用、重建、启动和排查命令见
+[Android Emulator 复用说明](../docs/android-emulator.md)。
+
 - debug 构建允许明文 HTTP 连接，release 构建只允许 HTTPS。
 
 ## 认证与本地数据约定

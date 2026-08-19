@@ -88,6 +88,8 @@ curl http://127.0.0.1:8080/api/v1/system/health
 
 不要依赖当前终端的 `java` 或全局 `mvn`。所有 Maven 命令都从 `./mvnw` 进入。
 
+Android Emulator 复用说明见 [Android Emulator 复用说明](android-emulator.md)，包括当前 `jitong_api35` AVD 的参数、启动命令、APK 安装和从零重建步骤。
+
 ## 4. 常用开发命令
 
 ### 编译与测试
