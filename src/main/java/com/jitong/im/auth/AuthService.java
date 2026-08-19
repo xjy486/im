@@ -17,7 +17,7 @@ import java.time.Instant;
 import java.util.UUID;
 
 @Service
-class AuthService {
+public class AuthService {
 
     private final AuthRepository repository;
     private final PasswordEncoder passwordEncoder;
@@ -265,6 +265,10 @@ class AuthService {
             throw new ExpiredAccessTokenException();
         }
         return new User(session.userId(), null, null, null);
+    }
+
+    public UUID requireUserId(String authorizationHeader) {
+        return requireUser(authorizationHeader).id();
     }
 
     @Transactional

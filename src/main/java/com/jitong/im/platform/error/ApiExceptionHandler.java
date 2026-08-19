@@ -9,6 +9,7 @@ import com.jitong.im.auth.RateLimitExceededException;
 import com.jitong.im.auth.RefreshTokenException;
 import com.jitong.im.auth.UserRetirementException;
 import com.jitong.im.auth.UserRetirementResult;
+import com.jitong.im.contact.ContactException;
 import jakarta.servlet.http.HttpServletRequest;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -93,6 +94,14 @@ class ApiExceptionHandler {
                 ? ApiErrorDefinition.USER_NOT_FOUND
                 : ApiErrorDefinition.CONFLICT;
         return response(definition, request);
+    }
+
+    @ExceptionHandler(ContactException.class)
+    ResponseEntity<ApiErrorResponse> contactFailure(
+            ContactException exception,
+            HttpServletRequest request
+    ) {
+        return response(exception.definition(), request);
     }
 
     @ExceptionHandler(ResponseStatusException.class)

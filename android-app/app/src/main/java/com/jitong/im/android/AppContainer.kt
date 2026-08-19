@@ -8,6 +8,8 @@ import com.jitong.im.android.auth.InstallationIdentity
 import com.jitong.im.android.auth.SessionAuthenticator
 import com.jitong.im.android.auth.SessionInterceptor
 import com.jitong.im.android.auth.SessionManager
+import com.jitong.im.android.contact.ContactApi
+import com.jitong.im.android.contact.ContactRepository
 import com.jitong.im.android.local.AccountLocalStore
 import com.jitong.im.android.security.AccountKeyStore
 import com.jitong.im.android.security.SecureSessionStore
@@ -31,6 +33,7 @@ internal class AppContainer(context: Context) {
         .build()
     private val authenticatedRetrofit = retrofit(authenticatedClient)
     private val authenticatedApi = authenticatedRetrofit.create(AuthApi::class.java)
+    private val authenticatedContactApi = authenticatedRetrofit.create(ContactApi::class.java)
 
     val authRepository = AuthRepository(
         authApi = rawAuthApi,
@@ -40,6 +43,7 @@ internal class AppContainer(context: Context) {
         gson = gson,
     )
     val sessionState = sessionManager.state
+    val contactRepository = ContactRepository(authenticatedContactApi)
 
     private fun retrofit(client: OkHttpClient): Retrofit = Retrofit.Builder()
         .baseUrl(BuildConfig.BASE_URL)
