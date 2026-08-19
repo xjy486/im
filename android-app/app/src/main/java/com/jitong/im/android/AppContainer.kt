@@ -11,11 +11,20 @@ import com.jitong.im.android.auth.SessionManager
 import com.jitong.im.android.contact.ContactApi
 import com.jitong.im.android.contact.ContactRepository
 import com.jitong.im.android.local.AccountLocalStore
+import com.jitong.im.android.message.MessageApi
+import com.jitong.im.android.message.MessageRepository
+import com.jitong.im.android.message.MessageWebSocket
 import com.jitong.im.android.security.AccountKeyStore
 import com.jitong.im.android.security.SecureSessionStore
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.flow.collectLatest
+import kotlinx.coroutines.launch
 import okhttp3.OkHttpClient
 import retrofit2.Retrofit
 import retrofit2.converter.gson.GsonConverterFactory
+import java.util.UUID
 
 internal class AppContainer(context: Context) {
     private val appContext = context.applicationContext
@@ -34,6 +43,13 @@ internal class AppContainer(context: Context) {
     private val authenticatedRetrofit = retrofit(authenticatedClient)
     private val authenticatedApi = authenticatedRetrofit.create(AuthApi::class.java)
     private val authenticatedContactApi = authenticatedRetrofit.create(ContactApi::class.java)
+    private val authenticatedMessageApi = authenticatedRetrofit.create(MessageApi::class.java)
+    private val messageWebSocket = MessageWebSocket(
+        client = authenticatedClient,
+        baseUrl = BuildConfig.BASE_URL,
+        accessToken = { sessionStore.read()?.accessToken },
+        gson = gson,
+    )
 
     val authRepository = AuthRepository(
         authApi = rawAuthApi,
@@ -44,6 +60,29 @@ internal class AppContainer(context: Context) {
     )
     val sessionState = sessionManager.state
     val contactRepository = ContactRepository(authenticatedContactApi)
+    val messageRepository = MessageRepository(
+        api = authenticatedMessageApi,
+        database = { localStore.activeDatabase() },
+        webSocket = messageWebSocket,
+    )
+
+    private val messageScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+
+    init {
+        messageScope.launch {
+            sessionManager.state.collectLatest { state ->
+                if (state is com.jitong.im.android.auth.SessionState.SignedIn) {
+                    messageRepository.connect()
+                    messageWebSocket.events.collect { event ->
+                        val userId = sessionManager.snapshot()?.userId?.let(UUID::fromString) ?: return@collect
+                        messageRepository.apply(event, userId)
+                    }
+                } else {
+                    messageRepository.disconnect()
+                }
+            }
+        }
+    }
 
     private fun retrofit(client: OkHttpClient): Retrofit = Retrofit.Builder()
         .baseUrl(BuildConfig.BASE_URL)

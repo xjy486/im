@@ -10,6 +10,7 @@ import com.jitong.im.auth.RefreshTokenException;
 import com.jitong.im.auth.UserRetirementException;
 import com.jitong.im.auth.UserRetirementResult;
 import com.jitong.im.contact.ContactException;
+import com.jitong.im.message.MessageException;
 import jakarta.servlet.http.HttpServletRequest;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -99,6 +100,14 @@ class ApiExceptionHandler {
     @ExceptionHandler(ContactException.class)
     ResponseEntity<ApiErrorResponse> contactFailure(
             ContactException exception,
+            HttpServletRequest request
+    ) {
+        return response(exception.definition(), request);
+    }
+
+    @ExceptionHandler(MessageException.class)
+    ResponseEntity<ApiErrorResponse> messageFailure(
+            MessageException exception,
             HttpServletRequest request
     ) {
         return response(exception.definition(), request);

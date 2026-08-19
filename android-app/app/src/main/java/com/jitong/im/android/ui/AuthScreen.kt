@@ -34,14 +34,18 @@ import com.jitong.im.android.auth.SessionState
 import com.jitong.im.android.contact.ConversationSummary
 
 @Composable
-internal fun JitongApp(viewModel: AuthViewModel, contactViewModel: ContactViewModel) {
+internal fun JitongApp(
+    viewModel: AuthViewModel,
+    contactViewModel: ContactViewModel,
+    messageViewModel: MessageViewModel,
+) {
     val state by viewModel.sessionState.collectAsStateWithLifecycle()
     Surface(modifier = Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) {
         when (val current = state) {
             SessionState.SignedOut -> LoginScreen(viewModel)
             SessionState.Restoring -> RestoringScreen()
             is SessionState.ReplacementRequired -> ReplacementScreen(current, viewModel)
-            is SessionState.SignedIn -> HomeScreen(current, viewModel, contactViewModel)
+            is SessionState.SignedIn -> HomeScreen(current, viewModel, contactViewModel, messageViewModel)
             is SessionState.Error -> LoginScreen(viewModel, current.message)
         }
     }
@@ -148,6 +152,7 @@ private fun HomeScreen(
     state: SessionState.SignedIn,
     viewModel: AuthViewModel,
     contactViewModel: ContactViewModel,
+    messageViewModel: MessageViewModel,
 ) {
     val contactState by contactViewModel.state.collectAsStateWithLifecycle()
     var selectedTab by rememberSaveable { mutableStateOf("contacts") }
@@ -160,6 +165,7 @@ private fun HomeScreen(
     if (selectedConversation != null) {
         ConversationScreen(
             conversation = selectedConversation,
+            viewModel = messageViewModel,
             onBack = { selectedConversationId = null },
         )
         return
@@ -318,8 +324,13 @@ private fun ContactListPanel(
 @Composable
 private fun ConversationScreen(
     conversation: ConversationSummary,
+    viewModel: MessageViewModel,
     onBack: () -> Unit,
 ) {
+    val state by viewModel.state.collectAsStateWithLifecycle()
+    LaunchedEffect(conversation.conversationId) {
+        viewModel.open(conversation.conversationId)
+    }
     Column(
         modifier = Modifier
             .fillMaxSize()
@@ -330,17 +341,52 @@ private fun ConversationScreen(
         TextButton(onClick = onBack) { Text("返回联系人") }
         Text(conversation.peerDisplayName, style = MaterialTheme.typography.headlineMedium)
         Text("账号 ${conversation.peerAccountNo}")
-        Card(Modifier.fillMaxWidth()) {
-            Column(Modifier.padding(18.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                Text("C2C 会话", style = MaterialTheme.typography.titleMedium)
-                Text("会话 ID ${conversation.conversationId}")
-                if (conversation.status == "READ_ONLY") {
-                    Text("联系人关系已结束，历史消息保持只读。")
-                } else {
-                    Text("联系人关系有效，可以进入聊天。")
+        Text("会话 ID ${conversation.conversationId}", style = MaterialTheme.typography.bodySmall)
+        if (conversation.status == "READ_ONLY") {
+            Text("联系人关系已结束，历史消息保持只读。")
+        }
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .weight(1f, fill = false)
+                .verticalScroll(rememberScrollState()),
+            verticalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+            if (state.messages.isEmpty()) {
+                Text("还没有消息")
+            }
+            state.messages.forEach { message ->
+                Card(Modifier.fillMaxWidth()) {
+                    Column(Modifier.padding(14.dp)) {
+                        Text(message.text)
+                        Text(
+                            when {
+                                message.localState == "SENDING" -> "发送中"
+                                message.conversationSeq != null -> "序号 ${message.conversationSeq}"
+                                else -> "等待确认"
+                            },
+                            style = MaterialTheme.typography.bodySmall,
+                        )
+                    }
                 }
-                Text("消息列表将在在线消息交付 ticket 中接入。")
             }
         }
+        OutlinedTextField(
+            value = state.draft,
+            onValueChange = viewModel::setDraft,
+            enabled = conversation.status == "ACTIVE",
+            label = { Text("输入文本") },
+            modifier = Modifier.fillMaxWidth(),
+        )
+        Button(
+            onClick = viewModel::send,
+            enabled = conversation.status == "ACTIVE" &&
+                state.draft.isNotBlank() &&
+                !state.loading,
+            modifier = Modifier.fillMaxWidth(),
+        ) {
+            Text("发送")
+        }
+        state.message?.let { Text(it, color = MaterialTheme.colorScheme.error) }
     }
 }

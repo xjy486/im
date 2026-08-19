@@ -46,6 +46,9 @@ class AccountLocalStore(
         openedAccountNo = null
     }
 
+    @Synchronized
+    fun activeDatabase(): AccountDatabase? = openedDatabase
+
     private fun ensureAccount(
         userId: String,
         accountNo: String,
@@ -89,6 +92,7 @@ class AccountLocalStore(
             keyStore.databaseName(accountNo),
         )
             .openHelperFactory(factory)
+            .addMigrations(AccountDatabase.MIGRATION_1_2)
             .build()
     }
 }

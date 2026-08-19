@@ -193,6 +193,52 @@ paths:
               schema:
                 type: array
                 items: { $ref: '#/components/schemas/ConversationSummary' }
+  /api/v1/conversations/{conversationId}/messages:
+    get:
+      operationId: listConversationMessages
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { $ref: '#/components/parameters/ConversationId' }
+        - name: afterSeq
+          in: query
+          schema: { type: integer, format: int64, minimum: 0, default: 0 }
+        - name: limit
+          in: query
+          schema: { type: integer, minimum: 1, maximum: 200, default: 200 }
+      responses:
+        '200':
+          description: Authoritative messages ordered by conversation sequence
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ConversationMessagePage' }
+        '401':
+          $ref: '#/components/responses/ApiError'
+        '403':
+          $ref: '#/components/responses/ApiError'
+    post:
+      operationId: sendConversationText
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { $ref: '#/components/parameters/ConversationId' }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/SendTextMessageRequest' }
+      responses:
+        '200':
+          description: Durable message acknowledgement
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Message' }
+        '400':
+          $ref: '#/components/responses/ApiError'
+        '401':
+          $ref: '#/components/responses/ApiError'
+        '403':
+          $ref: '#/components/responses/ApiError'
+        '409':
+          $ref: '#/components/responses/ApiError'
 components:
   securitySchemes:
     bearerAuth:
@@ -206,6 +252,11 @@ components:
       schema: { type: string, format: uuid }
     UserId:
       name: userId
+      in: path
+      required: true
+      schema: { type: string, format: uuid }
+    ConversationId:
+      name: conversationId
       in: path
       required: true
       schema: { type: string, format: uuid }
@@ -274,6 +325,39 @@ components:
         status: { type: string, enum: [ACTIVE, READ_ONLY, DISSOLVED] }
         relationship: { type: string, enum: [ACTIVE, READ_ONLY] }
         blockedByMe: { type: boolean }
+    SendTextMessageRequest:
+      type: object
+      additionalProperties: false
+      required: [clientMsgId, text]
+      properties:
+        clientMsgId: { type: string, format: uuid }
+        text: { type: string, minLength: 1, maxLength: 4000 }
+    Message:
+      type: object
+      additionalProperties: false
+      required:
+        [messageId, conversationId, senderId, clientMsgId, conversationSeq,
+         type, state, text, serverAcceptedAt]
+      properties:
+        messageId: { type: string, format: uuid }
+        conversationId: { type: string, format: uuid }
+        senderId: { type: string, format: uuid }
+        clientMsgId: { type: string, format: uuid }
+        conversationSeq: { type: integer, format: int64, minimum: 1 }
+        type: { const: TEXT }
+        state: { const: ACTIVE }
+        text: { type: string }
+        serverAcceptedAt: { type: string, format: date-time }
+    ConversationMessagePage:
+      type: object
+      additionalProperties: false
+      required: [version, conversationId, messages]
+      properties:
+        version: { const: 1 }
+        conversationId: { type: string, format: uuid }
+        messages:
+          type: array
+          items: { $ref: '#/components/schemas/Message' }
   responses:
     ApiError:
       description: Versioned error response

@@ -9,6 +9,7 @@ import androidx.compose.material3.lightColorScheme
 import com.jitong.im.android.ui.AuthViewModel
 import com.jitong.im.android.ui.ContactViewModel
 import com.jitong.im.android.ui.JitongApp
+import com.jitong.im.android.ui.MessageViewModel
 
 class MainActivity : ComponentActivity() {
     private val viewModel: AuthViewModel by viewModels {
@@ -19,12 +20,16 @@ class MainActivity : ComponentActivity() {
         val container = (application as JitongApplication).container
         ContactViewModel.Factory(container.contactRepository)
     }
+    private val messageViewModel: MessageViewModel by viewModels {
+        val container = (application as JitongApplication).container
+        MessageViewModel.Factory(container.messageRepository)
+    }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         setContent {
             MaterialTheme(colorScheme = lightColorScheme()) {
-                JitongApp(viewModel, contactViewModel)
+                JitongApp(viewModel, contactViewModel, messageViewModel)
             }
         }
     }
