@@ -17,6 +17,10 @@ class AccountLocalStore(
     private var openedAccountNo: String? = null
     private var openedDatabase: AccountDatabase? = null
 
+    init {
+        SQLiteDatabase.loadLibs(context.applicationContext)
+    }
+
     @Synchronized
     fun ensureAccount(response: LoginResponse): AccountDatabase {
         return ensureAccount(

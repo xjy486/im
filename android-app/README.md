@@ -11,6 +11,11 @@ T07 的 Android 登录与设备替换最小可运行客户端。工程使用 Kot
 ./gradlew assembleDebug -PjitongBaseUrl=http://192.168.1.10:8080/
 ```
 
+如果使用本机 SSH 端口转发，建议把远端 PostgreSQL/MinIO 转发到本机
+`127.0.0.1:5432` 和 `127.0.0.1:9000`，并把 Spring Boot 暴露在
+`0.0.0.0:8080`；Android Emulator 连接宿主机后端时仍使用
+`http://10.0.2.2:8080/`。真机则使用宿主机局域网 IP。
+
 - debug 构建允许明文 HTTP 连接，release 构建只允许 HTTPS。
 
 ## 认证与本地数据约定

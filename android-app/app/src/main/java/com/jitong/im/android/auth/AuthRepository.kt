@@ -60,7 +60,7 @@ internal class AuthRepository(
 
     fun logout() = sessionManager.logout()
 
-    fun clearCurrentAccount() = sessionManager.clearCurrentAccount()
+    suspend fun clearCurrentAccount() = sessionManager.clearCurrentAccount()
 
     fun requireReplacement(exception: DeviceReplacementRequiredException) =
         sessionManager.requireReplacement(exception)

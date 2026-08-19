@@ -2,9 +2,11 @@ package com.jitong.im.android.auth
 
 import com.jitong.im.android.local.AccountLocalStore
 import com.jitong.im.android.security.SecureSessionStore
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.withContext
 import java.io.IOException
 
 sealed interface SessionState {
@@ -38,21 +40,23 @@ internal class SessionManager(
 
     fun snapshot(): SessionSnapshot? = sessionStore.read()
 
-    @Synchronized
-    fun activate(response: LoginResponse) {
+    suspend fun activate(response: LoginResponse) {
         val snapshot = response.toSessionSnapshot()
         sessionStore.write(snapshot)
-        localStore.ensureAccount(snapshot)
+        withContext(Dispatchers.IO) {
+            localStore.ensureAccount(snapshot)
+        }
         _state.value = SessionState.SignedIn(snapshot)
     }
 
-    @Synchronized
-    fun markRestored() {
+    suspend fun markRestored() {
         val current = sessionStore.read() ?: run {
             _state.value = SessionState.SignedOut
             return
         }
-        localStore.ensureAccount(current)
+        withContext(Dispatchers.IO) {
+            localStore.ensureAccount(current)
+        }
         _state.value = SessionState.SignedIn(current)
     }
 
@@ -74,9 +78,13 @@ internal class SessionManager(
         _state.value = SessionState.SignedOut
     }
 
-    fun clearCurrentAccount() {
+    suspend fun clearCurrentAccount() {
         val snapshot = sessionStore.read()
-        if (snapshot != null) localStore.forgetAccount(snapshot.accountNo)
+        if (snapshot != null) {
+            withContext(Dispatchers.IO) {
+                localStore.forgetAccount(snapshot.accountNo)
+            }
+        }
         sessionStore.clear()
         _state.value = SessionState.SignedOut
     }
