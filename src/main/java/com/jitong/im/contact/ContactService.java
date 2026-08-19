@@ -2,6 +2,7 @@ package com.jitong.im.contact;
 
 import com.jitong.im.auth.AuthService;
 import com.jitong.im.auth.UuidV7;
+import org.springframework.beans.factory.annotation.Autowired;
 import com.jitong.im.platform.error.ApiErrorDefinition;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -22,6 +23,7 @@ public class ContactService {
     private final ContactRateLimiter rateLimiter;
     private final Clock clock;
 
+    @Autowired
     public ContactService(
             ContactRepository repository,
             AuthService authService,
