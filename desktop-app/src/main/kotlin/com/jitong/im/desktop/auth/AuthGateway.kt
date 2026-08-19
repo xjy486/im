@@ -5,4 +5,5 @@ interface AuthGateway {
     fun refresh(refreshToken: String): LoginResponse
     fun validate(accessToken: String)
     fun confirmReplacement(challenge: String): LoginResponse
+    fun logout(accessToken: String)
 }

@@ -18,7 +18,7 @@ class AuthClient(
             body = LoginRequest(
                 accountNo = accountNo,
                 password = password,
-                deviceClass = "PC",
+                deviceClass = DeviceClass.PC,
                 installationId = installationId))
 
     override fun refresh(refreshToken: String): LoginResponse =
@@ -37,6 +37,15 @@ class AuthClient(
         post(
             "/api/v1/auth/device-replacement/confirm",
             ReplacementConfirmationRequest(challenge))
+
+    override fun logout(accessToken: String) {
+        val request = Request.Builder()
+            .url(url("/api/v1/auth/logout"))
+            .header("Authorization", "Bearer $accessToken")
+            .post("".toRequestBody(JSON_MEDIA_TYPE))
+            .build()
+        execute(request)
+    }
 
     private inline fun <reified T> post(path: String, body: T): LoginResponse {
         val request = Request.Builder()

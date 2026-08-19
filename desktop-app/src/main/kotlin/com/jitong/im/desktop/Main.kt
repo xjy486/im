@@ -17,6 +17,7 @@ import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -32,6 +33,9 @@ import com.jitong.im.desktop.auth.DesktopAuthStore
 import com.jitong.im.desktop.auth.LoginOutcome
 import com.jitong.im.desktop.local.LocalDatabaseManager
 import com.jitong.im.desktop.local.MacOsKeychain
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.withContext
 import java.nio.file.Path
 import java.util.UUID
 
@@ -61,7 +65,9 @@ private fun rememberDesktopAuthStore(): DesktopAuthStore {
             "Jitong",
             "accounts")
         DesktopAuthStore(
-            authClient = AuthClient(System.getenv("JITONG_SERVER_URL") ?: "http://127.0.0.1:8080"),
+            authClient = AuthClient(
+                System.getenv("JITONG_SERVER_URL")
+                    ?: "https://127.0.0.1:8443"),
             databaseManager = LocalDatabaseManager(accountDirectory, MacOsKeychain()),
             installationId = installationId(accountDirectory))
     }
@@ -75,8 +81,42 @@ private fun DesktopApp(authStore: DesktopAuthStore) {
     var challenge by remember { mutableStateOf<String?>(null) }
     var error by remember { mutableStateOf<String?>(null) }
     var session by remember { mutableStateOf(authStore.session) }
+    var restoring by remember { mutableStateOf(true) }
 
-    if (session == null) {
+    LaunchedEffect(authStore) {
+        runCatching {
+            withContext(Dispatchers.IO) { authStore.restore() }
+        }.onSuccess {
+            session = it
+        }.onFailure {
+            error = messageFor(it)
+        }
+        restoring = false
+    }
+
+    LaunchedEffect(session?.deviceId) {
+        if (session == null) return@LaunchedEffect
+        while (true) {
+            delay(30_000)
+            runCatching {
+                withContext(Dispatchers.IO) { authStore.validateAccess() }
+            }.onFailure {
+                error = messageFor(it)
+                if (authStore.session == null) {
+                    session = null
+                    return@LaunchedEffect
+                }
+            }
+        }
+    }
+
+    if (restoring) {
+        Column(
+            modifier = Modifier.fillMaxSize().padding(56.dp),
+            verticalArrangement = Arrangement.Center) {
+            Text("Restoring your secure session…", style = MaterialTheme.typography.titleLarge)
+        }
+    } else if (session == null) {
         Column(
             modifier = Modifier.fillMaxSize().padding(56.dp),
             verticalArrangement = Arrangement.Center) {

@@ -6,6 +6,7 @@ import java.time.Instant
 import kotlin.io.path.createTempDirectory
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFailsWith
 import kotlin.test.assertIs
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
@@ -19,7 +20,8 @@ class DesktopAuthStoreTest {
         val first = DesktopAuthStore(manager = manager, gateway = gateway)
 
         val login = assertIs<LoginOutcome.Authenticated>(first.login("12345678903", "password"))
-        assertEquals("PC", login.session.deviceClass)
+        assertEquals(DeviceClass.PC, login.session.deviceClass)
+        assertEquals("refresh", manager.loadRefreshToken("12345678903"))
         first.close()
 
         val restarted = DesktopAuthStore(manager = manager, gateway = gateway)
@@ -28,6 +30,7 @@ class DesktopAuthStoreTest {
         assertEquals(login.session.accountNo, restored?.accountNo)
         assertEquals(1, gateway.refreshCalls)
         assertEquals("rotated-refresh", restored?.refreshToken)
+        assertEquals("rotated-refresh", manager.loadRefreshToken("12345678903"))
         restarted.close()
     }
 
@@ -41,6 +44,7 @@ class DesktopAuthStoreTest {
         store.logout()
 
         assertNull(store.session)
+        assertNull(manager.loadRefreshToken("12345678903"))
         assertTrue(manager.databaseFile("12345678903").toFile().exists())
     }
 
@@ -59,6 +63,22 @@ class DesktopAuthStoreTest {
     }
 
     @Test
+    fun rejected_access_and_refresh_clear_untrusted_local_state() {
+        val root = createTempDirectory("jitong-validate")
+        val manager = LocalDatabaseManager(root, InMemoryKeychain())
+        val store = DesktopAuthStore(
+            manager = manager,
+            gateway = FakeAuthGateway(refreshFails = true, validateFails = true))
+
+        store.login("12345678903", "password")
+        assertFailsWith<AuthApiException> { store.validateAccess() }
+
+        assertNull(store.session)
+        assertNull(manager.loadRefreshToken("12345678903"))
+        assertTrue(!manager.databaseFile("12345678903").toFile().exists())
+    }
+
+    @Test
     fun replacement_challenge_is_exposed_without_touching_local_state() {
         val gateway = FakeAuthGateway(replacementRequired = true)
         val store = DesktopAuthStore(
@@ -68,13 +88,14 @@ class DesktopAuthStoreTest {
         val result = assertIs<LoginOutcome.ReplacementRequired>(store.login("12345678903", "password"))
 
         assertEquals("challenge", result.challenge)
-        assertEquals("PC", result.deviceClass)
+        assertEquals(DeviceClass.PC, result.deviceClass)
         assertNull(store.session)
     }
 
     private class FakeAuthGateway(
         private val replacementRequired: Boolean = false,
         private val refreshFails: Boolean = false,
+        private val validateFails: Boolean = false,
     ) : AuthGateway {
         var refreshCalls = 0
 
@@ -99,9 +120,15 @@ class DesktopAuthStoreTest {
             return response("rotated-access", "rotated-refresh")
         }
 
-        override fun validate(accessToken: String) = Unit
+        override fun validate(accessToken: String) {
+            if (validateFails) {
+                throw AuthApiException(401, ApiErrorResponse(code = "TOKEN_EXPIRED", message = "expired"))
+            }
+        }
 
         override fun confirmReplacement(challenge: String): LoginResponse = response("replacement-access", "replacement-refresh")
+
+        override fun logout(accessToken: String) = Unit
 
         private fun response(access: String, refresh: String) = LoginResponse(
             version = 1,
@@ -112,7 +139,7 @@ class DesktopAuthStoreTest {
             accessTokenExpiresAt = "2026-08-19T00:15:00Z",
             refreshTokenExpiresAt = "2026-09-18T00:00:00Z",
             deviceId = "device-id",
-            deviceClass = "PC")
+            deviceClass = DeviceClass.PC)
     }
 
     private fun DesktopAuthStore(

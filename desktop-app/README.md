@@ -8,7 +8,7 @@ The desktop client is a Compose Desktop JVM application. It keeps one independen
 ./gradlew run
 ```
 
-The server URL defaults to `http://127.0.0.1:8080`. Set `JITONG_SERVER_URL` to override it.
+The server URL defaults to `https://127.0.0.1:8443`. Set `JITONG_SERVER_URL` to a trusted development or production endpoint to override it.
 
 ## Verify
 

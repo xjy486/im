@@ -2,11 +2,6 @@ package com.jitong.im.desktop.local
 
 import java.io.IOException
 import java.nio.charset.StandardCharsets
-import java.nio.file.Path
-import kotlin.io.path.createDirectories
-import kotlin.io.path.exists
-import kotlin.io.path.readText
-import kotlin.io.path.writeText
 
 interface Keychain {
     fun read(service: String, account: String): String?

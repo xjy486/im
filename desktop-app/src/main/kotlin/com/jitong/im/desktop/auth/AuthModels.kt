@@ -4,10 +4,16 @@ import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
 
 @Serializable
+enum class DeviceClass {
+    MOBILE,
+    PC,
+}
+
+@Serializable
 data class LoginRequest(
     val accountNo: String,
     val password: String,
-    val deviceClass: String = "PC",
+    val deviceClass: DeviceClass = DeviceClass.PC,
     val installationId: String,
 )
 
@@ -21,7 +27,7 @@ data class LoginResponse(
     val accessTokenExpiresAt: String,
     val refreshTokenExpiresAt: String,
     val deviceId: String,
-    val deviceClass: String,
+    val deviceClass: DeviceClass,
 )
 
 @Serializable

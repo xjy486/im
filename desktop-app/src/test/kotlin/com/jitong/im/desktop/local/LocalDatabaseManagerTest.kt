@@ -16,9 +16,7 @@ class LocalDatabaseManagerTest {
             accountNo = "12345678903",
             userId = "user-one",
             deviceId = "device-one",
-            deviceClass = "PC",
-            accessToken = "access-one",
-            refreshToken = "refresh-one",
+            deviceClass = com.jitong.im.desktop.auth.DeviceClass.PC,
             accessTokenExpiresAt = "2026-08-19T00:15:00Z",
             refreshTokenExpiresAt = "2026-09-18T00:00:00Z")
 
@@ -49,5 +47,26 @@ class LocalDatabaseManagerTest {
 
         assertTrue(!manager.databaseFile("12345678903").toFile().exists())
         assertTrue(manager.findAccounts().isEmpty())
+    }
+
+    @Test
+    fun refresh_tokens_are_kept_in_keychain_and_media_cache_is_encrypted() {
+        val root = createTempDirectory("jitong-secrets")
+        val keychain = InMemoryKeychain()
+        val manager = LocalDatabaseManager(root, keychain)
+        val accountNo = "12345678903"
+
+        manager.saveRefreshToken(accountNo, "refresh-secret")
+        val media = manager.mediaCache(accountNo)
+        val mediaFile = media.put("avatar", "private image".toByteArray())
+
+        assertEquals("refresh-secret", manager.loadRefreshToken(accountNo))
+        assertTrue(mediaFile.toFile().readBytes().toString(Charsets.UTF_8) != "private image")
+        assertEquals("private image", media.get("avatar").toString(Charsets.UTF_8))
+
+        manager.clear(accountNo)
+
+        assertNull(manager.loadRefreshToken(accountNo))
+        assertTrue(!mediaFile.toFile().exists())
     }
 }

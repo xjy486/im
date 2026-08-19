@@ -7,14 +7,14 @@ import java.time.Instant
 
 sealed interface LoginOutcome {
     data class Authenticated(val session: DesktopSession) : LoginOutcome
-    data class ReplacementRequired(val challenge: String, val deviceClass: String) : LoginOutcome
+    data class ReplacementRequired(val challenge: String, val deviceClass: DeviceClass) : LoginOutcome
 }
 
 data class DesktopSession(
     val accountNo: String,
     val userId: String,
     val deviceId: String,
-    val deviceClass: String,
+    val deviceClass: DeviceClass,
     val accessToken: String,
     val refreshToken: String,
     val accessTokenExpiresAt: Instant,
@@ -39,7 +39,9 @@ class DesktopAuthStore(
             if (exception.statusCode == 409 && challenge != null) {
                 LoginOutcome.ReplacementRequired(
                     challenge = challenge,
-                    deviceClass = exception.error.deviceClass ?: "PC")
+                    deviceClass = exception.error.deviceClass
+                        ?.let { runCatching { DeviceClass.valueOf(it) }.getOrNull() }
+                        ?: DeviceClass.PC)
             } else {
                 throw exception
             }
@@ -57,13 +59,14 @@ class DesktopAuthStore(
         val local = databaseManager.open(storedAccount)
         database = local
         val stored = local.loadSession() ?: return null
+        val refreshToken = databaseManager.loadRefreshToken(stored.accountNo)
+            ?: return clearUntrustedLocalDataAndReturnNull(stored.accountNo)
         return try {
-            val refreshed = authClient.refresh(stored.refreshToken)
+            val refreshed = authClient.refresh(refreshToken)
             authenticated(refreshed).session
         } catch (exception: AuthApiException) {
             if (exception.statusCode == 401) {
-                clearUntrustedLocalData(stored.accountNo)
-                null
+                clearUntrustedLocalDataAndReturnNull(stored.accountNo)
             } else {
                 throw exception
             }
@@ -90,7 +93,12 @@ class DesktopAuthStore(
     }
 
     fun logout() {
+        val current = session
+        if (current != null) {
+            runCatching { authClient.logout(current.accessToken) }
+        }
         database?.clearSession()
+        current?.let { databaseManager.clearRefreshToken(it.accountNo) }
         session = null
         database?.close()
         database = null
@@ -109,6 +117,12 @@ class DesktopAuthStore(
         databaseManager.clear(accountNo)
     }
 
+    private fun clearUntrustedLocalDataAndReturnNull(accountNo: String): Nothing? {
+        clearUntrustedLocalData(accountNo)
+        session = null
+        return null
+    }
+
     private fun authenticated(response: LoginResponse): LoginOutcome.Authenticated {
         val next = DesktopSession(
             accountNo = response.accountNo,
@@ -122,6 +136,7 @@ class DesktopAuthStore(
         database?.close()
         database = databaseManager.open(next.accountNo)
         database!!.saveSession(next.toStored())
+        databaseManager.saveRefreshToken(next.accountNo, next.refreshToken)
         session = next
         return LoginOutcome.Authenticated(next)
     }
@@ -136,7 +151,5 @@ private fun DesktopSession.toStored() = StoredSession(
     userId = userId,
     deviceId = deviceId,
     deviceClass = deviceClass,
-    accessToken = accessToken,
-    refreshToken = refreshToken,
     accessTokenExpiresAt = accessTokenExpiresAt.toString(),
     refreshTokenExpiresAt = refreshTokenExpiresAt.toString())
