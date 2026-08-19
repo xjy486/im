@@ -1,4 +1,7 @@
 .env
+.env.*
+!.env.example
+!.env.forward.example
 .idea/
 .vscode/
 .DS_Store

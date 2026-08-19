@@ -36,6 +36,22 @@ find_java_home() {
     return 1
 }
 
+print_java_home() {
+    JAVA_21_HOME=$(find_java_home || true)
+    if [ -z "$JAVA_21_HOME" ]; then
+        printf '%s\n' 'JDK 21 was not found.' >&2
+        exit 1
+    fi
+    printf '%s\n' "$JAVA_21_HOME"
+}
+
+case "${1:-}" in
+    --print-java-home)
+        print_java_home
+        exit 0
+        ;;
+esac
+
 find_docker() {
     if command -v docker >/dev/null 2>&1; then
         command -v docker

@@ -63,6 +63,29 @@ docker compose version
 ./scripts/dev-env.sh ./mvnw verify
 ```
 
+### 使用 SSH 转发的云端 PostgreSQL / MinIO
+
+当云服务器的 PostgreSQL 和 MinIO 已经通过 SSH 转发固定到本机以下端口时：
+
+| 依赖 | 本机地址 |
+|---|---|
+| PostgreSQL | `127.0.0.1:5432` |
+| MinIO API | `http://127.0.0.1:9000` |
+| MinIO Console | `http://127.0.0.1:9001` |
+
+不要把云端用户名、密码或转发配置写死进 `src/main/resources/application.yml`。该文件已经支持环境变量覆盖；使用独立的本地配置文件：
+
+```sh
+cp .env.forward.example .env.forward
+# 编辑 .env.forward，填入本机转发对应的凭证
+./scripts/dev-forward.sh
+curl http://127.0.0.1:8080/api/v1/system/health
+```
+
+`scripts/dev-forward.sh` 会读取 `.env.forward`、必要时构建最新 jar、启动本地 Spring Boot，并等待健康检查成功。它不启动 Docker。
+
+`.env.forward` 已被 Git 忽略。SSH 转发断开、云端服务不可用或本机端口被其他程序占用时，启动会失败；这不会改变 Docker 本地栈的 `.env` 配置。
+
 不要依赖当前终端的 `java` 或全局 `mvn`。所有 Maven 命令都从 `./mvnw` 进入。
 
 ## 4. 常用开发命令
@@ -129,6 +152,8 @@ docker compose --env-file .env down
 
 `.env` 包含本地凭证，不得提交、复制到 issue、日志或聊天记录。修改 `JITONG_HTTP_PORT` 后重新执行 `./scripts/dev-up.sh` 即可使用新端口。
 
+`.env.forward` 是另一套独立配置，仅用于本机 SSH 转发的云端依赖；不要把它改名覆盖 `.env`，也不要让 Docker Compose 读取它。
+
 ## 6. IDE 约定
 
 IntelliJ IDEA 导入项目时：
@@ -172,6 +197,12 @@ docker context show
 ### 8080 端口被占用
 
 修改 `.env` 中的 `JITONG_HTTP_PORT`，例如改为 `18080`，然后重新运行 `./scripts/dev-up.sh`。
+
+云端转发开发栈使用：
+
+```sh
+SERVER_PORT=18080 ./scripts/dev-forward.sh
+```
 
 ## 8. CI 对齐
 
