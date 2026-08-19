@@ -2,6 +2,7 @@ package com.jitong.im.audit;
 
 public enum SecurityAuditEventType {
     LOGIN,
+    LOGOUT,
     PASSWORD_RESET,
     TOKEN_REPLAY,
     DEVICE_REPLACEMENT,

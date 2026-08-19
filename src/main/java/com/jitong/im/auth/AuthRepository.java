@@ -258,6 +258,42 @@ class AuthRepository {
                 .orElse(null);
     }
 
+    UUID findUserIdByAccessTokenHash(String accessTokenHash) {
+        return jdbc.sql("""
+                        SELECT user_id
+                        FROM auth_sessions
+                        WHERE access_token_hash = :accessTokenHash
+                        """)
+                .param("accessTokenHash", accessTokenHash)
+                .query(UUID.class)
+                .optional()
+                .orElse(null);
+    }
+
+    void revokeSessionByAccessTokenHash(String accessTokenHash, Instant now) {
+        jdbc.sql("""
+                        UPDATE auth_sessions
+                        SET status = 'REVOKED', revoked_at = :revokedAt
+                        WHERE access_token_hash = :accessTokenHash
+                          AND status = 'ACTIVE'
+                        """)
+                .param("accessTokenHash", accessTokenHash)
+                .param("revokedAt", utc(now), Types.TIMESTAMP_WITH_TIMEZONE)
+                .update();
+        jdbc.sql("""
+                        UPDATE refresh_tokens
+                        SET state = 'REVOKED'
+                        WHERE session_id IN (
+                            SELECT id
+                            FROM auth_sessions
+                            WHERE access_token_hash = :accessTokenHash
+                        )
+                          AND state <> 'REVOKED'
+                        """)
+                .param("accessTokenHash", accessTokenHash)
+                .update();
+    }
+
     ChallengeRecord findChallenge(String challengeHash) {
         return jdbc.sql("""
                         SELECT id,

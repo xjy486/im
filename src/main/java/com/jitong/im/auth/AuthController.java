@@ -60,6 +60,17 @@ class AuthController {
         return ResponseEntity.noContent().build();
     }
 
+    @PostMapping("/logout")
+    ResponseEntity<Void> logout(
+            @RequestHeader(value = "Authorization", required = false) String authorization,
+            HttpServletRequest servletRequest
+    ) {
+        authService.logout(
+                authorization,
+                java.util.UUID.fromString(RequestContextFilter.requestId(servletRequest)));
+        return ResponseEntity.noContent().build();
+    }
+
     private String clientIp(HttpServletRequest request) {
         return request.getRemoteAddr() == null ? "unknown" : request.getRemoteAddr();
     }

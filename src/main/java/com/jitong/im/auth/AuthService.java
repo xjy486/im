@@ -268,6 +268,29 @@ class AuthService {
     }
 
     @Transactional
+    void logout(String authorizationHeader, UUID requestId) {
+        String accessToken = bearerToken(authorizationHeader);
+        UUID userId = repository.findUserIdByAccessTokenHash(TokenDigests.sha256(accessToken));
+        if (userId == null) {
+            throw new InvalidCredentialsException();
+        }
+        repository.revokeSessionByAccessTokenHash(
+                TokenDigests.sha256(accessToken),
+                clock.instant());
+        auditSink.record(new SecurityAuditEvent(
+                UuidV7.random(),
+                SecurityAuditEventType.LOGOUT,
+                AuditOutcome.SUCCEEDED,
+                userId,
+                null,
+                AuditSubjectType.USER,
+                userId,
+                requestId,
+                null,
+                clock.instant()));
+    }
+
+    @Transactional
     void retireUser(UUID userId, UUID requestId) {
         UserRetirementResult result = repository.retireUser(userId, clock.instant());
         if (result != UserRetirementResult.RETIRED) {
