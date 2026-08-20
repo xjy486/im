@@ -3,8 +3,10 @@ spring:
     name: jitong-im-server
   servlet:
     multipart:
-      max-file-size: ${MEDIA_MAX_INPUT_SIZE:10MB}
-      max-request-size: ${MEDIA_MAX_REQUEST_SIZE:11MB}
+      # Leave a small parser headroom so ImageNormalizer can return the stable
+      # MEDIA_TOO_LARGE error instead of the servlet container closing the upload.
+      max-file-size: ${MEDIA_MAX_INPUT_SIZE:11MB}
+      max-request-size: ${MEDIA_MAX_REQUEST_SIZE:12MB}
   datasource:
     url: ${DB_URL:jdbc:postgresql://localhost:5432/jitong}
     username: ${DB_USERNAME:jitong}

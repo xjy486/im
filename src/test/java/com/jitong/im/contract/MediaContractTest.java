@@ -86,6 +86,13 @@ class MediaContractTest extends ContractTestEnvironment {
         assertThat(thumbnail.getWidth()).isEqualTo(320);
         assertThat(thumbnail.getHeight()).isEqualTo(160);
 
+        ResponseEntity<byte[]> peerFullDownload = download(bobToken, mediaId, "full");
+        assertThat(peerFullDownload.getStatusCode()).isEqualTo(HttpStatus.OK);
+        BufferedImage fullImage = ImageIO.read(
+                new java.io.ByteArrayInputStream(peerFullDownload.getBody()));
+        assertThat(fullImage.getWidth()).isEqualTo(480);
+        assertThat(fullImage.getHeight()).isEqualTo(240);
+
         ResponseEntity<JsonNode> forbidden = exchange(
                 HttpMethod.GET,
                 "/api/v1/media/" + mediaId,

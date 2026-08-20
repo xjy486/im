@@ -7,7 +7,7 @@ import java.time.Duration;
 import java.time.Instant;
 
 @Component
-public class MediaCleanupJob {
+class MediaCleanupJob {
 
     private final MediaRepository repository;
     private final MediaStorage storage;
@@ -20,7 +20,7 @@ public class MediaCleanupJob {
     @Scheduled(
             fixedDelayString = "${jitong.media.cleanup-interval:3600000}",
             initialDelayString = "${jitong.media.cleanup-initial-delay:60000}")
-    public void cleanExpiredTemporaryMedia() {
+    void cleanExpiredTemporaryMedia() {
         Instant now = Instant.now();
         Duration lifetime = Duration.ofHours(24);
         for (MediaRecord candidate : repository.findCleanupCandidates(now.minus(lifetime))) {
