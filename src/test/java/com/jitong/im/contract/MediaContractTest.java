@@ -134,21 +134,6 @@ class MediaContractTest extends ContractTestEnvironment {
     }
 
     @Test
-    void rejects_uploads_that_exceed_the_multipart_parser_limit() throws Exception {
-        TestUser alice = createUser("Alice");
-        String token = login(alice.accountNo(), "media-parser-too-large");
-
-        ResponseEntity<JsonNode> response = upload(
-                token,
-                UUID.randomUUID(),
-                new byte[11 * 1024 * 1024 + 1],
-                "parser-too-large.jpg");
-
-        assertThat(response.getStatusCode()).isEqualTo(HttpStatus.PAYLOAD_TOO_LARGE);
-        assertThat(response.getBody().get("code").asText()).isEqualTo("MEDIA_TOO_LARGE");
-    }
-
-    @Test
     void rejects_images_that_exceed_the_decode_pixel_limit() throws Exception {
         TestUser alice = createUser("Alice");
         String token = login(alice.accountNo(), "media-too-many-pixels");

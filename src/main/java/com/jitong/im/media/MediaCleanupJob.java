@@ -2,6 +2,7 @@ package com.jitong.im.media;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Component;
 
@@ -17,6 +18,7 @@ class MediaCleanupJob {
     private final MediaStorage storage;
     private final Clock clock;
 
+    @Autowired
     MediaCleanupJob(MediaRepository repository, MediaStorage storage) {
         this(repository, storage, Clock.systemUTC());
     }
