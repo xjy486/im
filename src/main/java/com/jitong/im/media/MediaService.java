@@ -2,6 +2,7 @@ package com.jitong.im.media;
 
 import com.jitong.im.auth.UuidV7;
 import com.jitong.im.platform.error.ApiErrorDefinition;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.multipart.MultipartFile;
@@ -19,6 +20,7 @@ public class MediaService {
     private final MediaStorage storage;
     private final Clock clock;
 
+    @Autowired
     public MediaService(MediaRepository repository, MediaStorage storage) {
         this(repository, storage, Clock.systemUTC());
     }
