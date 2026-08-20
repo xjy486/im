@@ -2,6 +2,7 @@
 .env.*
 !.env.example
 !.env.forward.example
+/secrets/
 .idea/
 .vscode/
 .DS_Store

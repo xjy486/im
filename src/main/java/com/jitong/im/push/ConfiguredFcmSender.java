@@ -7,13 +7,13 @@ import com.google.firebase.messaging.AndroidConfig;
 import com.google.firebase.messaging.FirebaseMessaging;
 import com.google.firebase.messaging.FirebaseMessagingException;
 import com.google.firebase.messaging.Message;
+import com.jitong.im.platform.observability.OperationalMetrics;
 import org.springframework.context.annotation.Primary;
 import org.springframework.stereotype.Component;
 
 import java.io.ByteArrayInputStream;
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
-import java.util.Map;
 
 @Primary
 @Component
@@ -21,14 +21,16 @@ class ConfiguredFcmSender implements FcmSender {
 
     private final PushProperties properties;
     private final FirebaseMessaging messaging;
+    private final OperationalMetrics metrics;
 
-    ConfiguredFcmSender(PushProperties properties) {
+    ConfiguredFcmSender(PushProperties properties, OperationalMetrics metrics) {
         this.properties = properties;
         this.messaging = initialize(properties);
+        this.metrics = metrics;
     }
 
     @Override
-    public FcmDeliveryResult send(String token, String eventType) {
+    public FcmDeliveryResult sendNewMessage(String token) {
         if (!properties.enabled()) {
             return FcmDeliveryResult.NOT_CONFIGURED;
         }
@@ -42,17 +44,17 @@ class ConfiguredFcmSender implements FcmSender {
                             .setAndroidConfig(AndroidConfig.builder()
                                     .setPriority(AndroidConfig.Priority.HIGH)
                                     .build())
-                            .putAllData(Map.of(
-                                    "version", "1",
-                                    "type", eventType))
+                            .putAllData(FcmPayload.newMessageData())
                             .build());
             return FcmDeliveryResult.SENT;
         } catch (FirebaseMessagingException | RuntimeException exception) {
             if (exception instanceof FirebaseMessagingException messagingException
                     && messagingException.getMessagingErrorCode()
                     == com.google.firebase.messaging.MessagingErrorCode.UNREGISTERED) {
-                return FcmDeliveryResult.PERMANENT_FAILURE;
+                metrics.fcmFailures().increment();
+                return FcmDeliveryResult.PERMANENT_TOKEN_FAILURE;
             }
+            metrics.fcmFailures().increment();
             return FcmDeliveryResult.RETRYABLE_FAILURE;
         }
     }

@@ -293,9 +293,10 @@ paths:
             schema:
               type: object
               additionalProperties: false
-              required: [token]
+              required: [token, tokenVersion]
               properties:
                 token: { type: string, minLength: 1, maxLength: 4096 }
+                tokenVersion: { type: integer, format: int64, minimum: 0 }
       responses:
         '204':
           description: Push token stored for the authenticated MOBILE device

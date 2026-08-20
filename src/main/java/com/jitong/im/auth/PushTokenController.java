@@ -33,7 +33,11 @@ class PushTokenController {
         if (!pushTokenService.isConfigured()) {
             return ResponseEntity.status(HttpStatus.SERVICE_UNAVAILABLE).build();
         }
-        pushTokenService.update(device.deviceId(), request.token());
+        pushTokenService.update(
+                device.deviceId(),
+                device.sessionId(),
+                request.token(),
+                request.tokenVersion());
         return ResponseEntity.noContent().build();
     }
 }

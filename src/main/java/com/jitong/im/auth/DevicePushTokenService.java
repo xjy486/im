@@ -13,6 +13,7 @@ import java.security.MessageDigest;
 import java.security.SecureRandom;
 import java.util.Base64;
 import java.util.UUID;
+import org.springframework.transaction.annotation.Transactional;
 
 @Service
 public class DevicePushTokenService {
@@ -29,8 +30,20 @@ public class DevicePushTokenService {
         this.properties = properties;
     }
 
-    public void update(UUID deviceId, String token) {
-        repository.updatePushToken(deviceId, encrypt(token));
+    @Transactional
+    public void update(UUID deviceId, UUID sessionId, String token, long tokenVersion) {
+        if (sessionId == null) {
+            throw new IllegalArgumentException("Authenticated session is required");
+        }
+        String digest = TokenDigests.sha256(token);
+        if (repository.updatePushToken(
+                deviceId,
+                sessionId,
+                encrypt(token),
+                digest,
+                tokenVersion) > 0) {
+            repository.clearOtherPushTokens(deviceId, digest);
+        }
     }
 
     public boolean isConfigured() {
@@ -40,7 +53,7 @@ public class DevicePushTokenService {
     }
 
     public String find(UUID deviceId) {
-        if (!isConfigured()) {
+        if (!hasEncryptionKey()) {
             return null;
         }
         String ciphertext = repository.findPushToken(deviceId);
@@ -57,6 +70,10 @@ public class DevicePushTokenService {
 
     public void clear(UUID deviceId) {
         repository.clearPushToken(deviceId);
+    }
+
+    public void clearIfCurrent(UUID deviceId, String token) {
+        repository.clearPushTokenIfMatches(deviceId, TokenDigests.sha256(token));
     }
 
     public boolean isMobile(UUID deviceId) {
@@ -86,6 +103,9 @@ public class DevicePushTokenService {
     private String decrypt(String encoded) {
         try {
             byte[] packed = Base64.getDecoder().decode(encoded);
+            if (packed.length < IV_LENGTH + 16) {
+                throw new IllegalArgumentException("Encrypted push token is too short");
+            }
             byte[] iv = new byte[IV_LENGTH];
             byte[] ciphertext = new byte[packed.length - IV_LENGTH];
             System.arraycopy(packed, 0, iv, 0, iv.length);
@@ -96,14 +116,13 @@ public class DevicePushTokenService {
                     key(),
                     new GCMParameterSpec(GCM_TAG_BITS, iv));
             return new String(cipher.doFinal(ciphertext), StandardCharsets.UTF_8);
-        } catch (GeneralSecurityException | IllegalArgumentException exception) {
+        } catch (GeneralSecurityException | RuntimeException exception) {
             throw new IllegalStateException("Could not decrypt push token", exception);
         }
     }
 
     private SecretKeySpec key() {
-        if (properties.tokenEncryptionKey() == null
-                || properties.tokenEncryptionKey().isBlank()) {
+        if (!hasEncryptionKey()) {
             throw new IllegalStateException("FCM token encryption key is not configured");
         }
         try {
@@ -114,5 +133,10 @@ public class DevicePushTokenService {
         } catch (GeneralSecurityException exception) {
             throw new IllegalStateException("Could not derive push token encryption key", exception);
         }
+    }
+
+    private boolean hasEncryptionKey() {
+        return properties.tokenEncryptionKey() != null
+                && !properties.tokenEncryptionKey().isBlank();
     }
 }

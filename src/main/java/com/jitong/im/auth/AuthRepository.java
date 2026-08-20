@@ -164,14 +164,55 @@ class AuthRepository {
                 .update();
     }
 
-    void updatePushToken(UUID deviceId, String token) {
+    int updatePushToken(
+            UUID deviceId,
+            UUID sessionId,
+            String ciphertext,
+            String digest,
+            long tokenVersion
+    ) {
+        return jdbc.sql("""
+                        UPDATE devices
+                        SET push_token_ciphertext = :ciphertext,
+                            push_token_digest = :digest,
+                            push_token_version = :tokenVersion
+                        WHERE id = :deviceId
+                          AND trust_state = 'ACTIVE'
+                          AND push_token_version <= :tokenVersion
+                          AND EXISTS (
+                              SELECT 1
+                              FROM auth_sessions
+                              WHERE id = :sessionId
+                                AND device_id = devices.id
+                                AND status = 'ACTIVE'
+                                AND id = (
+                                    SELECT latest.id
+                                    FROM auth_sessions latest
+                                    WHERE latest.device_id = devices.id
+                                    ORDER BY latest.created_at DESC
+                                    LIMIT 1
+                                )
+                          )
+                """)
+                .param("deviceId", deviceId)
+                .param("sessionId", sessionId)
+                .param("ciphertext", ciphertext)
+                .param("digest", digest)
+                .param("tokenVersion", tokenVersion)
+                .update();
+    }
+
+    void clearOtherPushTokens(UUID deviceId, String digest) {
         jdbc.sql("""
                         UPDATE devices
-                        SET push_token_ciphertext = :token
-                        WHERE id = :deviceId AND trust_state = 'ACTIVE'
+                        SET push_token_ciphertext = NULL,
+                            push_token_digest = NULL,
+                            push_token_version = 0
+                        WHERE push_token_digest = :digest
+                          AND id <> :deviceId
                         """)
                 .param("deviceId", deviceId)
-                .param("token", token)
+                .param("digest", digest)
                 .update();
     }
 
@@ -202,10 +243,25 @@ class AuthRepository {
     void clearPushToken(UUID deviceId) {
         jdbc.sql("""
                         UPDATE devices
-                        SET push_token_ciphertext = NULL
+                        SET push_token_ciphertext = NULL,
+                            push_token_digest = NULL,
+                            push_token_version = 0
                         WHERE id = :deviceId
                         """)
                 .param("deviceId", deviceId)
+                .update();
+    }
+
+    void clearPushTokenIfMatches(UUID deviceId, String digest) {
+        jdbc.sql("""
+                        UPDATE devices
+                        SET push_token_ciphertext = NULL,
+                            push_token_digest = NULL,
+                            push_token_version = 0
+                        WHERE id = :deviceId AND push_token_digest = :digest
+                        """)
+                .param("deviceId", deviceId)
+                .param("digest", digest)
                 .update();
     }
 
@@ -287,13 +343,14 @@ class AuthRepository {
 
     AuthSession findSessionByAccessTokenHash(String accessTokenHash) {
         return jdbc.sql("""
-                        SELECT s.user_id, s.device_id, s.expires_at, s.status, d.trust_state
+                        SELECT s.id, s.user_id, s.device_id, s.expires_at, s.status, d.trust_state
                         FROM auth_sessions s
                         JOIN devices d ON d.id = s.device_id
                         WHERE s.access_token_hash = :accessTokenHash
                         """)
                 .param("accessTokenHash", accessTokenHash)
                 .query((row, rowNum) -> new AuthSession(
+                        row.getObject("id", UUID.class),
                         row.getObject("user_id", UUID.class),
                         row.getObject("device_id", UUID.class),
                         row.getObject("expires_at", OffsetDateTime.class).toInstant(),
@@ -428,6 +485,8 @@ class AuthRepository {
                         UPDATE devices
                         SET trust_state = 'UNTRUSTED',
                             push_token_ciphertext = NULL,
+                            push_token_digest = NULL,
+                            push_token_version = 0,
                             untrusted_at = :untrustedAt
                         WHERE id = :deviceId AND trust_state = 'ACTIVE'
                         """)
@@ -614,6 +673,8 @@ class AuthRepository {
                         UPDATE devices
                         SET trust_state = 'UNTRUSTED',
                             push_token_ciphertext = NULL,
+                            push_token_digest = NULL,
+                            push_token_version = 0,
                             untrusted_at = :untrustedAt
                         WHERE id = :deviceId AND trust_state = 'ACTIVE'
                         """)
@@ -686,6 +747,8 @@ class AuthRepository {
                         UPDATE devices
                         SET trust_state = 'UNTRUSTED',
                             push_token_ciphertext = NULL,
+                            push_token_digest = NULL,
+                            push_token_version = 0,
                             untrusted_at = :retiredAt
                         WHERE user_id = :userId AND trust_state = 'ACTIVE'
                         """)

@@ -11,4 +11,5 @@ internal interface PushTokenApi {
 
 internal data class PushTokenRequest(
     val token: String,
+    val tokenVersion: Long,
 )

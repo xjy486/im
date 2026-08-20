@@ -306,7 +306,13 @@ internal class MessageRepository(
         val lastSyncSeq = withContext(Dispatchers.IO) {
             db.syncStateDao().current()?.lastSyncSeq ?: 0L
         }
-        val highWatermark = syncApi.page(lastSyncSeq, null).syncBodyOrThrow().highWatermark
+        val highWatermark = try {
+            syncApi.page(lastSyncSeq, null).syncBodyOrThrow().highWatermark
+        } catch (exception: SyncResetRequiredException) {
+            val highWatermark = syncApi.page(0, 0).syncBodyOrThrow().highWatermark
+            fullRestore(currentUserId, highWatermark)
+            return
+        }
         synchronize(currentUserId, highWatermark)
     }
 

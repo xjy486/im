@@ -22,4 +22,18 @@ class NotificationPayloadTest {
         assertNull(NotificationPayload.from(mapOf("version" to "1", "type" to "MESSAGE_BODY")))
         assertNull(NotificationPayload.from(mapOf("version" to "2", "type" to "NEW_MESSAGE")))
     }
+
+    @Test
+    fun rejects_payloads_with_extra_fields_that_could_leak_message_data() {
+        assertNull(
+            NotificationPayload.from(
+                mapOf(
+                    "version" to "1",
+                    "type" to "NEW_MESSAGE",
+                    "text" to "private message",
+                    "mediaUrl" to "https://private.invalid/object",
+                ),
+            ),
+        )
+    }
 }
