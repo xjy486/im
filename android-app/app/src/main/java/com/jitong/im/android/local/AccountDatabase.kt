@@ -57,6 +57,8 @@ data class LocalMessageEntity(
     val state: String,
     val localState: String,
     val text: String,
+    val mediaId: String? = null,
+    val localMediaPath: String? = null,
     val serverAcceptedAt: String?,
     val createdAt: Long,
 )
@@ -91,6 +93,10 @@ data class PendingMessageCommandEntity(
     val text: String,
     val createdAt: Long,
     val status: String,
+    val type: String = "TEXT",
+    val mediaId: String? = null,
+    val uploadId: String? = null,
+    val mediaPath: String? = null,
 )
 
 @Dao
@@ -152,6 +158,9 @@ interface LocalMessageDao {
 
     @Query("UPDATE local_message SET localState = :localState WHERE clientMsgId = :clientMsgId")
     fun updateLocalState(clientMsgId: String, localState: String)
+
+    @Query("UPDATE local_message SET localMediaPath = :localMediaPath WHERE messageId = :messageId")
+    fun updateLocalMediaPath(messageId: String, localMediaPath: String)
 }
 
 @Dao
@@ -223,7 +232,7 @@ interface SyncStateDao {
         LocalConversationReadStateEntity::class,
         PendingMessageCommandEntity::class,
     ],
-    version = 5,
+    version = 6,
     exportSchema = true,
 )
 abstract class AccountDatabase : RoomDatabase() {
@@ -338,6 +347,19 @@ abstract class AccountDatabase : RoomDatabase() {
                     "CREATE INDEX IF NOT EXISTS index_pending_commands_status_createdAt " +
                         "ON pending_commands (status, createdAt)",
                 )
+            }
+        }
+
+        val MIGRATION_5_6 = object : androidx.room.migration.Migration(5, 6) {
+            override fun migrate(
+                database: androidx.sqlite.db.SupportSQLiteDatabase,
+            ) {
+                database.execSQL("ALTER TABLE local_message ADD COLUMN mediaId TEXT")
+                database.execSQL("ALTER TABLE local_message ADD COLUMN localMediaPath TEXT")
+                database.execSQL("ALTER TABLE pending_commands ADD COLUMN type TEXT NOT NULL DEFAULT 'TEXT'")
+                database.execSQL("ALTER TABLE pending_commands ADD COLUMN mediaId TEXT")
+                database.execSQL("ALTER TABLE pending_commands ADD COLUMN uploadId TEXT")
+                database.execSQL("ALTER TABLE pending_commands ADD COLUMN mediaPath TEXT")
             }
         }
     }

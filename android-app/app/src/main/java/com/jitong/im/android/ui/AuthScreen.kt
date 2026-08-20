@@ -27,13 +27,22 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.snapshotFlow
 import androidx.compose.runtime.setValue
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.graphics.asImageBitmap
+import android.graphics.BitmapFactory
+import androidx.compose.foundation.Image
+import androidx.compose.foundation.clickable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.window.Dialog
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.jitong.im.android.auth.SessionState
 import com.jitong.im.android.contact.ConversationSummary
@@ -335,6 +344,16 @@ private fun ConversationScreen(
 ) {
     val state by viewModel.state.collectAsStateWithLifecycle()
     val listState = rememberLazyListState()
+    val context = LocalContext.current
+    val imagePicker = rememberLauncherForActivityResult(
+        ActivityResultContracts.GetContent(),
+    ) { uri ->
+        if (uri == null) return@rememberLauncherForActivityResult
+        val bytes = context.contentResolver.openInputStream(uri)?.use { input ->
+            input.readBytes()
+        } ?: return@rememberLauncherForActivityResult
+        viewModel.sendImage(bytes)
+    }
     LaunchedEffect(conversation.conversationId) {
         viewModel.open(conversation.conversationId)
     }
@@ -374,7 +393,51 @@ private fun ConversationScreen(
             items(state.messages, key = { it.messageId }) { message ->
                 Card(Modifier.fillMaxWidth()) {
                     Column(Modifier.padding(14.dp)) {
-                        Text(message.text)
+                        if (message.type == "IMAGE") {
+                            var preview by remember(message.messageId, message.mediaId, message.localMediaPath) {
+                                mutableStateOf<ByteArray?>(null)
+                            }
+                            var showFullImage by remember(message.messageId) {
+                                mutableStateOf(false)
+                            }
+                            LaunchedEffect(message.messageId, message.mediaId, message.localMediaPath) {
+                                preview = viewModel.loadMedia(message, thumbnail = true)
+                            }
+                            preview?.let { bytes ->
+                                BitmapFactory.decodeByteArray(bytes, 0, bytes.size)?.let { bitmap ->
+                                    Image(
+                                        bitmap = bitmap.asImageBitmap(),
+                                        contentDescription = "图片消息",
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .clickable(enabled = message.mediaId != null) {
+                                                showFullImage = true
+                                            },
+                                    )
+                                }
+                            } ?: Text("图片加载中…")
+                            if (showFullImage) {
+                                var fullImage by remember(message.messageId) {
+                                    mutableStateOf<ByteArray?>(null)
+                                }
+                                LaunchedEffect(message.messageId) {
+                                    fullImage = viewModel.loadMedia(message, thumbnail = false)
+                                }
+                                Dialog(onDismissRequest = { showFullImage = false }) {
+                                    fullImage
+                                        ?.let { BitmapFactory.decodeByteArray(it, 0, it.size) }
+                                        ?.let { bitmap ->
+                                            Image(
+                                                bitmap = bitmap.asImageBitmap(),
+                                                contentDescription = "完整图片",
+                                                modifier = Modifier.fillMaxWidth(),
+                                            )
+                                        } ?: Text("图片加载中…")
+                                }
+                            }
+                        } else {
+                            Text(message.text)
+                        }
                         Text(
                             when {
                                 message.localState == "SENDING" -> "发送中"
@@ -409,6 +472,13 @@ private fun ConversationScreen(
             modifier = Modifier.fillMaxWidth(),
         ) {
             Text("发送")
+        }
+        OutlinedButton(
+            onClick = { imagePicker.launch("image/*") },
+            enabled = conversation.status == "ACTIVE" && !state.loading,
+            modifier = Modifier.fillMaxWidth(),
+        ) {
+            Text("发送图片")
         }
         state.message?.let { Text(it, color = MaterialTheme.colorScheme.error) }
     }

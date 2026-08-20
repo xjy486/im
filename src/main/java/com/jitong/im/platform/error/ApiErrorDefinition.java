@@ -15,6 +15,12 @@ public enum ApiErrorDefinition {
     TEXT_TOO_LONG(HttpStatus.BAD_REQUEST, "Message text is too long"),
     TEXT_TOO_LARGE(HttpStatus.BAD_REQUEST, "Message text is too large"),
     FRAME_TOO_LARGE(HttpStatus.BAD_REQUEST, "Message frame is too large"),
+    MEDIA_INVALID(HttpStatus.BAD_REQUEST, "The image could not be safely decoded"),
+    MEDIA_DIMENSIONS_TOO_LARGE(HttpStatus.BAD_REQUEST, "The image dimensions are too large"),
+    MEDIA_TOO_LARGE(HttpStatus.PAYLOAD_TOO_LARGE, "The image is too large"),
+    MEDIA_FORBIDDEN(HttpStatus.FORBIDDEN, "The media is not available to this user"),
+    MEDIA_NOT_FOUND(HttpStatus.NOT_FOUND, "The media was not found"),
+    MEDIA_EXPIRED(HttpStatus.GONE, "The media has expired"),
     METHOD_NOT_ALLOWED(HttpStatus.METHOD_NOT_ALLOWED, "Request method is not supported"),
     RESOURCE_NOT_FOUND(HttpStatus.NOT_FOUND, "Requested resource was not found"),
     CONFLICT(HttpStatus.CONFLICT, "Request conflicts with current state"),
@@ -55,6 +61,8 @@ public enum ApiErrorDefinition {
             case FORBIDDEN -> FORBIDDEN;
             case METHOD_NOT_ALLOWED -> METHOD_NOT_ALLOWED;
             case NOT_FOUND -> RESOURCE_NOT_FOUND;
+            case PAYLOAD_TOO_LARGE -> MEDIA_TOO_LARGE;
+            case GONE -> MEDIA_EXPIRED;
             case CONFLICT -> CONFLICT;
             case UNSUPPORTED_MEDIA_TYPE -> UNSUPPORTED_MEDIA_TYPE;
             case TOO_MANY_REQUESTS -> RATE_LIMITED;

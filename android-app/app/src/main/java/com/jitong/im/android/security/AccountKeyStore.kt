@@ -36,6 +36,8 @@ class AccountKeyStore(context: Context) {
 
     fun mediaDirectoryName(accountNo: String): String = "account-media/${digest(accountNo)}"
 
+    fun mediaKeyAlias(accountNo: String): String = "jitong.media.${digest(accountNo)}"
+
     private fun preferenceKey(accountNo: String): String = "db_key_${digest(accountNo)}"
 
     private fun digest(value: String): String = MessageDigest

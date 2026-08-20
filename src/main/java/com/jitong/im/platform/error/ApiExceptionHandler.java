@@ -11,6 +11,7 @@ import com.jitong.im.auth.UserRetirementException;
 import com.jitong.im.auth.UserRetirementResult;
 import com.jitong.im.contact.ContactException;
 import com.jitong.im.message.MessageException;
+import com.jitong.im.media.MediaException;
 import com.jitong.im.sync.SyncException;
 import jakarta.servlet.http.HttpServletRequest;
 import org.slf4j.Logger;
@@ -23,6 +24,7 @@ import org.springframework.web.bind.MethodArgumentNotValidException;
 import org.springframework.web.bind.MissingServletRequestParameterException;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
+import org.springframework.web.multipart.MaxUploadSizeExceededException;
 import org.springframework.web.servlet.resource.NoResourceFoundException;
 import org.springframework.web.server.ResponseStatusException;
 
@@ -48,6 +50,11 @@ class ApiExceptionHandler {
     @ExceptionHandler(HttpMediaTypeNotSupportedException.class)
     ResponseEntity<ApiErrorResponse> unsupportedMediaType(HttpServletRequest request) {
         return response(ApiErrorDefinition.UNSUPPORTED_MEDIA_TYPE, request);
+    }
+
+    @ExceptionHandler(MaxUploadSizeExceededException.class)
+    ResponseEntity<ApiErrorResponse> mediaTooLarge(HttpServletRequest request) {
+        return response(ApiErrorDefinition.MEDIA_TOO_LARGE, request);
     }
 
     @ExceptionHandler(InvalidCredentialsException.class)
@@ -109,6 +116,14 @@ class ApiExceptionHandler {
     @ExceptionHandler(MessageException.class)
     ResponseEntity<ApiErrorResponse> messageFailure(
             MessageException exception,
+            HttpServletRequest request
+    ) {
+        return response(exception.definition(), request);
+    }
+
+    @ExceptionHandler(MediaException.class)
+    ResponseEntity<ApiErrorResponse> mediaFailure(
+            MediaException exception,
             HttpServletRequest request
     ) {
         return response(exception.definition(), request);

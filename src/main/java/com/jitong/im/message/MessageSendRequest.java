@@ -6,6 +6,8 @@ import java.util.UUID;
 
 record MessageSendRequest(
         @NotNull UUID clientMsgId,
-        String text
+        String type,
+        String text,
+        UUID mediaId
 ) {
 }

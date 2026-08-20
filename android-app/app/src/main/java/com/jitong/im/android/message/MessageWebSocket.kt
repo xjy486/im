@@ -45,6 +45,33 @@ internal class MessageWebSocket(
 
     @Synchronized
     fun send(conversationId: UUID, clientMsgId: UUID, text: String): Boolean {
+        return send(
+            conversationId = conversationId,
+            clientMsgId = clientMsgId,
+            type = "TEXT",
+            text = text,
+            mediaId = null,
+        )
+    }
+
+    @Synchronized
+    fun sendImage(conversationId: UUID, clientMsgId: UUID, mediaId: UUID): Boolean {
+        return send(
+            conversationId = conversationId,
+            clientMsgId = clientMsgId,
+            type = "IMAGE",
+            text = null,
+            mediaId = mediaId,
+        )
+    }
+
+    private fun send(
+        conversationId: UUID,
+        clientMsgId: UUID,
+        type: String,
+        text: String?,
+        mediaId: UUID?,
+    ): Boolean {
         val requestId = UUID.randomUUID()
         return socket?.send(
             gson.toJson(
@@ -52,7 +79,13 @@ internal class MessageWebSocket(
                     version = 1,
                     operation = "message.send",
                     requestId = requestId,
-                    body = SendBody(conversationId, clientMsgId, text),
+                    body = SendBody(
+                        conversationId = conversationId,
+                        clientMsgId = clientMsgId,
+                        type = type,
+                        text = text,
+                        mediaId = mediaId,
+                    ),
                 ),
             ),
         ) ?: false
@@ -161,7 +194,9 @@ private data class WireEnvelope(
 private data class SendBody(
     val conversationId: UUID,
     val clientMsgId: UUID,
-    val text: String,
+    val type: String,
+    val text: String?,
+    val mediaId: UUID?,
 )
 
 internal data class WireEvent(
@@ -180,6 +215,7 @@ internal data class WireMessageBody(
     val type: String?,
     val state: String?,
     val text: String?,
+    val mediaId: UUID?,
     val serverAcceptedAt: String?,
     val syncSeq: Long?,
     val deviceId: UUID?,

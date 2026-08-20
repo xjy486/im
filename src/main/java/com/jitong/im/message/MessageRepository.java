@@ -60,7 +60,7 @@ class MessageRepository {
         return jdbc.sql("""
                         SELECT id, conversation_id, sender_id, client_msg_id,
                                conversation_seq, type, state, text_content,
-                               server_accepted_at
+                               media_id, server_accepted_at
                         FROM messages
                         WHERE sender_id = :senderId AND client_msg_id = :clientMsgId
                         """)
@@ -112,11 +112,40 @@ class MessageRepository {
         return findById(messageId);
     }
 
+    MessageRecord insertImageMessage(
+            UUID messageId,
+            UUID conversationId,
+            long conversationSeq,
+            UUID senderId,
+            UUID clientMsgId,
+            UUID mediaId,
+            Instant acceptedAt
+    ) {
+        jdbc.sql("""
+                        INSERT INTO messages (
+                            id, conversation_id, conversation_seq, sender_id,
+                            client_msg_id, type, text_content, media_id, server_accepted_at
+                        ) VALUES (
+                            :id, :conversationId, :conversationSeq, :senderId,
+                            :clientMsgId, 'IMAGE', NULL, :mediaId, :acceptedAt
+                        )
+                        """)
+                .param("id", messageId)
+                .param("conversationId", conversationId)
+                .param("conversationSeq", conversationSeq)
+                .param("senderId", senderId)
+                .param("clientMsgId", clientMsgId)
+                .param("mediaId", mediaId)
+                .param("acceptedAt", utc(acceptedAt), Types.TIMESTAMP_WITH_TIMEZONE)
+                .update();
+        return findById(messageId);
+    }
+
     MessageRecord findById(UUID messageId) {
         return jdbc.sql("""
                         SELECT id, conversation_id, sender_id, client_msg_id,
                                conversation_seq, type, state, text_content,
-                               server_accepted_at
+                               media_id, server_accepted_at
                         FROM messages
                         WHERE id = :messageId
                         """)
@@ -164,7 +193,7 @@ class MessageRepository {
         return jdbc.sql("""
                         SELECT id, conversation_id, sender_id, client_msg_id,
                                conversation_seq, type, state, text_content,
-                               server_accepted_at
+                               media_id, server_accepted_at
                         FROM messages
                         WHERE conversation_id = :conversationId
                           AND conversation_seq > :afterSequence
@@ -203,6 +232,7 @@ class MessageRepository {
                 row.getString("type"),
                 row.getString("state"),
                 row.getString("text_content"),
+                row.getObject("media_id", UUID.class),
                 row.getObject("server_accepted_at", OffsetDateTime.class).toInstant());
     }
 

@@ -306,6 +306,69 @@ paths:
           $ref: '#/components/responses/ApiError'
         '503':
           $ref: '#/components/responses/ApiError'
+  /api/v1/media/images:
+    post:
+      operationId: uploadMessageImage
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - name: uploadId
+          in: query
+          required: true
+          schema: { type: string, format: uuid }
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required: [file]
+              properties:
+                file:
+                  type: string
+                  format: binary
+      responses:
+        '200':
+          description: Validated and normalized private temporary media
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/MediaUploadResponse' }
+        '400':
+          $ref: '#/components/responses/ApiError'
+        '401':
+          $ref: '#/components/responses/ApiError'
+        '413':
+          $ref: '#/components/responses/ApiError'
+    get:
+      description: Not supported
+      responses:
+        '405':
+          $ref: '#/components/responses/ApiError'
+  /api/v1/media/{mediaId}:
+    get:
+      operationId: downloadPrivateMedia
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - name: mediaId
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+        - name: variant
+          in: query
+          schema: { type: string, enum: [full, thumb], default: full }
+      responses:
+        '200':
+          description: Authorized normalized image bytes
+          content:
+            image/jpeg:
+              schema: { type: string, format: binary }
+        '401':
+          $ref: '#/components/responses/ApiError'
+        '403':
+          $ref: '#/components/responses/ApiError'
+        '404':
+          $ref: '#/components/responses/ApiError'
+        '410':
+          $ref: '#/components/responses/ApiError'
 
   /api/v1/sync:
     get:
@@ -472,25 +535,28 @@ components:
     SendTextMessageRequest:
       type: object
       additionalProperties: false
-      required: [clientMsgId, text]
+      required: [clientMsgId]
       properties:
         clientMsgId: { type: string, format: uuid }
-        text: { type: string, minLength: 1, maxLength: 4000 }
+        type: { type: string, enum: [TEXT, IMAGE] }
+        text: { type: [string, 'null'], minLength: 1, maxLength: 4000 }
+        mediaId: { type: [string, 'null'], format: uuid }
     Message:
       type: object
       additionalProperties: false
       required:
         [messageId, conversationId, senderId, clientMsgId, conversationSeq,
-         type, state, text, serverAcceptedAt]
+         type, state, text, mediaId, serverAcceptedAt]
       properties:
         messageId: { type: string, format: uuid }
         conversationId: { type: string, format: uuid }
         senderId: { type: string, format: uuid }
         clientMsgId: { type: string, format: uuid }
         conversationSeq: { type: integer, format: int64, minimum: 1 }
-        type: { const: TEXT }
+        type: { type: string, enum: [TEXT, IMAGE] }
         state: { const: ACTIVE }
-        text: { type: string }
+        text: { type: [string, 'null'] }
+        mediaId: { type: [string, 'null'], format: uuid }
         serverAcceptedAt: { type: string, format: date-time }
     ConversationMessagePage:
       type: object
@@ -502,6 +568,20 @@ components:
         messages:
           type: array
           items: { $ref: '#/components/schemas/Message' }
+    MediaUploadResponse:
+      type: object
+      additionalProperties: false
+      required: [version, mediaId, purpose, state, contentType, width, height, byteSize, sha256]
+      properties:
+        version: { const: 1 }
+        mediaId: { type: string, format: uuid }
+        purpose: { const: MESSAGE_IMAGE }
+        state: { const: TEMP }
+        contentType: { const: image/jpeg }
+        width: { type: integer, minimum: 1, maximum: 2048 }
+        height: { type: integer, minimum: 1, maximum: 2048 }
+        byteSize: { type: integer, minimum: 1, maximum: 5242880 }
+        sha256: { type: string, pattern: '^[0-9a-f]{64}$' }
     SyncEvent:
       type: object
       additionalProperties: false

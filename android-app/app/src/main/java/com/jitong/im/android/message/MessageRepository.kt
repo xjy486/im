@@ -2,9 +2,11 @@ package com.jitong.im.android.message
 
 import androidx.room.withTransaction
 import com.jitong.im.android.local.AccountDatabase
+import com.jitong.im.android.local.EncryptedMediaCache
 import com.jitong.im.android.local.LocalConversationReadStateEntity
 import com.jitong.im.android.local.LocalMessageEntity
 import com.jitong.im.android.local.PendingMessageCommandEntity
+import com.jitong.im.android.media.ImageNormalizer
 import com.jitong.im.android.local.SyncStateEntity
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.Dispatchers
@@ -14,6 +16,9 @@ import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withTimeoutOrNull
 import retrofit2.Response
+import okhttp3.MediaType.Companion.toMediaType
+import okhttp3.MultipartBody
+import okhttp3.RequestBody.Companion.toRequestBody
 import java.io.IOException
 import java.util.UUID
 import java.util.concurrent.ConcurrentHashMap
@@ -24,6 +29,8 @@ internal class MessageRepository(
     private val database: () -> AccountDatabase?,
     private val webSocket: MessageWebSocket,
     private val deviceId: () -> UUID? = { null },
+    private val mediaApi: com.jitong.im.android.media.MediaApi? = null,
+    private val mediaCache: () -> EncryptedMediaCache? = { null },
 ) {
     private val pendingAcks = ConcurrentHashMap<UUID, CompletableDeferred<MessageResponse>>()
     private val pendingFlushMutex = Mutex()
@@ -256,6 +263,79 @@ internal class MessageRepository(
         return clientMsgId
     }
 
+    suspend fun sendImage(conversationId: UUID, source: ByteArray): UUID {
+        val db = database() ?: throw IOException("No local account database is open")
+        val cache = mediaCache() ?: throw IOException("No encrypted media cache is open")
+        val normalized = try {
+            ImageNormalizer.normalize(source)
+        } catch (exception: IllegalArgumentException) {
+            throw MessageSendException(retryable = false, message = "Image is invalid")
+        } catch (exception: IllegalStateException) {
+            throw MessageSendException(retryable = false, message = "Image is invalid")
+        }
+        val clientMsgId = UUID.randomUUID()
+        val uploadId = UUID.randomUUID()
+        val createdAt = System.currentTimeMillis()
+        val localPath = cache.put("pending-$clientMsgId", normalized)
+        withContext(Dispatchers.IO) {
+            db.withTransaction {
+                db.pendingCommandDao().upsert(
+                    PendingMessageCommandEntity(
+                        clientMsgId = clientMsgId.toString(),
+                        conversationId = conversationId.toString(),
+                        text = "",
+                        createdAt = createdAt,
+                        status = SendCommandState.PENDING,
+                        type = "IMAGE",
+                        uploadId = uploadId.toString(),
+                        mediaPath = localPath,
+                    ),
+                )
+                db.messageDao().upsert(
+                    LocalMessageEntity(
+                        messageId = "local:$clientMsgId",
+                        conversationId = conversationId.toString(),
+                        senderId = "local",
+                        clientMsgId = clientMsgId.toString(),
+                        conversationSeq = null,
+                        type = "IMAGE",
+                        state = "ACTIVE",
+                        localState = "QUEUED",
+                        text = "",
+                        mediaId = null,
+                        localMediaPath = localPath,
+                        serverAcceptedAt = null,
+                        createdAt = createdAt,
+                    ),
+                )
+            }
+        }
+        pendingSendScheduler?.invoke()
+        if (automaticSendingEnabled && webSocket.isConnected()) {
+            flushOnlinePending()
+        }
+        return clientMsgId
+    }
+
+    suspend fun loadMedia(
+        message: LocalMessageEntity,
+        thumbnail: Boolean,
+    ): ByteArray? {
+        val cache = mediaCache() ?: return null
+        val mediaId = message.mediaId?.let(UUID::fromString)
+        if (mediaId == null) return cache.getByPath(message.localMediaPath)
+        val cacheName = if (thumbnail) "$mediaId-thumb" else mediaId.toString()
+        cache.get(cacheName)?.let { return it }
+        val response = mediaApi?.download(
+            mediaId = mediaId,
+            variant = if (thumbnail) "thumb" else "full",
+        ) ?: return null
+        if (!response.isSuccessful) return null
+        val bytes = response.body()?.bytes() ?: return null
+        cache.put(cacheName, bytes)
+        return bytes
+    }
+
     fun setPendingSendScheduler(scheduler: (() -> Unit)?) {
         pendingSendScheduler = scheduler
     }
@@ -339,15 +419,18 @@ internal class MessageRepository(
                 }
             }
             try {
-                val response = transport.send(
-                    UUID.fromString(command.conversationId),
-                    clientMsgId,
-                    command.text,
-                )
+                val conversationId = UUID.fromString(command.conversationId)
+                val response = if (command.type == "IMAGE") {
+                    val mediaId = uploadPendingImage(command)
+                    transport.sendImage(conversationId, clientMsgId, mediaId)
+                } else {
+                    transport.send(conversationId, clientMsgId, command.text)
+                }
                 upsertAccepted(response)
                 withContext(Dispatchers.IO) {
                     db.pendingCommandDao().delete(command.clientMsgId)
                 }
+                mediaCache()?.delete(command.mediaPath)
             } catch (exception: MessageSendException) {
                 withContext(Dispatchers.IO) {
                     db.withTransaction {
@@ -403,7 +486,10 @@ internal class MessageRepository(
         val acknowledgement = CompletableDeferred<MessageResponse>()
         pendingAcks[clientMsgId] = acknowledgement
         if (!webSocket.send(conversationId, clientMsgId, text)) {
-            val response = api.send(conversationId, SendMessageRequest(clientMsgId, text))
+            val response = api.send(
+                conversationId,
+                SendMessageRequest(clientMsgId = clientMsgId, text = text),
+            )
             if (!response.isSuccessful || response.body() == null) {
                 pendingAcks.remove(clientMsgId)
                 throw MessageSendException(
@@ -419,7 +505,10 @@ internal class MessageRepository(
             if (accepted != null) {
                 return accepted
             } else {
-                val response = api.send(conversationId, SendMessageRequest(clientMsgId, text))
+                val response = api.send(
+                    conversationId,
+                    SendMessageRequest(clientMsgId = clientMsgId, text = text),
+                )
                 if (!response.isSuccessful || response.body() == null) {
                     throw MessageSendException(
                         retryable = response.code() >= 500 || response.code() == 408,
@@ -437,6 +526,84 @@ internal class MessageRepository(
             clientMsgId: UUID,
             text: String,
         ): MessageResponse = sendOnline(conversationId, clientMsgId, text)
+
+        override suspend fun sendImage(
+            conversationId: UUID,
+            clientMsgId: UUID,
+            mediaId: UUID,
+        ): MessageResponse = sendOnlineImage(conversationId, clientMsgId, mediaId)
+    }
+
+    private suspend fun sendOnlineImage(
+        conversationId: UUID,
+        clientMsgId: UUID,
+        mediaId: UUID,
+    ): MessageResponse {
+        val acknowledgement = CompletableDeferred<MessageResponse>()
+        pendingAcks[clientMsgId] = acknowledgement
+        if (!webSocket.sendImage(conversationId, clientMsgId, mediaId)) {
+            return sendImageViaHttp(conversationId, clientMsgId, mediaId)
+        }
+        val accepted = withTimeoutOrNull(10_000) { acknowledgement.await() }
+        pendingAcks.remove(clientMsgId)
+        return accepted ?: sendImageViaHttp(conversationId, clientMsgId, mediaId)
+    }
+
+    private suspend fun sendImageViaHttp(
+        conversationId: UUID,
+        clientMsgId: UUID,
+        mediaId: UUID,
+    ): MessageResponse {
+        val response = api.send(
+            conversationId,
+            SendMessageRequest(
+                clientMsgId = clientMsgId,
+                type = "IMAGE",
+                mediaId = mediaId,
+            ),
+        )
+        if (response.isSuccessful && response.body() != null) {
+            pendingAcks.remove(clientMsgId)
+            return response.body()!!
+        }
+        pendingAcks.remove(clientMsgId)
+        throw MessageSendException(
+            retryable = response.code() >= 500 || response.code() == 408,
+            message = "Image message send failed with HTTP ${response.code()}",
+        )
+    }
+
+    private suspend fun uploadPendingImage(
+        command: PendingMessageCommandEntity,
+    ): UUID {
+        val api = mediaApi ?: throw MessageSendException(
+            retryable = false,
+            message = "Media upload is not configured",
+        )
+        val cache = mediaCache() ?: throw MessageSendException(
+            retryable = false,
+            message = "Encrypted media cache is not configured",
+        )
+        val uploadId = command.uploadId?.let(UUID::fromString) ?: throw MessageSendException(
+            retryable = false,
+            message = "Image upload identifier is missing",
+        )
+        val bytes = cache.getByPath(command.mediaPath) ?: throw MessageSendException(
+            retryable = false,
+            message = "Queued image is no longer available",
+        )
+        val body = bytes.toRequestBody("application/octet-stream".toMediaType())
+        val response = api.uploadImage(
+            uploadId,
+            MultipartBody.Part.createFormData("file", "image.bin", body),
+        )
+        if (response.isSuccessful && response.body() != null) {
+            return response.body()!!.mediaId
+        }
+        throw MessageSendException(
+            retryable = response.code() >= 500 || response.code() == 408,
+            message = "Image upload failed with HTTP ${response.code()}",
+        )
     }
 
     fun connect() {
@@ -505,7 +672,7 @@ internal class MessageRepository(
             }
         }
         if (syncSeq != null) {
-            withContext(Dispatchers.IO) {
+            val localMediaPath = withContext(Dispatchers.IO) {
                 db.withTransaction {
                     val dao = db.messageDao()
                     val existing = dao.findByClientMsgId(clientMsgId.toString())
@@ -522,6 +689,8 @@ internal class MessageRepository(
                             state = body.state ?: "ACTIVE",
                             localState = if (senderId == currentUserId) "SENT" else "RECEIVED",
                             text = body.text.orEmpty(),
+                            mediaId = body.mediaId?.toString(),
+                            localMediaPath = null,
                             serverAcceptedAt = body.serverAcceptedAt,
                             createdAt = existing?.createdAt ?: System.currentTimeMillis(),
                         ),
@@ -533,8 +702,10 @@ internal class MessageRepository(
                             lastFullRestoreAt = db.syncStateDao().current()?.lastFullRestoreAt,
                         ),
                     )
+                    existing?.localMediaPath
                 }
             }
+            if (body.mediaId != null) mediaCache()?.delete(localMediaPath)
             syncApi.acknowledge(SyncAckRequest(syncSeq)).syncBodyOrThrow()
         } else {
             withContext(Dispatchers.IO) {
@@ -553,6 +724,8 @@ internal class MessageRepository(
                         state = body.state ?: "ACTIVE",
                         localState = if (senderId == currentUserId) "SENT" else "RECEIVED",
                         text = body.text.orEmpty(),
+                        mediaId = body.mediaId?.toString(),
+                        localMediaPath = existing?.localMediaPath,
                         serverAcceptedAt = body.serverAcceptedAt,
                         createdAt = existing?.createdAt ?: System.currentTimeMillis(),
                     ),
@@ -569,6 +742,7 @@ internal class MessageRepository(
                 type = body.type ?: "TEXT",
                 state = body.state ?: "ACTIVE",
                 text = body.text.orEmpty(),
+                mediaId = body.mediaId,
                 serverAcceptedAt = body.serverAcceptedAt.orEmpty(),
             ),
         )
@@ -612,6 +786,7 @@ internal class MessageRepository(
         val db = database() ?: return
         withContext(Dispatchers.IO) {
             db.withTransaction {
+                val existing = db.messageDao().findByClientMsgId(response.clientMsgId.toString())
                 db.pendingCommandDao().delete(response.clientMsgId.toString())
                 db.messageDao().deleteByClientMsgId(response.clientMsgId.toString())
                 db.messageDao().upsert(response.toEntity(
@@ -620,12 +795,17 @@ internal class MessageRepository(
                     } else {
                         "SENT"
                     },
+                    localMediaPath = null,
                 ))
+                mediaCache()?.delete(existing?.localMediaPath)
             }
         }
     }
 
-    private fun MessageResponse.toEntity(localState: String = "SENT") = LocalMessageEntity(
+    private fun MessageResponse.toEntity(
+        localState: String = "SENT",
+        localMediaPath: String? = null,
+    ) = LocalMessageEntity(
         messageId = messageId.toString(),
         conversationId = conversationId.toString(),
         senderId = senderId.toString(),
@@ -634,7 +814,9 @@ internal class MessageRepository(
         type = type,
         state = state,
         localState = localState,
-        text = text,
+        text = text.orEmpty(),
+        mediaId = mediaId?.toString(),
+        localMediaPath = localMediaPath,
         serverAcceptedAt = serverAcceptedAt,
         createdAt = System.currentTimeMillis(),
     )

@@ -5,6 +5,12 @@ import java.util.UUID
 
 internal interface MessageSendTransport {
     suspend fun send(conversationId: UUID, clientMsgId: UUID, text: String): MessageResponse
+
+    suspend fun sendImage(
+        conversationId: UUID,
+        clientMsgId: UUID,
+        mediaId: UUID,
+    ): MessageResponse = error("Image transport is not configured")
 }
 
 internal class ApiMessageSendTransport(
@@ -17,7 +23,7 @@ internal class ApiMessageSendTransport(
     ): MessageResponse {
         val response = api.send(
             conversationId,
-            SendMessageRequest(clientMsgId, text),
+            SendMessageRequest(clientMsgId = clientMsgId, text = text),
         )
         if (response.isSuccessful && response.body() != null) {
             return response.body()!!

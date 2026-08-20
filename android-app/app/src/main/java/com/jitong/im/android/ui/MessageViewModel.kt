@@ -77,6 +77,18 @@ internal class MessageViewModel(
         }
     }
 
+    fun sendImage(source: ByteArray) {
+        val conversationId = _state.value.conversationId ?: return
+        viewModelScope.launch {
+            _state.value = _state.value.copy(message = null)
+            runCatching { repository.sendImage(conversationId, source) }
+                .onFailure { _state.value = _state.value.copy(message = "图片发送失败，请稍后重试") }
+        }
+    }
+
+    suspend fun loadMedia(message: LocalMessageEntity, thumbnail: Boolean): ByteArray? =
+        repository.loadMedia(message, thumbnail)
+
     fun retry(clientMsgId: UUID) {
         viewModelScope.launch {
             runCatching { repository.retryPending(clientMsgId) }

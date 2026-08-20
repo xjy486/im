@@ -43,6 +43,7 @@ final class MessageWire {
                 message.type(),
                 message.state(),
                 message.text(),
+                message.mediaId(),
                 message.serverAcceptedAt(),
                 syncSeq);
     }
@@ -92,6 +93,7 @@ final class MessageWire {
             String type,
             String state,
             String text,
+            UUID mediaId,
             java.time.Instant serverAcceptedAt,
             Long syncSeq
     ) {
