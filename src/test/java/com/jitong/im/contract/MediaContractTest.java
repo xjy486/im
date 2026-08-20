@@ -81,6 +81,10 @@ class MediaContractTest extends ContractTestEnvironment {
         ResponseEntity<byte[]> peerDownload = download(bobToken, mediaId, "thumb");
         assertThat(peerDownload.getStatusCode()).isEqualTo(HttpStatus.OK);
         assertThat(peerDownload.getBody()).isNotEmpty();
+        BufferedImage thumbnail = ImageIO.read(
+                new java.io.ByteArrayInputStream(peerDownload.getBody()));
+        assertThat(thumbnail.getWidth()).isEqualTo(320);
+        assertThat(thumbnail.getHeight()).isEqualTo(160);
 
         ResponseEntity<JsonNode> forbidden = exchange(
                 HttpMethod.GET,
@@ -105,6 +109,40 @@ class MediaContractTest extends ContractTestEnvironment {
 
         assertThat(response.getStatusCode()).isEqualTo(HttpStatus.BAD_REQUEST);
         assertThat(response.getBody().get("code").asText()).isEqualTo("MEDIA_INVALID");
+    }
+
+    @Test
+    void rejects_uploads_that_exceed_the_multipart_size_limit() throws Exception {
+        TestUser alice = createUser("Alice");
+        String token = login(alice.accountNo(), "media-too-large");
+
+        ResponseEntity<JsonNode> response = upload(
+                token,
+                UUID.randomUUID(),
+                new byte[10 * 1024 * 1024 + 1],
+                "too-large.jpg");
+
+        assertThat(response.getStatusCode()).isEqualTo(HttpStatus.PAYLOAD_TOO_LARGE);
+        assertThat(response.getBody().get("code").asText()).isEqualTo("MEDIA_TOO_LARGE");
+    }
+
+    @Test
+    void rejects_images_that_exceed_the_decode_pixel_limit() throws Exception {
+        TestUser alice = createUser("Alice");
+        String token = login(alice.accountNo(), "media-too-many-pixels");
+
+        BufferedImage source = new BufferedImage(5000, 5000, BufferedImage.TYPE_BYTE_BINARY);
+        ByteArrayOutputStream encoded = new ByteArrayOutputStream();
+        ImageIO.write(source, "png", encoded);
+
+        ResponseEntity<JsonNode> response = upload(
+                token,
+                UUID.randomUUID(),
+                encoded.toByteArray(),
+                "too-many-pixels.png");
+
+        assertThat(response.getStatusCode()).isEqualTo(HttpStatus.BAD_REQUEST);
+        assertThat(response.getBody().get("code").asText()).isEqualTo("MEDIA_DIMENSIONS_TOO_LARGE");
     }
 
     private ResponseEntity<JsonNode> upload(
