@@ -36,6 +36,7 @@ dependencies {
     implementation("com.h2database:h2:2.3.232")
     testImplementation(kotlin("test"))
     testImplementation("org.junit.jupiter:junit-jupiter:5.11.3")
+    testImplementation("com.squareup.okhttp3:mockwebserver:4.12.0")
 }
 
 tasks.test {

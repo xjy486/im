@@ -6,6 +6,7 @@ import java.nio.file.Files
 import java.nio.file.Path
 import java.security.SecureRandom
 import java.util.Base64
+import java.sql.ResultSet
 import kotlin.io.path.createDirectories
 import kotlin.io.path.deleteIfExists
 
@@ -69,6 +70,52 @@ class LocalDatabaseManager(
                         SELECT 1, 0
                         WHERE NOT EXISTS (
                             SELECT 1 FROM desktop_sync_state WHERE id = 1
+                        )
+                        """.trimIndent())
+                    statement.executeUpdate(
+                        """
+                        CREATE TABLE IF NOT EXISTS local_conversations (
+                            conversation_id VARCHAR(36) PRIMARY KEY,
+                            peer_user_id VARCHAR(36) NOT NULL,
+                            peer_account_no VARCHAR(11) NOT NULL,
+                            peer_display_name VARCHAR(255) NOT NULL,
+                            status VARCHAR(32) NOT NULL,
+                            relationship VARCHAR(32) NOT NULL,
+                            blocked_by_me BOOLEAN NOT NULL,
+                            read_seq BIGINT NOT NULL,
+                            peer_read_seq BIGINT NOT NULL,
+                            updated_at BIGINT NOT NULL
+                        )
+                        """.trimIndent())
+                    statement.executeUpdate(
+                        """
+                        CREATE TABLE IF NOT EXISTS local_messages (
+                            message_id VARCHAR(64) PRIMARY KEY,
+                            conversation_id VARCHAR(36) NOT NULL,
+                            sender_id VARCHAR(36) NOT NULL,
+                            client_msg_id VARCHAR(36) NOT NULL,
+                            conversation_seq BIGINT,
+                            type VARCHAR(32) NOT NULL,
+                            state VARCHAR(32) NOT NULL,
+                            local_state VARCHAR(32) NOT NULL,
+                            text_content CLOB NOT NULL,
+                            server_accepted_at VARCHAR(64),
+                            created_at BIGINT NOT NULL,
+                            UNIQUE (conversation_id, client_msg_id)
+                        )
+                        """.trimIndent())
+                    statement.executeUpdate(
+                        """
+                        CREATE INDEX IF NOT EXISTS local_messages_conversation_idx
+                        ON local_messages (conversation_id, conversation_seq, created_at)
+                        """.trimIndent())
+                    statement.executeUpdate(
+                        """
+                        CREATE TABLE IF NOT EXISTS local_read_states (
+                            conversation_id VARCHAR(36) NOT NULL,
+                            user_id VARCHAR(36) NOT NULL,
+                            read_seq BIGINT NOT NULL,
+                            PRIMARY KEY (conversation_id, user_id)
                         )
                         """.trimIndent())
                 }
@@ -192,6 +239,282 @@ class LocalDatabase internal constructor(
         }
     }
 
+    fun upsertConversation(conversation: LocalConversation) {
+        pool.connection.use { connection ->
+            connection.prepareStatement(
+                """
+                MERGE INTO local_conversations (
+                    conversation_id, peer_user_id, peer_account_no, peer_display_name,
+                    status, relationship, blocked_by_me, read_seq, peer_read_seq, updated_at
+                ) KEY(conversation_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """.trimIndent()).use { statement ->
+                statement.setString(1, conversation.conversationId)
+                statement.setString(2, conversation.peerUserId)
+                statement.setString(3, conversation.peerAccountNo)
+                statement.setString(4, conversation.peerDisplayName)
+                statement.setString(5, conversation.status)
+                statement.setString(6, conversation.relationship)
+                statement.setBoolean(7, conversation.blockedByMe)
+                statement.setLong(8, conversation.readSeq)
+                statement.setLong(9, conversation.peerReadSeq)
+                statement.setLong(10, conversation.updatedAt)
+                statement.executeUpdate()
+            }
+        }
+    }
+
+    fun replaceConversations(conversations: List<LocalConversation>) {
+        pool.connection.use { connection ->
+            connection.autoCommit = false
+            try {
+                connection.createStatement().use { statement ->
+                    statement.executeUpdate("DELETE FROM local_conversations")
+                }
+                connection.prepareStatement(
+                    """
+                    INSERT INTO local_conversations (
+                        conversation_id, peer_user_id, peer_account_no, peer_display_name,
+                        status, relationship, blocked_by_me, read_seq, peer_read_seq, updated_at
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    """.trimIndent()).use { statement ->
+                    conversations.forEach { conversation ->
+                        statement.setString(1, conversation.conversationId)
+                        statement.setString(2, conversation.peerUserId)
+                        statement.setString(3, conversation.peerAccountNo)
+                        statement.setString(4, conversation.peerDisplayName)
+                        statement.setString(5, conversation.status)
+                        statement.setString(6, conversation.relationship)
+                        statement.setBoolean(7, conversation.blockedByMe)
+                        statement.setLong(8, conversation.readSeq)
+                        statement.setLong(9, conversation.peerReadSeq)
+                        statement.setLong(10, conversation.updatedAt)
+                        statement.addBatch()
+                    }
+                    statement.executeBatch()
+                }
+                connection.commit()
+            } catch (exception: RuntimeException) {
+                connection.rollback()
+                throw exception
+            } finally {
+                connection.autoCommit = true
+            }
+        }
+    }
+
+    fun updateConversationReadProgress(
+        conversationId: String,
+        readSeq: Long,
+        peerReadSeq: Long,
+    ) {
+        require(readSeq >= 0) { "readSeq must not be negative" }
+        require(peerReadSeq >= 0) { "peerReadSeq must not be negative" }
+        pool.connection.use { connection ->
+            connection.prepareStatement(
+                """
+                UPDATE local_conversations
+                SET read_seq = GREATEST(read_seq, ?),
+                    peer_read_seq = GREATEST(peer_read_seq, ?),
+                    updated_at = ?
+                WHERE conversation_id = ?
+                """.trimIndent()).use { statement ->
+                statement.setLong(1, readSeq)
+                statement.setLong(2, peerReadSeq)
+                statement.setLong(3, System.currentTimeMillis())
+                statement.setString(4, conversationId)
+                statement.executeUpdate()
+            }
+        }
+    }
+
+    fun listConversations(): List<LocalConversation> {
+        pool.connection.use { connection ->
+            connection.prepareStatement(
+                """
+                SELECT conversation_id, peer_user_id, peer_account_no, peer_display_name,
+                       status, relationship, blocked_by_me, read_seq, peer_read_seq, updated_at
+                FROM local_conversations
+                ORDER BY updated_at DESC, peer_display_name, peer_account_no
+                """.trimIndent()).use { statement ->
+                statement.executeQuery().use { result ->
+                    return buildList {
+                        while (result.next()) {
+                            add(result.toLocalConversation())
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    fun upsertMessage(message: LocalMessage) {
+        pool.connection.use { connection ->
+            connection.prepareStatement(
+                """
+                MERGE INTO local_messages (
+                    message_id, conversation_id, sender_id, client_msg_id, conversation_seq,
+                    type, state, local_state, text_content, server_accepted_at, created_at
+                ) KEY(message_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """.trimIndent()).use { statement ->
+                statement.setString(1, message.messageId)
+                statement.setString(2, message.conversationId)
+                statement.setString(3, message.senderId)
+                statement.setString(4, message.clientMsgId)
+                if (message.conversationSeq == null) {
+                    statement.setObject(5, null)
+                } else {
+                    statement.setLong(5, message.conversationSeq)
+                }
+                statement.setString(6, message.type)
+                statement.setString(7, message.state)
+                statement.setString(8, message.localState)
+                statement.setString(9, message.text)
+                statement.setString(10, message.serverAcceptedAt)
+                statement.setLong(11, message.createdAt)
+                statement.executeUpdate()
+            }
+        }
+    }
+
+    fun replaceMessageByClientId(message: LocalMessage) {
+        pool.connection.use { connection ->
+            connection.autoCommit = false
+            try {
+                connection.prepareStatement(
+                    "DELETE FROM local_messages WHERE conversation_id = ? AND client_msg_id = ?")
+                    .use { statement ->
+                        statement.setString(1, message.conversationId)
+                        statement.setString(2, message.clientMsgId)
+                        statement.executeUpdate()
+                    }
+                connection.prepareStatement(
+                    """
+                    MERGE INTO local_messages (
+                        message_id, conversation_id, sender_id, client_msg_id, conversation_seq,
+                        type, state, local_state, text_content, server_accepted_at, created_at
+                    ) KEY(message_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    """.trimIndent()).use { statement ->
+                    statement.setString(1, message.messageId)
+                    statement.setString(2, message.conversationId)
+                    statement.setString(3, message.senderId)
+                    statement.setString(4, message.clientMsgId)
+                    if (message.conversationSeq == null) {
+                        statement.setObject(5, null)
+                    } else {
+                        statement.setLong(5, message.conversationSeq)
+                    }
+                    statement.setString(6, message.type)
+                    statement.setString(7, message.state)
+                    statement.setString(8, message.localState)
+                    statement.setString(9, message.text)
+                    statement.setString(10, message.serverAcceptedAt)
+                    statement.setLong(11, message.createdAt)
+                    statement.executeUpdate()
+                }
+                connection.commit()
+            } catch (exception: RuntimeException) {
+                connection.rollback()
+                throw exception
+            } finally {
+                connection.autoCommit = true
+            }
+        }
+    }
+
+    fun markMessageFailed(conversationId: String, clientMsgId: String) {
+        pool.connection.use { connection ->
+            connection.prepareStatement(
+                """
+                UPDATE local_messages
+                SET local_state = 'FAILED'
+                WHERE conversation_id = ? AND client_msg_id = ?
+                """.trimIndent()).use { statement ->
+                statement.setString(1, conversationId)
+                statement.setString(2, clientMsgId)
+                statement.executeUpdate()
+            }
+        }
+    }
+
+    fun listMessages(conversationId: String): List<LocalMessage> {
+        pool.connection.use { connection ->
+            connection.prepareStatement(
+                """
+                SELECT message_id, conversation_id, sender_id, client_msg_id, conversation_seq,
+                       type, state, local_state, text_content, server_accepted_at, created_at
+                FROM local_messages
+                WHERE conversation_id = ?
+                ORDER BY CASE WHEN conversation_seq IS NULL THEN 1 ELSE 0 END,
+                         conversation_seq, created_at, message_id
+                """.trimIndent()).use { statement ->
+                statement.setString(1, conversationId)
+                statement.executeQuery().use { result ->
+                    return buildList {
+                        while (result.next()) {
+                            add(result.toLocalMessage())
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    fun lastConversationSeq(conversationId: String): Long {
+        pool.connection.use { connection ->
+            connection.prepareStatement(
+                "SELECT COALESCE(MAX(conversation_seq), 0) FROM local_messages WHERE conversation_id = ?")
+                .use { statement ->
+                    statement.setString(1, conversationId)
+                    statement.executeQuery().use { result ->
+                        result.next()
+                        return result.getLong(1)
+                    }
+                }
+        }
+    }
+
+    fun upsertReadState(state: LocalReadState) {
+        pool.connection.use { connection ->
+            connection.prepareStatement(
+                """
+                MERGE INTO local_read_states (conversation_id, user_id, read_seq)
+                KEY(conversation_id, user_id)
+                VALUES (?, ?, ?)
+                """.trimIndent()).use { statement ->
+                statement.setString(1, state.conversationId)
+                statement.setString(2, state.userId)
+                statement.setLong(3, state.readSeq)
+                statement.executeUpdate()
+            }
+        }
+    }
+
+    fun readState(conversationId: String, userId: String): Long {
+        pool.connection.use { connection ->
+            connection.prepareStatement(
+                """
+                SELECT read_seq FROM local_read_states
+                WHERE conversation_id = ? AND user_id = ?
+                """.trimIndent()).use { statement ->
+                statement.setString(1, conversationId)
+                statement.setString(2, userId)
+                statement.executeQuery().use { result ->
+                    return if (result.next()) result.getLong("read_seq") else 0
+                }
+            }
+        }
+    }
+
+    fun clearMessageData() {
+        pool.connection.use { connection ->
+            connection.createStatement().use { statement ->
+                statement.executeUpdate("DELETE FROM local_messages")
+                statement.executeUpdate("DELETE FROM local_conversations")
+                statement.executeUpdate("DELETE FROM local_read_states")
+            }
+        }
+    }
+
     fun saveSession(session: StoredSession) {
         pool.connection.use { connection ->
             connection.prepareStatement(
@@ -243,6 +566,33 @@ class LocalDatabase internal constructor(
     override fun close() {
         pool.dispose()
     }
+
+    private fun ResultSet.toLocalConversation() = LocalConversation(
+        conversationId = getString("conversation_id"),
+        peerUserId = getString("peer_user_id"),
+        peerAccountNo = getString("peer_account_no"),
+        peerDisplayName = getString("peer_display_name"),
+        status = getString("status"),
+        relationship = getString("relationship"),
+        blockedByMe = getBoolean("blocked_by_me"),
+        readSeq = getLong("read_seq"),
+        peerReadSeq = getLong("peer_read_seq"),
+        updatedAt = getLong("updated_at"))
+
+    private fun ResultSet.toLocalMessage() = LocalMessage(
+        messageId = getString("message_id"),
+        conversationId = getString("conversation_id"),
+        senderId = getString("sender_id"),
+        clientMsgId = getString("client_msg_id"),
+        conversationSeq = getLong("conversation_seq").let {
+            if (wasNull()) null else it
+        },
+        type = getString("type"),
+        state = getString("state"),
+        localState = getString("local_state"),
+        text = getString("text_content"),
+        serverAcceptedAt = getString("server_accepted_at"),
+        createdAt = getLong("created_at"))
 }
 
 class EncryptedMediaCache internal constructor(
@@ -327,4 +677,37 @@ data class StoredSession(
     val deviceClass: DeviceClass,
     val accessTokenExpiresAt: String,
     val refreshTokenExpiresAt: String,
+)
+
+data class LocalConversation(
+    val conversationId: String,
+    val peerUserId: String,
+    val peerAccountNo: String,
+    val peerDisplayName: String,
+    val status: String,
+    val relationship: String,
+    val blockedByMe: Boolean,
+    val readSeq: Long,
+    val peerReadSeq: Long,
+    val updatedAt: Long,
+)
+
+data class LocalMessage(
+    val messageId: String,
+    val conversationId: String,
+    val senderId: String,
+    val clientMsgId: String,
+    val conversationSeq: Long?,
+    val type: String,
+    val state: String,
+    val localState: String,
+    val text: String,
+    val serverAcceptedAt: String?,
+    val createdAt: Long,
+)
+
+data class LocalReadState(
+    val conversationId: String,
+    val userId: String,
+    val readSeq: Long,
 )
