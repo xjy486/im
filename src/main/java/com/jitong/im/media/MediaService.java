@@ -8,6 +8,7 @@ import org.springframework.web.multipart.MultipartFile;
 
 import java.io.IOException;
 import java.time.Clock;
+import java.time.Duration;
 import java.time.Instant;
 import java.util.UUID;
 
@@ -96,6 +97,9 @@ public class MediaService {
         }
         if (!"MESSAGE_IMAGE".equals(media.purpose())) {
             throw new MediaException(ApiErrorDefinition.MEDIA_INVALID);
+        }
+        if (!media.createdAt().plus(Duration.ofHours(24)).isAfter(clock.instant())) {
+            throw new MediaException(ApiErrorDefinition.MEDIA_EXPIRED);
         }
         if ("EXPIRED".equals(media.state())) {
             throw new MediaException(ApiErrorDefinition.MEDIA_EXPIRED);

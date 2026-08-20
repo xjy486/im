@@ -426,11 +426,8 @@ internal class MessageRepository(
                 } else {
                     transport.send(conversationId, clientMsgId, command.text)
                 }
-                upsertAccepted(response)
-                withContext(Dispatchers.IO) {
-                    db.pendingCommandDao().delete(command.clientMsgId)
-                }
-                mediaCache()?.delete(command.mediaPath)
+                val localMediaPath = upsertAccepted(response)
+                mediaCache()?.delete(localMediaPath)
             } catch (exception: MessageSendException) {
                 withContext(Dispatchers.IO) {
                     db.withTransaction {
@@ -782,9 +779,9 @@ internal class MessageRepository(
     private suspend fun upsertAccepted(
         response: MessageResponse,
         currentUserId: UUID? = null,
-    ) {
-        val db = database() ?: return
-        withContext(Dispatchers.IO) {
+    ): String? {
+        val db = database() ?: return null
+        return withContext(Dispatchers.IO) {
             db.withTransaction {
                 val existing = db.messageDao().findByClientMsgId(response.clientMsgId.toString())
                 db.pendingCommandDao().delete(response.clientMsgId.toString())
@@ -797,7 +794,7 @@ internal class MessageRepository(
                     },
                     localMediaPath = null,
                 ))
-                mediaCache()?.delete(existing?.localMediaPath)
+                existing?.localMediaPath
             }
         }
     }
