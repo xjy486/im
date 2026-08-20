@@ -56,6 +56,21 @@ class LocalDatabaseManager(
                         "ALTER TABLE session_state DROP COLUMN IF EXISTS access_token")
                     statement.executeUpdate(
                         "ALTER TABLE session_state DROP COLUMN IF EXISTS refresh_token")
+                    statement.executeUpdate(
+                        """
+                        CREATE TABLE IF NOT EXISTS desktop_sync_state (
+                            id INT PRIMARY KEY,
+                            last_sync_seq BIGINT NOT NULL
+                        )
+                        """.trimIndent())
+                    statement.executeUpdate(
+                        """
+                        INSERT INTO desktop_sync_state (id, last_sync_seq)
+                        SELECT 1, 0
+                        WHERE NOT EXISTS (
+                            SELECT 1 FROM desktop_sync_state WHERE id = 1
+                        )
+                        """.trimIndent())
                 }
             }
         } catch (exception: RuntimeException) {
@@ -149,6 +164,34 @@ class LocalDatabase internal constructor(
     val databasePath: Path,
     private val pool: JdbcConnectionPool,
 ) : AutoCloseable {
+    fun lastSyncSeq(): Long {
+        pool.connection.use { connection ->
+            connection.prepareStatement(
+                "SELECT last_sync_seq FROM desktop_sync_state WHERE id = 1")
+                .use { statement ->
+                    statement.executeQuery().use { result ->
+                        if (!result.next()) return 0
+                        return result.getLong("last_sync_seq")
+                    }
+                }
+        }
+    }
+
+    fun saveLastSyncSeq(syncSeq: Long) {
+        require(syncSeq >= 0) { "syncSeq must not be negative" }
+        pool.connection.use { connection ->
+            connection.prepareStatement(
+                """
+                MERGE INTO desktop_sync_state (id, last_sync_seq)
+                KEY(id) VALUES (1, ?)
+                """.trimIndent())
+                .use { statement ->
+                    statement.setLong(1, syncSeq)
+                    statement.executeUpdate()
+                }
+        }
+    }
+
     fun saveSession(session: StoredSession) {
         pool.connection.use { connection ->
             connection.prepareStatement(

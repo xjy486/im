@@ -63,6 +63,18 @@ final class MessageWire {
                 new SyncReadyBody(deviceId, deviceClass, highWatermark));
     }
 
+    static WireEnvelope conversationRead(ConversationReadState state, Long syncSeq) {
+        return new WireEnvelope(
+                1,
+                "conversation.read",
+                null,
+                new ConversationReadBody(
+                        state.conversationId(),
+                        state.userId(),
+                        state.readSeq(),
+                        syncSeq));
+    }
+
     record WireEnvelope(
             int version,
             String operation,
@@ -95,6 +107,14 @@ final class MessageWire {
             UUID deviceId,
             String deviceClass,
             long highWatermark
+    ) {
+    }
+
+    record ConversationReadBody(
+            UUID conversationId,
+            UUID userId,
+            long readSeq,
+            Long syncSeq
     ) {
     }
 }

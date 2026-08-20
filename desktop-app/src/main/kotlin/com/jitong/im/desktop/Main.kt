@@ -31,6 +31,8 @@ import com.jitong.im.desktop.auth.AuthApiException
 import com.jitong.im.desktop.auth.AuthClient
 import com.jitong.im.desktop.auth.DesktopAuthStore
 import com.jitong.im.desktop.auth.LoginOutcome
+import com.jitong.im.desktop.conversation.ConversationClient
+import com.jitong.im.desktop.conversation.DesktopConversationSummary
 import com.jitong.im.desktop.local.LocalDatabaseManager
 import com.jitong.im.desktop.local.MacOsKeychain
 import kotlinx.coroutines.Dispatchers
@@ -41,6 +43,7 @@ import java.util.UUID
 
 fun main() = application {
     val authStore = rememberDesktopAuthStore()
+    val conversationClient = rememberDesktopConversationClient()
     Window(
         onCloseRequest = {
             authStore.close()
@@ -49,9 +52,18 @@ fun main() = application {
         title = "Jitong") {
         MaterialTheme {
             Surface(modifier = Modifier.fillMaxSize()) {
-                DesktopApp(authStore)
+                DesktopApp(authStore, conversationClient)
             }
         }
+    }
+}
+
+@Composable
+private fun rememberDesktopConversationClient(): ConversationClient {
+    return remember {
+        ConversationClient(
+            System.getenv("JITONG_SERVER_URL")
+                ?: "https://127.0.0.1:8443")
     }
 }
 
@@ -75,13 +87,17 @@ private fun rememberDesktopAuthStore(): DesktopAuthStore {
 }
 
 @Composable
-private fun DesktopApp(authStore: DesktopAuthStore) {
+private fun DesktopApp(
+    authStore: DesktopAuthStore,
+    conversationClient: ConversationClient,
+) {
     var accountNo by remember { mutableStateOf("") }
     var password by remember { mutableStateOf("") }
     var challenge by remember { mutableStateOf<String?>(null) }
     var error by remember { mutableStateOf<String?>(null) }
     var session by remember { mutableStateOf(authStore.session) }
     var restoring by remember { mutableStateOf(true) }
+    var conversations by remember { mutableStateOf<List<DesktopConversationSummary>>(emptyList()) }
 
     LaunchedEffect(authStore) {
         runCatching {
@@ -97,6 +113,51 @@ private fun DesktopApp(authStore: DesktopAuthStore) {
     LaunchedEffect(session?.deviceId) {
         if (session == null) return@LaunchedEffect
         while (true) {
+            val current = authStore.session ?: return@LaunchedEffect
+            val syncResult = runCatching {
+                withContext(Dispatchers.IO) {
+                    val local = authStore.localDatabase()
+                        ?: error("PC local database is not open")
+                    var afterSeq = local.lastSyncSeq()
+                    var untilSeq: Long? = null
+                    var latest: List<DesktopConversationSummary>? = null
+                    do {
+                        val page = conversationClient.sync(
+                            current.accessToken,
+                            afterSeq,
+                            untilSeq)
+                        untilSeq = page.untilSeq
+                        if (page.events.any { it.eventType == "CONVERSATION_READ" }) {
+                            latest = conversationClient.list(current.accessToken)
+                        }
+                        afterSeq = page.nextAfterSeq
+                    } while (page.hasMore)
+                    conversationClient.acknowledge(current.accessToken, afterSeq)
+                    local.saveLastSyncSeq(afterSeq)
+                    latest ?: conversationClient.list(current.accessToken)
+                }
+            }
+            syncResult.onSuccess { latest ->
+                conversations = latest
+            }.onFailure {
+                if (it.message?.contains("HTTP 409") == true) {
+                    runCatching {
+                        withContext(Dispatchers.IO) {
+                            val local = authStore.localDatabase()
+                                ?: error("PC local database is not open")
+                            val latest = conversationClient.list(current.accessToken)
+                            local.saveLastSyncSeq(0)
+                            latest
+                        }
+                    }.onSuccess { latest ->
+                        conversations = latest
+                    }.onFailure { resetFailure ->
+                        error = messageFor(resetFailure)
+                    }
+                } else {
+                    error = messageFor(it)
+                }
+            }
             delay(30_000)
             runCatching {
                 withContext(Dispatchers.IO) { authStore.validateAccess() }
@@ -191,6 +252,23 @@ private fun DesktopApp(authStore: DesktopAuthStore) {
             Spacer(Modifier.height(20.dp))
             Text("Account ${session!!.accountNo}")
             Text("Local history is protected by H2 AES.")
+            Spacer(Modifier.height(20.dp))
+            if (conversations.isEmpty()) {
+                Text("No conversations yet.")
+            } else {
+                conversations.forEach { conversation ->
+                    Card(modifier = Modifier.fillMaxWidth()) {
+                        Column(Modifier.padding(16.dp)) {
+                            Text(
+                                "${conversation.peerDisplayName} · ${conversation.peerAccountNo}",
+                                style = MaterialTheme.typography.titleMedium)
+                            Text("My read progress: ${conversation.readSeq}")
+                            Text("Peer read progress: ${conversation.peerReadSeq}")
+                        }
+                    }
+                    Spacer(Modifier.height(8.dp))
+                }
+            }
             Spacer(Modifier.height(28.dp))
             Row {
                 Button(onClick = {

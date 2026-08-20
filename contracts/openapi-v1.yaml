@@ -193,6 +193,49 @@ paths:
               schema:
                 type: array
                 items: { $ref: '#/components/schemas/ConversationSummary' }
+  /api/v1/conversations/{conversationId}/read:
+    get:
+      operationId: getConversationReadState
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { $ref: '#/components/parameters/ConversationId' }
+      responses:
+        '200':
+          description: User-level read state for both C2C participants
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ConversationReadStatePage' }
+        '401':
+          $ref: '#/components/responses/ApiError'
+        '403':
+          $ref: '#/components/responses/ApiError'
+    post:
+      operationId: markConversationRead
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { $ref: '#/components/parameters/ConversationId' }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [readSeq]
+              properties:
+                readSeq: { type: integer, format: int64, minimum: 0 }
+      responses:
+        '200':
+          description: Monotonically advanced user-level read state
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ConversationReadStatePage' }
+        '400':
+          $ref: '#/components/responses/ApiError'
+        '401':
+          $ref: '#/components/responses/ApiError'
+        '403':
+          $ref: '#/components/responses/ApiError'
   /api/v1/conversations/{conversationId}/messages:
     get:
       operationId: listConversationMessages
@@ -369,7 +412,7 @@ components:
         relationship: { const: ACTIVE }
     ConversationSummary:
       type: object
-      required: [version, conversationId, peerUserId, peerAccountNo, peerDisplayName, status, relationship, blockedByMe]
+      required: [version, conversationId, peerUserId, peerAccountNo, peerDisplayName, status, relationship, blockedByMe, readSeq, peerReadSeq]
       properties:
         version: { const: 1 }
         conversationId: { type: string, format: uuid }
@@ -379,6 +422,28 @@ components:
         status: { type: string, enum: [ACTIVE, READ_ONLY, DISSOLVED] }
         relationship: { type: string, enum: [ACTIVE, READ_ONLY] }
         blockedByMe: { type: boolean }
+        readSeq: { type: integer, format: int64, minimum: 0 }
+        peerReadSeq: { type: integer, format: int64, minimum: 0 }
+    ConversationReadState:
+      type: object
+      additionalProperties: false
+      required: [conversationId, userId, readSeq]
+      properties:
+        conversationId: { type: string, format: uuid }
+        userId: { type: string, format: uuid }
+        readSeq: { type: integer, format: int64, minimum: 0 }
+    ConversationReadStatePage:
+      type: object
+      additionalProperties: false
+      required: [version, conversationId, states]
+      properties:
+        version: { const: 1 }
+        conversationId: { type: string, format: uuid }
+        states:
+          type: array
+          minItems: 2
+          maxItems: 2
+          items: { $ref: '#/components/schemas/ConversationReadState' }
     SendTextMessageRequest:
       type: object
       additionalProperties: false

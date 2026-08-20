@@ -10,6 +10,9 @@
       "$ref": "#/$defs/messageEnvelope"
     },
     {
+      "$ref": "#/$defs/conversationReadEnvelope"
+    },
+    {
       "$ref": "#/$defs/errorEnvelope"
     }
   ],
@@ -88,6 +91,24 @@
         }
       ]
     },
+    "conversationReadEnvelope": {
+      "allOf": [
+        {
+          "$ref": "#/$defs/baseEnvelope"
+        },
+        {
+          "type": "object",
+          "properties": {
+            "operation": {
+              "const": "conversation.read"
+            },
+            "body": {
+              "$ref": "#/$defs/conversationReadBody"
+            }
+          }
+        }
+      ]
+    },
     "syncReadyBody": {
       "type": "object",
       "additionalProperties": false,
@@ -154,6 +175,29 @@
         "serverAcceptedAt": {
           "type": "string",
           "format": "date-time"
+        },
+        "syncSeq": {
+          "type": ["integer", "null"],
+          "minimum": 1
+        }
+      }
+    },
+    "conversationReadBody": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["conversationId", "userId", "readSeq", "syncSeq"],
+      "properties": {
+        "conversationId": {
+          "type": "string",
+          "format": "uuid"
+        },
+        "userId": {
+          "type": "string",
+          "format": "uuid"
+        },
+        "readSeq": {
+          "type": "integer",
+          "minimum": 0
         },
         "syncSeq": {
           "type": ["integer", "null"],

@@ -2,6 +2,7 @@ package com.jitong.im.android.message
 
 import androidx.room.withTransaction
 import com.jitong.im.android.local.AccountDatabase
+import com.jitong.im.android.local.LocalConversationReadStateEntity
 import com.jitong.im.android.local.LocalMessageEntity
 import com.jitong.im.android.local.SyncStateEntity
 import kotlinx.coroutines.flow.Flow
@@ -41,6 +42,37 @@ internal class MessageRepository(
         }
     }
 
+    suspend fun openConversation(conversationId: UUID) {
+        val db = database() ?: return
+        val currentUserId = withContext(Dispatchers.IO) {
+            db.accountDao().current()?.userId?.let(UUID::fromString)
+        } ?: return
+        restoreConversation(conversationId, currentUserId, db)
+    }
+
+    suspend fun markRead(conversationId: UUID, readSeq: Long) {
+        require(readSeq >= 0) { "Read sequence must not be negative" }
+        val db = database() ?: return
+        val currentUserId = withContext(Dispatchers.IO) {
+            db.accountDao().current()?.userId?.let(UUID::fromString)
+        } ?: return
+        val current = withContext(Dispatchers.IO) {
+            db.conversationReadStateDao().find(
+                conversationId.toString(),
+                currentUserId.toString(),
+            )?.readSeq ?: 0L
+        }
+        val requested = ReadSeqPolicy.advance(current, readSeq)
+        if (requested == current) {
+            return
+        }
+        val readStates = syncApi.markRead(
+            conversationId,
+            ReadStateRequest(requested),
+        ).readBodyOrThrow()
+        applyReadStates(readStates)
+    }
+
     suspend fun synchronize(currentUserId: UUID, requestedUntil: Long) {
         val db = database() ?: return
         var afterSeq = withContext(Dispatchers.IO) {
@@ -69,6 +101,23 @@ internal class MessageRepository(
                 .forEach { conversationId ->
                     restoreConversation(conversationId, currentUserId, db)
                 }
+            page.events
+                .filter { it.eventType == "CONVERSATION_READ" && it.conversationId != null }
+                .mapNotNull { it.conversationId }
+                .distinct()
+                .map { conversationId ->
+                    syncApi.readStates(conversationId).readBodyOrThrow()
+                }
+                .toList()
+                .also { readStatePages ->
+                    withContext(Dispatchers.IO) {
+                        db.withTransaction {
+                            readStatePages.forEach { readStatePage ->
+                                applyReadStatesInTransaction(db, readStatePage)
+                            }
+                        }
+                    }
+                }
             val nextAfter = page.nextAfterSeq
             if (nextAfter <= afterSeq && page.hasMore) {
                 throw IOException("Sync cursor did not advance")
@@ -77,16 +126,16 @@ internal class MessageRepository(
             if (!page.hasMore && afterSeq < requestedUntil) {
                 throw IOException("Sync ended before the requested high watermark")
             }
-        }
-        withContext(Dispatchers.IO) {
-            db.withTransaction {
-            db.syncStateDao().upsert(
-                SyncStateEntity(
-                    deviceId = deviceId()?.toString().orEmpty(),
-                    lastSyncSeq = requestedUntil,
-                    lastFullRestoreAt = db.syncStateDao().current()?.lastFullRestoreAt,
-                ),
-            )
+            withContext(Dispatchers.IO) {
+                db.withTransaction {
+                    db.syncStateDao().upsert(
+                        SyncStateEntity(
+                            deviceId = deviceId()?.toString().orEmpty(),
+                            lastSyncSeq = afterSeq,
+                            lastFullRestoreAt = db.syncStateDao().current()?.lastFullRestoreAt,
+                        ),
+                    )
+                }
             }
         }
         syncApi.acknowledge(SyncAckRequest(requestedUntil)).syncBodyOrThrow()
@@ -98,6 +147,7 @@ internal class MessageRepository(
         withContext(Dispatchers.IO) {
             db.withTransaction {
                 db.messageDao().clearAll()
+                db.conversationReadStateDao().clearAll()
                 db.syncStateDao().upsert(
                     SyncStateEntity(
                         deviceId = deviceId()?.toString().orEmpty(),
@@ -110,6 +160,9 @@ internal class MessageRepository(
         conversations
             .forEach { conversation ->
                 restoreConversation(conversation.conversationId, currentUserId, db)
+                applyReadStates(
+                    syncApi.readStates(conversation.conversationId).readBodyOrThrow(),
+                )
             }
         withContext(Dispatchers.IO) {
             db.withTransaction {
@@ -129,12 +182,12 @@ internal class MessageRepository(
         conversationId: UUID,
         currentUserId: UUID,
         db: AccountDatabase,
-    ) {
+    ): Long {
         var afterConversationSeq = 0L
         while (true) {
             val history = api.history(conversationId, afterConversationSeq, 200).messageBodyOrThrow()
             if (history.messages.isEmpty()) {
-                return
+                return afterConversationSeq
             }
             withContext(Dispatchers.IO) {
                 db.withTransaction {
@@ -149,7 +202,7 @@ internal class MessageRepository(
             }
             val nextSequence = history.messages.last().conversationSeq
             if (nextSequence <= afterConversationSeq || history.messages.size < 200) {
-                return
+                return nextSequence
             }
             afterConversationSeq = nextSequence
         }
@@ -210,11 +263,48 @@ internal class MessageRepository(
 
     suspend fun apply(event: WireEvent, currentUserId: UUID) {
         val body = event.body ?: return
+        val db = database() ?: return
+        if (event.operation == "conversation.read") {
+            val conversationId = body.conversationId ?: return
+            val userId = body.userId ?: return
+            val syncSeq = body.syncSeq
+            if (syncSeq != null) {
+                val lastSyncSeq = withContext(Dispatchers.IO) {
+                    db.syncStateDao().current()?.lastSyncSeq ?: 0L
+                }
+                if (syncSeq <= lastSyncSeq) return
+                if (syncSeq > lastSyncSeq + 1) {
+                    synchronize(currentUserId, syncSeq)
+                    return
+                }
+            }
+            withContext(Dispatchers.IO) {
+                db.withTransaction {
+                    db.conversationReadStateDao().advance(
+                        conversationId.toString(),
+                        userId.toString(),
+                        body.readSeq ?: 0L,
+                    )
+                    if (syncSeq != null) {
+                        db.syncStateDao().upsert(
+                            SyncStateEntity(
+                                deviceId = deviceId()?.toString().orEmpty(),
+                                lastSyncSeq = syncSeq,
+                                lastFullRestoreAt = db.syncStateDao().current()?.lastFullRestoreAt,
+                            ),
+                        )
+                    }
+                }
+            }
+            if (syncSeq != null) {
+                syncApi.acknowledge(SyncAckRequest(syncSeq)).syncBodyOrThrow()
+            }
+            return
+        }
         val messageId = body.messageId ?: return
         val conversationId = body.conversationId ?: return
         val senderId = body.senderId ?: return
         val clientMsgId = body.clientMsgId ?: return
-        val db = database() ?: return
         val syncSeq = body.syncSeq
         if (syncSeq != null) {
             val lastSyncSeq = withContext(Dispatchers.IO) {
@@ -296,6 +386,37 @@ internal class MessageRepository(
         )
     }
 
+    private suspend fun applyReadStates(
+        page: ReadStatePageResponse,
+    ) {
+        val db = database() ?: return
+        withContext(Dispatchers.IO) {
+            db.withTransaction {
+                applyReadStatesInTransaction(db, page)
+            }
+        }
+    }
+
+    private fun applyReadStatesInTransaction(
+        db: AccountDatabase,
+        page: ReadStatePageResponse,
+    ) {
+        page.states.forEach { state ->
+            val existing = db.conversationReadStateDao().find(
+                state.conversationId.toString(),
+                state.userId.toString(),
+            )
+            db.conversationReadStateDao().advance(
+                state.conversationId.toString(),
+                state.userId.toString(),
+                ReadSeqPolicy.advance(
+                    existing?.readSeq ?: 0L,
+                    state.readSeq,
+                ),
+            )
+        }
+    }
+
     private suspend fun upsertAccepted(
         response: MessageResponse,
         currentUserId: UUID? = null,
@@ -336,6 +457,11 @@ internal class MessageRepository(
         if (isSuccessful && body() != null) return body()!!
         if (code() == 409) throw SyncResetRequiredException()
         throw IOException("Sync request failed with HTTP ${code()}")
+    }
+
+    private fun <T> Response<T>.readBodyOrThrow(): T {
+        if (isSuccessful && body() != null) return body()!!
+        throw IOException("Read state request failed with HTTP ${code()}")
     }
 
 }

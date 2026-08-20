@@ -94,6 +94,7 @@ class AccountLocalStore(
             .openHelperFactory(factory)
             .addMigrations(AccountDatabase.MIGRATION_1_2)
             .addMigrations(AccountDatabase.MIGRATION_2_3)
+            .addMigrations(AccountDatabase.MIGRATION_3_4)
             .build()
     }
 }

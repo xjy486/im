@@ -69,10 +69,42 @@ data class SyncStateEntity(
     val lastFullRestoreAt: Long?,
 )
 
+@Entity(
+    tableName = "local_conversation_read_state",
+    primaryKeys = ["conversationId", "userId"],
+)
+data class LocalConversationReadStateEntity(
+    val conversationId: String,
+    val userId: String,
+    val readSeq: Long,
+)
+
 @Dao
 interface LocalConversationDao {
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     fun upsert(conversation: LocalConversationEntity)
+}
+
+@Dao
+interface LocalConversationReadStateDao {
+    @Query(
+        """
+        INSERT INTO local_conversation_read_state (conversationId, userId, readSeq)
+        VALUES (:conversationId, :userId, :readSeq)
+        ON CONFLICT(conversationId, userId)
+        DO UPDATE SET readSeq = MAX(local_conversation_read_state.readSeq, excluded.readSeq)
+        """,
+    )
+    fun advance(conversationId: String, userId: String, readSeq: Long)
+
+    @Query(
+        "SELECT * FROM local_conversation_read_state " +
+            "WHERE conversationId = :conversationId AND userId = :userId LIMIT 1",
+    )
+    fun find(conversationId: String, userId: String): LocalConversationReadStateEntity?
+
+    @Query("DELETE FROM local_conversation_read_state")
+    fun clearAll()
 }
 
 @Dao
@@ -117,13 +149,15 @@ interface SyncStateDao {
         LocalConversationEntity::class,
         LocalMessageEntity::class,
         SyncStateEntity::class,
+        LocalConversationReadStateEntity::class,
     ],
-    version = 3,
+    version = 4,
     exportSchema = true,
 )
 abstract class AccountDatabase : RoomDatabase() {
     abstract fun accountDao(): LocalAccountDao
     abstract fun conversationDao(): LocalConversationDao
+    abstract fun conversationReadStateDao(): LocalConversationReadStateDao
     abstract fun messageDao(): LocalMessageDao
     abstract fun syncStateDao(): SyncStateDao
 
@@ -191,6 +225,23 @@ abstract class AccountDatabase : RoomDatabase() {
                 database.execSQL(
                     "INSERT OR IGNORE INTO sync_state (id, deviceId, lastSyncSeq, lastFullRestoreAt) " +
                         "VALUES (1, '', 0, NULL)",
+                )
+            }
+        }
+
+        val MIGRATION_3_4 = object : androidx.room.migration.Migration(3, 4) {
+            override fun migrate(
+                database: androidx.sqlite.db.SupportSQLiteDatabase,
+            ) {
+                database.execSQL(
+                    """
+                    CREATE TABLE IF NOT EXISTS local_conversation_read_state (
+                        conversationId TEXT NOT NULL,
+                        userId TEXT NOT NULL,
+                        readSeq INTEGER NOT NULL,
+                        PRIMARY KEY(conversationId, userId)
+                    )
+                    """.trimIndent(),
                 )
             }
         }

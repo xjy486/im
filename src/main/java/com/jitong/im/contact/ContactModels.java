@@ -57,6 +57,8 @@ record ConversationSummary(
         String peerDisplayName,
         String status,
         String relationship,
-        boolean blockedByMe
+        boolean blockedByMe,
+        long readSeq,
+        long peerReadSeq
 ) {
 }

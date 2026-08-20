@@ -426,6 +426,8 @@ class ContactRepository {
                         SELECT cc.conversation_id,
                                CASE WHEN cc.user_low_id = :userId THEN cc.user_high_id ELSE cc.user_low_id END AS peer_id,
                                u.account_no, u.display_name, c.status,
+                               COALESCE(my_read.read_seq, 0) AS read_seq,
+                               COALESCE(peer_read.read_seq, 0) AS peer_read_seq,
                                CASE WHEN c.status = 'ACTIVE' THEN 'ACTIVE' ELSE 'READ_ONLY' END AS relationship,
                                EXISTS (
                                    SELECT 1
@@ -439,6 +441,15 @@ class ContactRepository {
                         FROM c2c_conversations cc
                         JOIN conversations c ON c.id = cc.conversation_id
                         JOIN users u ON u.id = CASE WHEN cc.user_low_id = :userId THEN cc.user_high_id ELSE cc.user_low_id END
+                        LEFT JOIN conversation_read_states my_read
+                          ON my_read.conversation_id = cc.conversation_id
+                         AND my_read.user_id = :userId
+                        LEFT JOIN conversation_read_states peer_read
+                          ON peer_read.conversation_id = cc.conversation_id
+                         AND peer_read.user_id = CASE
+                             WHEN cc.user_low_id = :userId THEN cc.user_high_id
+                             ELSE cc.user_low_id
+                         END
                         WHERE cc.user_low_id = :userId OR cc.user_high_id = :userId
                         ORDER BY c.created_at DESC
                         """)
@@ -451,7 +462,9 @@ class ContactRepository {
                         row.getString("display_name"),
                         row.getString("status"),
                         row.getString("relationship"),
-                        row.getBoolean("blocked_by_me")))
+                        row.getBoolean("blocked_by_me"),
+                        row.getLong("read_seq"),
+                        row.getLong("peer_read_seq")))
                 .list();
     }
 

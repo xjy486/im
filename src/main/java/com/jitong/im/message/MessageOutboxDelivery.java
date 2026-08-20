@@ -17,11 +17,17 @@ class MessageOutboxDelivery implements OutboxDelivery {
 
     private final ObjectMapper objectMapper;
     private final MessageRepository messageRepository;
+    private final ReadStateRepository readStateRepository;
     private final ConcurrentHashMap<UUID, Set<WebSocketSession>> sessionsByDevice = new ConcurrentHashMap<>();
 
-    MessageOutboxDelivery(ObjectMapper objectMapper, MessageRepository messageRepository) {
+    MessageOutboxDelivery(
+            ObjectMapper objectMapper,
+            MessageRepository messageRepository,
+            ReadStateRepository readStateRepository
+    ) {
         this.objectMapper = objectMapper;
         this.messageRepository = messageRepository;
+        this.readStateRepository = readStateRepository;
     }
 
     void register(UUID deviceId, WebSocketSession session) {
@@ -48,15 +54,31 @@ class MessageOutboxDelivery implements OutboxDelivery {
         if (sessions == null || sessions.isEmpty()) {
             return false;
         }
-        MessageRecord message = messageRepository.findById(record.entityId());
+        MessageWire.WireEnvelope envelope = switch (record.eventType()) {
+            case "MESSAGE_CREATED" -> MessageWire.created(
+                    messageRepository.findById(record.entityId()),
+                    record.syncSeq());
+            case "CONVERSATION_READ" -> MessageWire.conversationRead(
+                    readStateRepository.findState(record.conversationId(), record.entityId()),
+                    record.syncSeq());
+            default -> null;
+        };
+        if (envelope == null) {
+            return false;
+        }
+        final String payload;
+        try {
+            payload = objectMapper.writeValueAsString(envelope);
+        } catch (IOException ignored) {
+            return false;
+        }
         boolean delivered = false;
         for (WebSocketSession session : sessions) {
             if (!session.isOpen()) {
                 continue;
             }
             try {
-                session.sendMessage(new TextMessage(objectMapper.writeValueAsString(
-                        MessageWire.created(message, record.syncSeq()))));
+                session.sendMessage(new TextMessage(payload));
                 delivered = true;
             } catch (IOException ignored) {
                 // Leave the durable outbox row pending for a later retry.

@@ -40,7 +40,7 @@ internal class MessageViewModel(
         )
         observeJob = viewModelScope.launch {
             launch {
-                runCatching { repository.loadHistory(conversationId) }
+                runCatching { repository.openConversation(conversationId) }
                     .onFailure { _state.value = _state.value.copy(message = "历史消息加载失败") }
                     .also { _state.value = _state.value.copy(loading = false) }
             }
@@ -52,6 +52,14 @@ internal class MessageViewModel(
 
     fun setDraft(value: String) {
         _state.value = _state.value.copy(draft = value.take(4000), message = null)
+    }
+
+    fun markRead(readSeq: Long) {
+        val conversationId = _state.value.conversationId ?: return
+        viewModelScope.launch {
+            runCatching { repository.markRead(conversationId, readSeq) }
+                .onFailure { _state.value = _state.value.copy(message = "已读状态同步失败") }
+        }
     }
 
     fun send() {

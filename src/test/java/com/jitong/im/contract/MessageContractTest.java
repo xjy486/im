@@ -229,8 +229,147 @@ class MessageContractTest extends ContractTestEnvironment {
         assertThat(pcPage.get("events").get(2).get("syncSeq").asLong()).isEqualTo(3);
     }
 
+    @Test
+    void maintains_read_progress_per_user_and_does_not_advance_it_from_sync_or_notifications() throws Exception {
+        TestUser alice = createUser("Alice");
+        TestUser bob = createUser("Bob");
+        String aliceMobileToken = login(alice.accountNo(), "alice-read-mobile", "MOBILE");
+        String alicePcToken = login(alice.accountNo(), "alice-read-pc", "PC");
+        String bobToken = login(bob.accountNo(), "bob-read-mobile", "MOBILE");
+
+        JsonNode request = post(
+                "/api/v1/contact-requests",
+                aliceMobileToken,
+                Map.of("accountNo", bob.accountNo(), "verification", ""));
+        UUID requestId = UUID.fromString(request.get("requestId").asText());
+        UUID conversationId = UUID.fromString(exchange(
+                HttpMethod.POST,
+                "/api/v1/contact-requests/" + requestId + "/accept",
+                bobToken,
+                null).getBody().get("conversationId").asText());
+
+        post(
+                "/api/v1/conversations/" + conversationId + "/messages",
+                bobToken,
+                Map.of("clientMsgId", UUID.randomUUID(), "text", "read me"));
+
+        JsonNode beforeRead = exchange(
+                HttpMethod.GET,
+                "/api/v1/conversations/" + conversationId + "/read",
+                alicePcToken,
+                null).getBody();
+        assertThat(readSeqFor(beforeRead, alice.userId())).isZero();
+        assertThat(readSeqFor(beforeRead, bob.userId())).isZero();
+
+        JsonNode marked = post(
+                "/api/v1/conversations/" + conversationId + "/read",
+                aliceMobileToken,
+                Map.of("readSeq", 1));
+        assertThat(readSeqFor(marked, alice.userId())).isEqualTo(1);
+
+        JsonNode pcView = exchange(
+                HttpMethod.GET,
+                "/api/v1/conversations/" + conversationId + "/read",
+                alicePcToken,
+                null).getBody();
+        assertThat(readSeqFor(pcView, alice.userId())).isEqualTo(1);
+        assertThat(readSeqFor(pcView, bob.userId())).isZero();
+
+        JsonNode peerView = exchange(
+                HttpMethod.GET,
+                "/api/v1/conversations/" + conversationId + "/read",
+                bobToken,
+                null).getBody();
+        assertThat(readSeqFor(peerView, alice.userId())).isEqualTo(1);
+
+        JsonNode older = post(
+                "/api/v1/conversations/" + conversationId + "/read",
+                alicePcToken,
+                Map.of("readSeq", 0));
+        assertThat(readSeqFor(older, alice.userId())).isEqualTo(1);
+
+        JsonNode syncBeforeOpen = exchange(
+                HttpMethod.GET,
+                "/api/v1/sync?after=0&until=1",
+                alicePcToken,
+                null).getBody();
+        assertThat(syncBeforeOpen.get("events")).hasSize(1);
+        assertThat(syncBeforeOpen.get("events").get(0).get("eventType").asText())
+                .isEqualTo("MESSAGE_CREATED");
+    }
+
+    @Test
+    void broadcasts_one_user_level_read_event_to_the_other_device_and_peer() throws Exception {
+        TestUser alice = createUser("Alice");
+        TestUser bob = createUser("Bob");
+        String aliceMobileToken = login(alice.accountNo(), "alice-read-broadcast-mobile", "MOBILE");
+        String alicePcToken = login(alice.accountNo(), "alice-read-broadcast-pc", "PC");
+        String bobToken = login(bob.accountNo(), "bob-read-broadcast-mobile", "MOBILE");
+
+        JsonNode request = post(
+                "/api/v1/contact-requests",
+                aliceMobileToken,
+                Map.of("accountNo", bob.accountNo(), "verification", ""));
+        UUID requestId = UUID.fromString(request.get("requestId").asText());
+        UUID conversationId = UUID.fromString(exchange(
+                HttpMethod.POST,
+                "/api/v1/contact-requests/" + requestId + "/accept",
+                bobToken,
+                null).getBody().get("conversationId").asText());
+        post(
+                "/api/v1/conversations/" + conversationId + "/messages",
+                bobToken,
+                Map.of("clientMsgId", UUID.randomUUID(), "text", "broadcast me"));
+
+        CountDownLatch pcRead = new CountDownLatch(1);
+        CountDownLatch peerRead = new CountDownLatch(1);
+        AtomicReference<JsonNode> pcBody = new AtomicReference<>();
+        AtomicReference<JsonNode> peerBody = new AtomicReference<>();
+        OkHttpClient client = new OkHttpClient();
+        WebSocket pc = openWebSocket(client, alicePcToken, operation -> {
+            if ("conversation.read".equals(operation.get("operation").asText())
+                    && operation.get("body").get("userId").asText().equals(alice.userId().toString())) {
+                pcBody.set(operation.get("body"));
+                pcRead.countDown();
+            }
+        });
+        WebSocket peer = openWebSocket(client, bobToken, operation -> {
+            if ("conversation.read".equals(operation.get("operation").asText())
+                    && operation.get("body").get("userId").asText().equals(alice.userId().toString())) {
+                peerBody.set(operation.get("body"));
+                peerRead.countDown();
+            }
+        });
+
+        JsonNode marked = post(
+                "/api/v1/conversations/" + conversationId + "/read",
+                aliceMobileToken,
+                Map.of("readSeq", 1));
+
+        assertThat(readSeqFor(marked, alice.userId())).isEqualTo(1);
+        assertThat(pcRead.await(5, TimeUnit.SECONDS)).isTrue();
+        assertThat(peerRead.await(5, TimeUnit.SECONDS)).isTrue();
+        assertThat(pcBody.get().get("readSeq").asLong()).isEqualTo(1);
+        assertThat(peerBody.get().get("readSeq").asLong()).isEqualTo(1);
+        assertThat(pcBody.get().has("deviceId")).isFalse();
+        assertThat(peerBody.get().has("deviceClass")).isFalse();
+
+        pc.close(1000, "test complete");
+        peer.close(1000, "test complete");
+        client.dispatcher().executorService().shutdown();
+    }
+
     private JsonNode post(String path, String token, Object body) throws Exception {
         return exchange(HttpMethod.POST, path, token, body).getBody();
+    }
+
+    private long readSeqFor(JsonNode page, UUID userId) {
+        for (JsonNode state : page.get("states")) {
+            if (state.get("userId").asText().equals(userId.toString())) {
+                return state.get("readSeq").asLong();
+            }
+        }
+        throw new AssertionError("Missing read state for " + userId);
     }
 
     private WebSocket openWebSocket(

@@ -182,4 +182,6 @@ internal data class WireMessageBody(
     val deviceId: UUID?,
     val deviceClass: String?,
     val highWatermark: Long?,
+    val userId: UUID?,
+    val readSeq: Long?,
 )

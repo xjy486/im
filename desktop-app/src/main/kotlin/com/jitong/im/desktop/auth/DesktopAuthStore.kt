@@ -30,6 +30,8 @@ class DesktopAuthStore(
     var session: DesktopSession? = null
         private set
 
+    fun localDatabase(): LocalDatabase? = database
+
     fun login(accountNo: String, password: String): LoginOutcome {
         return try {
             val response = authClient.login(accountNo, password, installationId)

@@ -2,11 +2,15 @@ package com.jitong.im.android.ui
 
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
@@ -24,6 +28,7 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.runtime.snapshotFlow
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -328,13 +333,22 @@ private fun ConversationScreen(
     onBack: () -> Unit,
 ) {
     val state by viewModel.state.collectAsStateWithLifecycle()
+    val listState = rememberLazyListState()
     LaunchedEffect(conversation.conversationId) {
         viewModel.open(conversation.conversationId)
+    }
+    LaunchedEffect(state.messages.size) {
+        snapshotFlow { listState.layoutInfo.visibleItemsInfo.lastOrNull()?.index }
+            .collect { lastVisibleIndex ->
+                val readSeq = lastVisibleIndex
+                    ?.let { state.messages.getOrNull(it)?.conversationSeq }
+                    ?: return@collect
+                viewModel.markRead(readSeq)
+            }
     }
     Column(
         modifier = Modifier
             .fillMaxSize()
-            .verticalScroll(rememberScrollState())
             .padding(24.dp),
         verticalArrangement = Arrangement.spacedBy(16.dp),
     ) {
@@ -345,17 +359,18 @@ private fun ConversationScreen(
         if (conversation.status == "READ_ONLY") {
             Text("联系人关系已结束，历史消息保持只读。")
         }
-        Column(
+        LazyColumn(
+            state = listState,
             modifier = Modifier
                 .fillMaxWidth()
                 .weight(1f, fill = false)
-                .verticalScroll(rememberScrollState()),
+                .heightIn(max = 420.dp),
             verticalArrangement = Arrangement.spacedBy(8.dp),
         ) {
             if (state.messages.isEmpty()) {
-                Text("还没有消息")
+                item { Text("还没有消息") }
             }
-            state.messages.forEach { message ->
+            items(state.messages, key = { it.messageId }) { message ->
                 Card(Modifier.fillMaxWidth()) {
                     Column(Modifier.padding(14.dp)) {
                         Text(message.text)

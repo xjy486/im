@@ -58,4 +58,6 @@ internal data class ConversationSummary(
     val status: String,
     val relationship: String,
     val blockedByMe: Boolean,
+    val readSeq: Long = 0,
+    val peerReadSeq: Long = 0,
 )

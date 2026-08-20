@@ -20,6 +20,17 @@ internal interface SyncApi {
 
     @GET("api/v1/conversations")
     suspend fun conversations(): Response<List<SyncConversationResponse>>
+
+    @GET("api/v1/conversations/{conversationId}/read")
+    suspend fun readStates(
+        @retrofit2.http.Path("conversationId") conversationId: UUID,
+    ): Response<ReadStatePageResponse>
+
+    @POST("api/v1/conversations/{conversationId}/read")
+    suspend fun markRead(
+        @retrofit2.http.Path("conversationId") conversationId: UUID,
+        @Body request: ReadStateRequest,
+    ): Response<ReadStatePageResponse>
 }
 
 internal data class SyncPageResponse(
@@ -59,4 +70,20 @@ internal data class SyncConversationResponse(
     val status: String,
     val relationship: String,
     val blockedByMe: Boolean,
+)
+
+internal data class ReadStateRequest(
+    val readSeq: Long,
+)
+
+internal data class ReadStatePageResponse(
+    val version: Int,
+    val conversationId: UUID,
+    val states: List<ReadStateResponse>,
+)
+
+internal data class ReadStateResponse(
+    val conversationId: UUID,
+    val userId: UUID,
+    val readSeq: Long,
 )
