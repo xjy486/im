@@ -24,6 +24,7 @@ class MessageOutboxDelivery implements OutboxDelivery {
     private final DevicePushTokenService pushTokenService;
     private final FcmSender fcmSender;
     private final ConcurrentHashMap<UUID, Set<WebSocketSession>> sessionsByDevice = new ConcurrentHashMap<>();
+    private final Object sessionsLock = new Object();
 
     MessageOutboxDelivery(
             ObjectMapper objectMapper,
@@ -40,7 +41,9 @@ class MessageOutboxDelivery implements OutboxDelivery {
     }
 
     void register(UUID deviceId, WebSocketSession session) {
-        sessionsByDevice.computeIfAbsent(deviceId, ignored -> ConcurrentHashMap.newKeySet()).add(session);
+        synchronized (sessionsLock) {
+            sessionsByDevice.computeIfAbsent(deviceId, ignored -> ConcurrentHashMap.newKeySet()).add(session);
+        }
     }
 
     void unregister(UUID deviceId, WebSocketSession session) {
@@ -48,16 +51,20 @@ class MessageOutboxDelivery implements OutboxDelivery {
         if (sessions == null) {
             return;
         }
-        sessions.remove(session);
-        if (sessions.isEmpty()) {
-            sessionsByDevice.remove(deviceId, sessions);
+        synchronized (sessionsLock) {
+            sessions.remove(session);
+            if (sessions.isEmpty()) {
+                sessionsByDevice.remove(deviceId, sessions);
+            }
         }
     }
 
     @Override
     public boolean deliver(OutboxRecord record) {
         if (messageRepository.findUserIdForDevice(record.targetDeviceId()) == null) {
-            return false;
+            // A revoked or replaced device no longer has a delivery obligation. Its
+            // durable sync state is no longer readable by that device either.
+            return true;
         }
         Set<WebSocketSession> sessions = sessionsByDevice.get(record.targetDeviceId());
         if (sessions == null || sessions.isEmpty()) {
@@ -88,15 +95,22 @@ class MessageOutboxDelivery implements OutboxDelivery {
             return false;
         }
         boolean delivered = false;
-        for (WebSocketSession session : sessions) {
-            if (!session.isOpen()) {
-                continue;
+        synchronized (sessionsLock) {
+            sessions.removeIf(session -> !session.isOpen());
+            if (!sessions.isEmpty()) {
+                for (WebSocketSession session : sessions) {
+                    try {
+                        session.sendMessage(new TextMessage(payload));
+                        delivered = true;
+                    } catch (IOException ignored) {
+                        sessions.remove(session);
+                        // Leave the durable outbox row pending for a later retry if FCM
+                        // cannot provide a prompt either.
+                    }
+                }
             }
-            try {
-                session.sendMessage(new TextMessage(payload));
-                delivered = true;
-            } catch (IOException ignored) {
-                // Leave the durable outbox row pending for a later retry.
+            if (sessions.isEmpty()) {
+                sessionsByDevice.remove(record.targetDeviceId(), sessions);
             }
         }
         if (delivered || !"MESSAGE_CREATED".equals(record.eventType())) {
@@ -109,11 +123,12 @@ class MessageOutboxDelivery implements OutboxDelivery {
         if (!pushTokenService.isMobile(record.targetDeviceId())) {
             return true;
         }
-        FcmDeliveryResult result = fcmSender.send(
-                pushTokenService.find(record.targetDeviceId()),
-                "NEW_MESSAGE");
-        if (result == FcmDeliveryResult.PERMANENT_FAILURE) {
-            pushTokenService.clear(record.targetDeviceId());
+        String token = pushTokenService.find(record.targetDeviceId());
+        FcmDeliveryResult result = fcmSender.sendNewMessage(token);
+        if (result == FcmDeliveryResult.PERMANENT_TOKEN_FAILURE) {
+            if (token != null) {
+                pushTokenService.clearIfCurrent(record.targetDeviceId(), token);
+            }
         }
         return result != FcmDeliveryResult.RETRYABLE_FAILURE;
     }

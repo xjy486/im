@@ -5,5 +5,5 @@ public enum FcmDeliveryResult {
     NOT_CONFIGURED,
     NO_TOKEN,
     RETRYABLE_FAILURE,
-    PERMANENT_FAILURE
+    PERMANENT_TOKEN_FAILURE
 }

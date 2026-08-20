@@ -267,6 +267,7 @@ public class AuthService {
         return new AuthenticatedDevice(
                 session.userId(),
                 session.deviceId(),
+                session.sessionId(),
                 repository.findDeviceClass(session.deviceId()));
     }
 

@@ -1,8 +1,8 @@
 package com.jitong.im.android
 
 import android.content.Context
-import android.content.Intent
 import com.google.gson.Gson
+import com.google.firebase.messaging.FirebaseMessaging
 import com.jitong.im.android.auth.AuthApi
 import com.jitong.im.android.auth.AuthRepository
 import com.jitong.im.android.auth.InstallationIdentity
@@ -18,14 +18,16 @@ import com.jitong.im.android.message.MessageRepository
 import com.jitong.im.android.message.MessageWebSocket
 import com.jitong.im.android.push.PushTokenApi
 import com.jitong.im.android.push.PushTokenRepository
-import com.google.firebase.messaging.FirebaseMessaging
+import com.jitong.im.android.push.PushTokenRegistrationScheduler
 import com.jitong.im.android.security.AccountKeyStore
 import com.jitong.im.android.security.SecureSessionStore
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.tasks.await
 import okhttp3.OkHttpClient
 import retrofit2.Retrofit
 import retrofit2.converter.gson.GsonConverterFactory
@@ -94,10 +96,9 @@ internal class AppContainer(context: Context) {
                     messageRepository.connect()
                     PendingMessageScheduler.enqueue(appContext)
                     if (notificationSyncPending) {
-                        notificationSyncPending = false
                         syncAfterNotification()
                     }
-                    registerCurrentPushToken()
+                    scheduleCurrentPushTokenRegistration()
                     messageWebSocket.events.collect { event ->
                         val userId = sessionManager.snapshot()?.userId?.let(UUID::fromString) ?: return@collect
                         when (event.operation) {
@@ -114,6 +115,7 @@ internal class AppContainer(context: Context) {
                     messageRepository.disconnect()
                     if (state is com.jitong.im.android.auth.SessionState.SignedOut) {
                         PendingMessageScheduler.cancel(appContext)
+                        PushTokenRegistrationScheduler.cancel(appContext)
                     }
                 }
             }
@@ -151,14 +153,30 @@ internal class AppContainer(context: Context) {
         }
     }
 
-    private fun registerCurrentPushToken() {
-        val messaging = runCatching { FirebaseMessaging.getInstance() }.getOrNull() ?: return
-        messaging.token.addOnCompleteListener { task ->
-            if (!task.isSuccessful || task.result.isNullOrBlank()) return@addOnCompleteListener
-            messageScope.launch {
-                runCatching { pushTokenRepository.register(task.result) }
-            }
+    internal suspend fun registerCurrentPushTokenForWorker(): Boolean {
+        val messaging = runCatching { FirebaseMessaging.getInstance() }.getOrNull()
+            ?: return true
+        val token = try {
+            messaging.token.await()
+        } catch (exception: CancellationException) {
+            throw exception
+        } catch (_: Exception) {
+            return false
         }
+        return registerPushToken(token, System.currentTimeMillis())
+    }
+
+    internal suspend fun registerPushToken(token: String, tokenVersion: Long): Boolean = try {
+            pushTokenRepository.register(token, tokenVersion)
+            true
+        } catch (exception: CancellationException) {
+            throw exception
+        } catch (_: Exception) {
+            false
+        }
+
+    private fun scheduleCurrentPushTokenRegistration() {
+        PushTokenRegistrationScheduler.enqueue(appContext)
     }
 
     private fun retrofit(client: OkHttpClient): Retrofit = Retrofit.Builder()

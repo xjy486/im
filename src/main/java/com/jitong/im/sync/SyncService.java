@@ -25,13 +25,15 @@ public class SyncService {
         }
         repository.ensureCounter(userId);
         long highWatermark = repository.currentHighWatermark(userId);
-        long oldest = repository.retainedWindowStart(userId);
-        if (afterSeq < oldest - 1) {
-            throw new SyncException(ApiErrorDefinition.SYNC_RESET_REQUIRED);
-        }
         long requestedUntil = untilSeq == null ? highWatermark : untilSeq;
         if (requestedUntil > highWatermark) {
             throw new SyncException(ApiErrorDefinition.INVALID_REQUEST);
+        }
+        if (afterSeq != requestedUntil) {
+            long oldest = repository.retainedWindowStart(userId);
+            if (afterSeq < oldest - 1) {
+                throw new SyncException(ApiErrorDefinition.SYNC_RESET_REQUIRED);
+            }
         }
         List<SyncEventRecord> events = repository.listEvents(userId, afterSeq, requestedUntil, limit);
         if (!events.isEmpty() && events.get(0).syncSeq() != afterSeq + 1) {

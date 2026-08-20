@@ -49,6 +49,20 @@ class SyncServiceTest {
     }
 
     @Test
+    void allows_a_watermark_probe_without_reading_an_expired_cursor() {
+        SyncRepository repository = mock(SyncRepository.class);
+        SyncService service = new SyncService(repository);
+        when(repository.currentHighWatermark(USER_ID)).thenReturn(12L);
+        when(repository.retainedWindowStart(USER_ID)).thenReturn(8L);
+        when(repository.listEvents(USER_ID, 0L, 0L, 200)).thenReturn(List.of());
+
+        SyncPage page = service.page(USER_ID, 0L, 0L, 200);
+
+        assertThat(page.highWatermark()).isEqualTo(12L);
+        assertThat(page.events()).isEmpty();
+    }
+
+    @Test
     void does_not_allow_a_device_to_ack_beyond_the_current_user_high_watermark() {
         SyncRepository repository = mock(SyncRepository.class);
         SyncService service = new SyncService(repository);
