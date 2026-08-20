@@ -5,6 +5,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.jitong.im.auth.AuthService;
 import com.jitong.im.auth.AuthenticatedDevice;
 import com.jitong.im.platform.error.ApiErrorDefinition;
+import com.jitong.im.media.MediaException;
 import com.jitong.im.sync.SyncService;
 import org.springframework.stereotype.Component;
 import org.springframework.web.socket.CloseStatus;
@@ -83,13 +84,29 @@ class MessageWebSocketHandler extends TextWebSocketHandler {
             validateEnvelope(envelope);
             requestId = UUID.fromString(envelope.get("requestId").asText());
             JsonNode body = envelope.get("body");
-            MessageSendResult result = messageService.sendText(
-                    device.userId(),
-                    UUID.fromString(body.get("conversationId").asText()),
-                    UUID.fromString(body.get("clientMsgId").asText()),
-                    body.get("text").asText());
+            UUID conversationId = UUID.fromString(body.get("conversationId").asText());
+            UUID clientMessageId = UUID.fromString(body.get("clientMsgId").asText());
+            MessageSendResult result;
+            String type = body.path("type").asText("TEXT");
+            if ("IMAGE".equals(type)) {
+                result = messageService.sendImage(
+                        device.userId(),
+                        conversationId,
+                        clientMessageId,
+                        UUID.fromString(body.get("mediaId").asText()));
+            } else if ("TEXT".equals(type)) {
+                result = messageService.sendText(
+                        device.userId(),
+                        conversationId,
+                        clientMessageId,
+                        body.get("text").asText());
+            } else {
+                throw new MessageException(ApiErrorDefinition.INVALID_REQUEST);
+            }
             send(session, MessageWire.ack(requestId, result.message()));
         } catch (MessageException exception) {
+            sendError(session, requestId, exception.definition());
+        } catch (MediaException exception) {
             sendError(session, requestId, exception.definition());
         } catch (Exception exception) {
             sendError(session, requestId, ApiErrorDefinition.INVALID_REQUEST);
@@ -115,7 +132,11 @@ class MessageWebSocketHandler extends TextWebSocketHandler {
                 || envelope.get("body") == null
                 || envelope.get("body").get("conversationId") == null
                 || envelope.get("body").get("clientMsgId") == null
-                || envelope.get("body").get("text") == null) {
+                || (!"TEXT".equals(envelope.get("body").path("type").asText("TEXT"))
+                    && !"IMAGE".equals(envelope.get("body").path("type").asText("TEXT")))
+                || ("IMAGE".equals(envelope.get("body").path("type").asText("TEXT"))
+                    ? envelope.get("body").get("mediaId") == null
+                    : envelope.get("body").get("text") == null)) {
             throw new MessageException(ApiErrorDefinition.INVALID_REQUEST);
         }
     }

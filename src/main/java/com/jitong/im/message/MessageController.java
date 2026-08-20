@@ -1,6 +1,7 @@
 package com.jitong.im.message;
 
 import com.jitong.im.auth.AuthService;
+import com.jitong.im.platform.error.ApiErrorDefinition;
 import jakarta.validation.Valid;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.GetMapping;
@@ -35,8 +36,20 @@ class MessageController {
             @PathVariable UUID conversationId,
             @Valid @RequestBody MessageSendRequest request
     ) {
+        UUID userId = authService.requireUserId(authorization);
+        String type = request.type() == null ? "TEXT" : request.type();
+        if ("IMAGE".equals(type)) {
+            return messageService.sendImage(
+                    userId,
+                    conversationId,
+                    request.clientMsgId(),
+                    request.mediaId()).message();
+        }
+        if (!"TEXT".equals(type)) {
+            throw new MessageException(ApiErrorDefinition.INVALID_REQUEST);
+        }
         return messageService.sendText(
-                authService.requireUserId(authorization),
+                userId,
                 conversationId,
                 request.clientMsgId(),
                 request.text()).message();

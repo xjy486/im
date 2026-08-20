@@ -140,6 +140,7 @@
         "type",
         "state",
         "text",
+        "mediaId",
         "serverAcceptedAt"
       ],
       "properties": {
@@ -164,13 +165,17 @@
           "minimum": 1
         },
         "type": {
-          "const": "TEXT"
+          "enum": ["TEXT", "IMAGE"]
         },
         "state": {
           "const": "ACTIVE"
         },
         "text": {
-          "type": "string"
+          "type": ["string", "null"]
+        },
+        "mediaId": {
+          "type": ["string", "null"],
+          "format": "uuid"
         },
         "serverAcceptedAt": {
           "type": "string",

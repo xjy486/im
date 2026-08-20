@@ -50,6 +50,15 @@ class AccountLocalStore(
     fun activeDatabase(): AccountDatabase? = openedDatabase
 
     @Synchronized
+    fun activeMediaCache(): EncryptedMediaCache? =
+        openedAccountNo?.let { accountNo ->
+            EncryptedMediaCache(
+                File(context.filesDir, keyStore.mediaDirectoryName(accountNo)),
+                keyStore.mediaKeyAlias(accountNo),
+            )
+        }
+
+    @Synchronized
     fun markPendingCommandsForManualRetry() {
         val database = openedDatabase ?: return
         database.runInTransaction {
@@ -94,7 +103,12 @@ class AccountLocalStore(
             closeActive()
         }
         context.deleteDatabase(keyStore.databaseName(accountNo))
-        File(context.filesDir, keyStore.mediaDirectoryName(accountNo)).deleteRecursively()
+        val mediaCache = EncryptedMediaCache(
+            File(context.filesDir, keyStore.mediaDirectoryName(accountNo)),
+            keyStore.mediaKeyAlias(accountNo),
+        )
+        mediaCache.clear()
+        mediaCache.deleteKey()
         keyStore.forget(accountNo)
     }
 
@@ -111,6 +125,14 @@ class AccountLocalStore(
             .addMigrations(AccountDatabase.MIGRATION_2_3)
             .addMigrations(AccountDatabase.MIGRATION_3_4)
             .addMigrations(AccountDatabase.MIGRATION_4_5)
+            .addMigrations(AccountDatabase.MIGRATION_5_6)
             .build()
     }
+
+    @Synchronized
+    fun cacheMedia(accountNo: String, name: String, content: ByteArray): String =
+        EncryptedMediaCache(
+            File(context.filesDir, keyStore.mediaDirectoryName(accountNo)),
+            keyStore.mediaKeyAlias(accountNo),
+        ).put(name, content)
 }

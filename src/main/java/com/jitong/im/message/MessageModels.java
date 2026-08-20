@@ -13,8 +13,32 @@ record MessageRecord(
         String type,
         String state,
         String text,
+        UUID mediaId,
         Instant serverAcceptedAt
 ) {
+    MessageRecord(
+            UUID messageId,
+            UUID conversationId,
+            UUID senderId,
+            UUID clientMsgId,
+            long conversationSeq,
+            String type,
+            String state,
+            String text,
+            Instant serverAcceptedAt
+    ) {
+        this(
+                messageId,
+                conversationId,
+                senderId,
+                clientMsgId,
+                conversationSeq,
+                type,
+                state,
+                text,
+                null,
+                serverAcceptedAt);
+    }
 }
 
 record ConversationMessagePage(

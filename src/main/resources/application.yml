@@ -1,6 +1,10 @@
 spring:
   application:
     name: jitong-im-server
+  servlet:
+    multipart:
+      max-file-size: ${MEDIA_MAX_INPUT_SIZE:10MB}
+      max-request-size: ${MEDIA_MAX_REQUEST_SIZE:11MB}
   datasource:
     url: ${DB_URL:jdbc:postgresql://localhost:5432/jitong}
     username: ${DB_USERNAME:jitong}

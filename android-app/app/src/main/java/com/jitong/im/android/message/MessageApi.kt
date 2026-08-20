@@ -26,7 +26,9 @@ internal interface MessageApi {
 
 internal data class SendMessageRequest(
     val clientMsgId: UUID,
-    val text: String,
+    val type: String = "TEXT",
+    val text: String? = null,
+    val mediaId: UUID? = null,
 )
 
 internal data class MessageResponse(
@@ -37,7 +39,8 @@ internal data class MessageResponse(
     val conversationSeq: Long,
     val type: String,
     val state: String,
-    val text: String,
+    val text: String?,
+    val mediaId: UUID? = null,
     val serverAcceptedAt: String,
 )
 

@@ -12,6 +12,7 @@ import com.jitong.im.android.auth.SessionManager
 import com.jitong.im.android.contact.ContactApi
 import com.jitong.im.android.contact.ContactRepository
 import com.jitong.im.android.local.AccountLocalStore
+import com.jitong.im.android.media.MediaApi
 import com.jitong.im.android.message.MessageApi
 import com.jitong.im.android.message.PendingMessageScheduler
 import com.jitong.im.android.message.MessageRepository
@@ -51,6 +52,7 @@ internal class AppContainer(context: Context) {
     private val authenticatedApi = authenticatedRetrofit.create(AuthApi::class.java)
     private val authenticatedContactApi = authenticatedRetrofit.create(ContactApi::class.java)
     private val authenticatedMessageApi = authenticatedRetrofit.create(MessageApi::class.java)
+    private val authenticatedMediaApi = authenticatedRetrofit.create(MediaApi::class.java)
     private val authenticatedSyncApi = authenticatedRetrofit.create(com.jitong.im.android.message.SyncApi::class.java)
     private val authenticatedPushTokenApi = authenticatedRetrofit.create(PushTokenApi::class.java)
     private val messageWebSocket = MessageWebSocket(
@@ -76,6 +78,8 @@ internal class AppContainer(context: Context) {
         database = { localStore.activeDatabase() },
         webSocket = messageWebSocket,
         deviceId = { sessionManager.snapshot()?.deviceId?.let(UUID::fromString) },
+        mediaApi = authenticatedMediaApi,
+        mediaCache = { localStore.activeMediaCache() },
     )
     fun sessionSnapshot() = sessionManager.snapshot()
     private var notificationSyncPending = false
