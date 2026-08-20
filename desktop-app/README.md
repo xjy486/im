@@ -17,4 +17,4 @@ The server URL defaults to `https://127.0.0.1:8443`. Set `JITONG_SERVER_URL` to 
 ./gradlew packageDmg
 ```
 
-The app is intentionally small at this milestone: it covers login, refresh-on-restart, same-class replacement confirmation, normal logout retention, and untrusted-device erasure. Message and synchronization screens are delivered by later tickets.
+The desktop client also supports exact account search, contact requests, contact removal/blocking, one-to-one conversation history, real-time text messages, user-level read progress, and durable per-account sync cursors. Local history remains available while offline, while the composer is disabled and clearly reports that sending requires a connection.
