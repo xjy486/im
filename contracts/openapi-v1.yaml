@@ -282,6 +282,30 @@ paths:
           $ref: '#/components/responses/ApiError'
         '409':
           $ref: '#/components/responses/ApiError'
+  /api/v1/devices/push-token:
+    post:
+      operationId: updateDevicePushToken
+      security: [{ bearerAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [token]
+              properties:
+                token: { type: string, minLength: 1, maxLength: 4096 }
+      responses:
+        '204':
+          description: Push token stored for the authenticated MOBILE device
+        '400':
+          $ref: '#/components/responses/ApiError'
+        '401':
+          $ref: '#/components/responses/ApiError'
+        '503':
+          $ref: '#/components/responses/ApiError'
+
   /api/v1/sync:
     get:
       operationId: getUserSyncPage

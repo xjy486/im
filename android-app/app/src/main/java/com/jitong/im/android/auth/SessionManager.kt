@@ -37,8 +37,13 @@ internal class SessionManager(
     )
     val state: StateFlow<SessionState> = _state.asStateFlow()
     private var lastRefreshOutcome = RefreshOutcome.NOT_ATTEMPTED
+    private var beforeLogout: suspend () -> Unit = {}
 
     fun snapshot(): SessionSnapshot? = sessionStore.read()
+
+    fun setBeforeLogout(callback: suspend () -> Unit) {
+        beforeLogout = callback
+    }
 
     suspend fun activate(response: LoginResponse) {
         val snapshot = response.toSessionSnapshot()
@@ -71,11 +76,21 @@ internal class SessionManager(
     }
 
     /** Normal logout: credentials disappear, but the account database and media cache stay. */
-    @Synchronized
-    fun logout() {
-        localStore.closeActive()
+    suspend fun prepareForLogout() {
+        beforeLogout()
+    }
+
+    suspend fun finishLogout() {
+        withContext(Dispatchers.IO) {
+            localStore.closeActive()
+        }
         sessionStore.clear()
         _state.value = SessionState.SignedOut
+    }
+
+    suspend fun logout() {
+        prepareForLogout()
+        finishLogout()
     }
 
     suspend fun clearCurrentAccount() {

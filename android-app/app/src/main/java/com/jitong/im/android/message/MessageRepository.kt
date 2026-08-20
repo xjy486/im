@@ -4,11 +4,14 @@ import androidx.room.withTransaction
 import com.jitong.im.android.local.AccountDatabase
 import com.jitong.im.android.local.LocalConversationReadStateEntity
 import com.jitong.im.android.local.LocalMessageEntity
+import com.jitong.im.android.local.PendingMessageCommandEntity
 import com.jitong.im.android.local.SyncStateEntity
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withTimeoutOrNull
 import retrofit2.Response
 import java.io.IOException
@@ -23,6 +26,9 @@ internal class MessageRepository(
     private val deviceId: () -> UUID? = { null },
 ) {
     private val pendingAcks = ConcurrentHashMap<UUID, CompletableDeferred<MessageResponse>>()
+    private val pendingFlushMutex = Mutex()
+    private var pendingSendScheduler: (() -> Unit)? = null
+    private var automaticSendingEnabled = false
 
     fun observe(conversationId: UUID): Flow<List<LocalMessageEntity>> =
         database()?.messageDao()?.observe(conversationId.toString())
@@ -36,6 +42,7 @@ internal class MessageRepository(
         withContext(Dispatchers.IO) {
             val dao = db.messageDao()
             response.messages.forEach {
+                db.pendingCommandDao().delete(it.clientMsgId.toString())
                 dao.deleteByClientMsgId(it.clientMsgId.toString())
                 dao.upsert(it.toEntity())
             }
@@ -146,7 +153,7 @@ internal class MessageRepository(
         val conversations = syncApi.conversations().syncBodyOrThrow()
         withContext(Dispatchers.IO) {
             db.withTransaction {
-                db.messageDao().clearAll()
+                db.messageDao().clearAccepted()
                 db.conversationReadStateDao().clearAll()
                 db.syncStateDao().upsert(
                     SyncStateEntity(
@@ -193,6 +200,7 @@ internal class MessageRepository(
                 db.withTransaction {
                     val dao = db.messageDao()
                     history.messages.forEach {
+                        db.pendingCommandDao().delete(it.clientMsgId.toString())
                         dao.deleteByClientMsgId(it.clientMsgId.toString())
                         dao.upsert(it.toEntity(
                             localState = if (it.senderId == currentUserId) "SENT" else "RECEIVED",
@@ -212,45 +220,217 @@ internal class MessageRepository(
         require(text.isNotBlank()) { "Message text must not be blank" }
         val db = database() ?: throw IOException("No local account database is open")
         val clientMsgId = UUID.randomUUID()
+        val createdAt = System.currentTimeMillis()
         withContext(Dispatchers.IO) {
-            db.messageDao().upsert(
-                LocalMessageEntity(
-                    messageId = "local:$clientMsgId",
-                    conversationId = conversationId.toString(),
-                    senderId = "local",
-                    clientMsgId = clientMsgId.toString(),
-                    conversationSeq = null,
-                    type = "TEXT",
-                    state = "ACTIVE",
-                    localState = "SENDING",
-                    text = text,
-                    serverAcceptedAt = null,
-                    createdAt = System.currentTimeMillis(),
-                ),
-            )
+            db.withTransaction {
+                db.pendingCommandDao().upsert(
+                    PendingMessageCommandEntity(
+                        clientMsgId = clientMsgId.toString(),
+                        conversationId = conversationId.toString(),
+                        text = text,
+                        createdAt = createdAt,
+                        status = SendCommandState.PENDING,
+                    ),
+                )
+                db.messageDao().upsert(
+                    LocalMessageEntity(
+                        messageId = "local:$clientMsgId",
+                        conversationId = conversationId.toString(),
+                        senderId = "local",
+                        clientMsgId = clientMsgId.toString(),
+                        conversationSeq = null,
+                        type = "TEXT",
+                        state = "ACTIVE",
+                        localState = "QUEUED",
+                        text = text,
+                        serverAcceptedAt = null,
+                        createdAt = createdAt,
+                    ),
+                )
+            }
         }
+        pendingSendScheduler?.invoke()
+        if (automaticSendingEnabled && webSocket.isConnected()) {
+            flushOnlinePending()
+        }
+        return clientMsgId
+    }
+
+    fun setPendingSendScheduler(scheduler: (() -> Unit)?) {
+        pendingSendScheduler = scheduler
+    }
+
+    fun enableAutomaticSending() {
+        automaticSendingEnabled = true
+    }
+
+    fun disableAutomaticSending() {
+        automaticSendingEnabled = false
+    }
+
+    suspend fun prepareForLogout() {
+        pendingFlushMutex.withLock {
+            automaticSendingEnabled = false
+            val db = database() ?: return
+            withContext(Dispatchers.IO) {
+                db.runInTransaction {
+                    val pending = db.pendingCommandDao().pending()
+                    db.pendingCommandDao().markManualRetry()
+                    pending.forEach { command ->
+                        db.messageDao().updateLocalState(
+                            command.clientMsgId,
+                            "MANUAL_RETRY",
+                        )
+                    }
+                }
+            }
+        }
+    }
+
+    suspend fun retryPending(clientMsgId: UUID) {
+        val db = database() ?: throw IOException("No local account database is open")
+        withContext(Dispatchers.IO) {
+            db.withTransaction {
+                db.pendingCommandDao().markForRetry(clientMsgId.toString())
+                db.messageDao().updateLocalState(clientMsgId.toString(), "QUEUED")
+            }
+        }
+        pendingSendScheduler?.invoke()
+    }
+
+    suspend fun flushOnlinePending(): PendingFlushResult =
+        flushPendingCommands(onlineTransport())
+
+    suspend fun syncLatest(currentUserId: UUID) {
+        val db = database() ?: return
+        val lastSyncSeq = withContext(Dispatchers.IO) {
+            db.syncStateDao().current()?.lastSyncSeq ?: 0L
+        }
+        val highWatermark = syncApi.page(lastSyncSeq, null).syncBodyOrThrow().highWatermark
+        synchronize(currentUserId, highWatermark)
+    }
+
+    internal suspend fun flushPendingCommands(
+        transport: MessageSendTransport,
+    ): PendingFlushResult = pendingFlushMutex.withLock {
+        if (!automaticSendingEnabled) return@withLock PendingFlushResult()
+        flushPendingCommandsInternal(transport)
+    }
+
+    private suspend fun flushPendingCommandsInternal(
+        transport: MessageSendTransport,
+    ): PendingFlushResult {
+        val db = database() ?: return PendingFlushResult()
+        withContext(Dispatchers.IO) { db.pendingCommandDao().resetInFlight() }
+        val commands = withContext(Dispatchers.IO) { db.pendingCommandDao().pending() }
+        var retryableFailure: MessageSendException? = null
+        for (command in commands) {
+            val clientMsgId = UUID.fromString(command.clientMsgId)
+            withContext(Dispatchers.IO) {
+                db.withTransaction {
+                    db.pendingCommandDao().markSending(command.clientMsgId)
+                    db.messageDao().updateLocalState(command.clientMsgId, "SENDING")
+                }
+            }
+            try {
+                val response = transport.send(
+                    UUID.fromString(command.conversationId),
+                    clientMsgId,
+                    command.text,
+                )
+                upsertAccepted(response)
+                withContext(Dispatchers.IO) {
+                    db.pendingCommandDao().delete(command.clientMsgId)
+                }
+            } catch (exception: MessageSendException) {
+                withContext(Dispatchers.IO) {
+                    db.withTransaction {
+                        val changed = db.pendingCommandDao().markPending(command.clientMsgId)
+                        if (changed > 0) {
+                            db.messageDao().updateLocalState(command.clientMsgId, "QUEUED")
+                        }
+                    }
+                }
+                if (!exception.retryable) {
+                    withContext(Dispatchers.IO) {
+                        db.withTransaction {
+                            db.pendingCommandDao().markCommandManualRetry(command.clientMsgId)
+                            db.messageDao().updateLocalState(
+                                command.clientMsgId,
+                                "MANUAL_RETRY",
+                            )
+                        }
+                    }
+                } else {
+                    retryableFailure = exception
+                    break
+                }
+            } catch (exception: IOException) {
+                withContext(Dispatchers.IO) {
+                    db.withTransaction {
+                        val changed = db.pendingCommandDao().markPending(command.clientMsgId)
+                        if (changed > 0) {
+                            db.messageDao().updateLocalState(command.clientMsgId, "QUEUED")
+                        }
+                    }
+                }
+                retryableFailure = MessageSendException(
+                    retryable = true,
+                    message = "Message send failed",
+                    cause = exception,
+                )
+                break
+            }
+        }
+        return PendingFlushResult(retryableFailure != null)
+    }
+
+    internal data class PendingFlushResult(
+        val retryableFailure: Boolean = false,
+    )
+
+    private suspend fun sendOnline(
+        conversationId: UUID,
+        clientMsgId: UUID,
+        text: String,
+    ): MessageResponse {
         val acknowledgement = CompletableDeferred<MessageResponse>()
         pendingAcks[clientMsgId] = acknowledgement
         if (!webSocket.send(conversationId, clientMsgId, text)) {
             val response = api.send(conversationId, SendMessageRequest(clientMsgId, text))
             if (!response.isSuccessful || response.body() == null) {
                 pendingAcks.remove(clientMsgId)
-                throw IOException("Message send failed with HTTP ${response.code()}")
+                throw MessageSendException(
+                    retryable = response.code() >= 500 || response.code() == 408,
+                    message = "Message send failed with HTTP ${response.code()}",
+                )
             }
-            upsertAccepted(response.body()!!)
             pendingAcks.remove(clientMsgId)
+            return response.body()!!
         } else {
             val accepted = withTimeoutOrNull(10_000) { acknowledgement.await() }
             pendingAcks.remove(clientMsgId)
-            if (accepted == null) {
+            if (accepted != null) {
+                return accepted
+            } else {
                 val response = api.send(conversationId, SendMessageRequest(clientMsgId, text))
                 if (!response.isSuccessful || response.body() == null) {
-                    throw IOException("Message send failed with HTTP ${response.code()}")
+                    throw MessageSendException(
+                        retryable = response.code() >= 500 || response.code() == 408,
+                        message = "Message send failed with HTTP ${response.code()}",
+                    )
                 }
-                upsertAccepted(response.body()!!)
+                return response.body()!!
             }
         }
-        return clientMsgId
+    }
+
+    internal fun onlineTransport(): MessageSendTransport = object : MessageSendTransport {
+        override suspend fun send(
+            conversationId: UUID,
+            clientMsgId: UUID,
+            text: String,
+        ): MessageResponse = sendOnline(conversationId, clientMsgId, text)
     }
 
     fun connect() {
@@ -323,6 +503,7 @@ internal class MessageRepository(
                 db.withTransaction {
                     val dao = db.messageDao()
                     val existing = dao.findByClientMsgId(clientMsgId.toString())
+                    db.pendingCommandDao().delete(clientMsgId.toString())
                     dao.deleteByClientMsgId(clientMsgId.toString())
                     dao.upsert(
                         LocalMessageEntity(
@@ -353,6 +534,7 @@ internal class MessageRepository(
             withContext(Dispatchers.IO) {
                 val dao = db.messageDao()
                 val existing = dao.findByClientMsgId(clientMsgId.toString())
+                db.pendingCommandDao().delete(clientMsgId.toString())
                 dao.deleteByClientMsgId(clientMsgId.toString())
                 dao.upsert(
                     LocalMessageEntity(
@@ -421,16 +603,19 @@ internal class MessageRepository(
         response: MessageResponse,
         currentUserId: UUID? = null,
     ) {
-        val dao = database()?.messageDao() ?: return
+        val db = database() ?: return
         withContext(Dispatchers.IO) {
-            dao.deleteByClientMsgId(response.clientMsgId.toString())
-            dao.upsert(response.toEntity(
-                localState = if (currentUserId != null && response.senderId != currentUserId) {
-                    "RECEIVED"
-                } else {
-                    "SENT"
-                },
-            ))
+            db.withTransaction {
+                db.pendingCommandDao().delete(response.clientMsgId.toString())
+                db.messageDao().deleteByClientMsgId(response.clientMsgId.toString())
+                db.messageDao().upsert(response.toEntity(
+                    localState = if (currentUserId != null && response.senderId != currentUserId) {
+                        "RECEIVED"
+                    } else {
+                        "SENT"
+                    },
+                ))
+            }
         }
     }
 

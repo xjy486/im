@@ -47,7 +47,9 @@ internal class AuthViewModel(
         }
     }
 
-    fun logout() = repository.logout()
+    fun logout() {
+        viewModelScope.launch { repository.logout() }
+    }
 
     fun clearData() {
         viewModelScope.launch {

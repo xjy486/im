@@ -3,6 +3,9 @@ package com.jitong.im.message;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.jitong.im.sync.OutboxDelivery;
 import com.jitong.im.sync.OutboxRecord;
+import com.jitong.im.push.FcmSender;
+import com.jitong.im.push.FcmDeliveryResult;
+import com.jitong.im.auth.DevicePushTokenService;
 import org.springframework.stereotype.Component;
 import org.springframework.web.socket.TextMessage;
 import org.springframework.web.socket.WebSocketSession;
@@ -18,16 +21,22 @@ class MessageOutboxDelivery implements OutboxDelivery {
     private final ObjectMapper objectMapper;
     private final MessageRepository messageRepository;
     private final ReadStateRepository readStateRepository;
+    private final DevicePushTokenService pushTokenService;
+    private final FcmSender fcmSender;
     private final ConcurrentHashMap<UUID, Set<WebSocketSession>> sessionsByDevice = new ConcurrentHashMap<>();
 
     MessageOutboxDelivery(
             ObjectMapper objectMapper,
             MessageRepository messageRepository,
-            ReadStateRepository readStateRepository
+            ReadStateRepository readStateRepository,
+            DevicePushTokenService pushTokenService,
+            FcmSender fcmSender
     ) {
         this.objectMapper = objectMapper;
         this.messageRepository = messageRepository;
         this.readStateRepository = readStateRepository;
+        this.pushTokenService = pushTokenService;
+        this.fcmSender = fcmSender;
     }
 
     void register(UUID deviceId, WebSocketSession session) {
@@ -52,7 +61,13 @@ class MessageOutboxDelivery implements OutboxDelivery {
         }
         Set<WebSocketSession> sessions = sessionsByDevice.get(record.targetDeviceId());
         if (sessions == null || sessions.isEmpty()) {
-            return false;
+            if (!"MESSAGE_CREATED".equals(record.eventType())) {
+                return true;
+            }
+            if (!pushTokenService.isMobile(record.targetDeviceId())) {
+                return true;
+            }
+            return deliverViaFcm(record);
         }
         MessageWire.WireEnvelope envelope = switch (record.eventType()) {
             case "MESSAGE_CREATED" -> MessageWire.created(
@@ -84,6 +99,22 @@ class MessageOutboxDelivery implements OutboxDelivery {
                 // Leave the durable outbox row pending for a later retry.
             }
         }
-        return delivered;
+        if (delivered || !"MESSAGE_CREATED".equals(record.eventType())) {
+            return delivered;
+        }
+        return deliverViaFcm(record);
+    }
+
+    private boolean deliverViaFcm(OutboxRecord record) {
+        if (!pushTokenService.isMobile(record.targetDeviceId())) {
+            return true;
+        }
+        FcmDeliveryResult result = fcmSender.send(
+                pushTokenService.find(record.targetDeviceId()),
+                "NEW_MESSAGE");
+        if (result == FcmDeliveryResult.PERMANENT_FAILURE) {
+            pushTokenService.clear(record.targetDeviceId());
+        }
+        return result != FcmDeliveryResult.RETRYABLE_FAILURE;
     }
 }

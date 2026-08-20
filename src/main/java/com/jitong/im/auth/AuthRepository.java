@@ -164,6 +164,51 @@ class AuthRepository {
                 .update();
     }
 
+    void updatePushToken(UUID deviceId, String token) {
+        jdbc.sql("""
+                        UPDATE devices
+                        SET push_token_ciphertext = :token
+                        WHERE id = :deviceId AND trust_state = 'ACTIVE'
+                        """)
+                .param("deviceId", deviceId)
+                .param("token", token)
+                .update();
+    }
+
+    String findPushToken(UUID deviceId) {
+        return jdbc.sql("""
+                        SELECT push_token_ciphertext
+                        FROM devices
+                        WHERE id = :deviceId AND trust_state = 'ACTIVE'
+                        """)
+                .param("deviceId", deviceId)
+                .query(String.class)
+                .optional()
+                .orElse(null);
+    }
+
+    String findActiveDeviceClass(UUID deviceId) {
+        return jdbc.sql("""
+                        SELECT device_class
+                        FROM devices
+                        WHERE id = :deviceId AND trust_state = 'ACTIVE'
+                        """)
+                .param("deviceId", deviceId)
+                .query(String.class)
+                .optional()
+                .orElse(null);
+    }
+
+    void clearPushToken(UUID deviceId) {
+        jdbc.sql("""
+                        UPDATE devices
+                        SET push_token_ciphertext = NULL
+                        WHERE id = :deviceId
+                        """)
+                .param("deviceId", deviceId)
+                .update();
+    }
+
     void insertSession(
             UUID sessionId,
             UUID deviceId,
@@ -381,7 +426,9 @@ class AuthRepository {
     void revokeDevice(UUID deviceId, Instant now) {
         jdbc.sql("""
                         UPDATE devices
-                        SET trust_state = 'UNTRUSTED', untrusted_at = :untrustedAt
+                        SET trust_state = 'UNTRUSTED',
+                            push_token_ciphertext = NULL,
+                            untrusted_at = :untrustedAt
                         WHERE id = :deviceId AND trust_state = 'ACTIVE'
                         """)
                 .param("deviceId", deviceId)
@@ -565,7 +612,9 @@ class AuthRepository {
     void revokeFamily(UUID familyId, UUID deviceId, Instant now) {
         jdbc.sql("""
                         UPDATE devices
-                        SET trust_state = 'UNTRUSTED', untrusted_at = :untrustedAt
+                        SET trust_state = 'UNTRUSTED',
+                            push_token_ciphertext = NULL,
+                            untrusted_at = :untrustedAt
                         WHERE id = :deviceId AND trust_state = 'ACTIVE'
                         """)
                 .param("deviceId", deviceId)
@@ -635,7 +684,9 @@ class AuthRepository {
                 .update();
         jdbc.sql("""
                         UPDATE devices
-                        SET trust_state = 'UNTRUSTED', untrusted_at = :retiredAt
+                        SET trust_state = 'UNTRUSTED',
+                            push_token_ciphertext = NULL,
+                            untrusted_at = :retiredAt
                         WHERE user_id = :userId AND trust_state = 'ACTIVE'
                         """)
                 .param("userId", userId)

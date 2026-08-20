@@ -79,6 +79,20 @@ data class LocalConversationReadStateEntity(
     val readSeq: Long,
 )
 
+@Entity(
+    tableName = "pending_commands",
+    indices = [
+        Index(value = ["status", "createdAt"]),
+    ],
+)
+data class PendingMessageCommandEntity(
+    @PrimaryKey val clientMsgId: String,
+    val conversationId: String,
+    val text: String,
+    val createdAt: Long,
+    val status: String,
+)
+
 @Dao
 interface LocalConversationDao {
     @Insert(onConflict = OnConflictStrategy.REPLACE)
@@ -132,6 +146,63 @@ interface LocalMessageDao {
 
     @Query("DELETE FROM local_message")
     fun clearAll()
+
+    @Query("DELETE FROM local_message WHERE localState IN ('SENT', 'RECEIVED')")
+    fun clearAccepted()
+
+    @Query("UPDATE local_message SET localState = :localState WHERE clientMsgId = :clientMsgId")
+    fun updateLocalState(clientMsgId: String, localState: String)
+}
+
+@Dao
+interface PendingCommandDao {
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    fun upsert(command: PendingMessageCommandEntity)
+
+    @Query(
+        "SELECT * FROM pending_commands " +
+            "WHERE status IN ('PENDING', 'SENDING') ORDER BY createdAt ASC",
+    )
+    fun pending(): List<PendingMessageCommandEntity>
+
+    @Query("UPDATE pending_commands SET status = 'PENDING' WHERE status = 'SENDING'")
+    fun resetInFlight()
+
+    @Query(
+        "UPDATE pending_commands SET status = 'SENDING' " +
+            "WHERE clientMsgId = :clientMsgId AND status = 'PENDING'",
+    )
+    fun markSending(clientMsgId: String)
+
+    @Query(
+        "UPDATE pending_commands SET status = 'PENDING' " +
+            "WHERE clientMsgId = :clientMsgId AND status = 'SENDING'",
+    )
+    fun markPending(clientMsgId: String): Int
+
+    @Query(
+        "UPDATE pending_commands SET status = 'MANUAL_RETRY' " +
+            "WHERE status IN ('PENDING', 'SENDING')",
+    )
+    fun markManualRetry()
+
+    @Query(
+        "UPDATE pending_commands SET status = 'MANUAL_RETRY' " +
+            "WHERE clientMsgId = :clientMsgId AND status IN ('PENDING', 'SENDING')",
+    )
+    fun markCommandManualRetry(clientMsgId: String)
+
+    @Query(
+        "UPDATE pending_commands SET status = 'PENDING' " +
+            "WHERE clientMsgId = :clientMsgId AND status = 'MANUAL_RETRY'",
+    )
+    fun markForRetry(clientMsgId: String)
+
+    @Query("DELETE FROM pending_commands WHERE clientMsgId = :clientMsgId")
+    fun delete(clientMsgId: String)
+
+    @Query("SELECT COUNT(*) FROM pending_commands WHERE status IN ('PENDING', 'SENDING')")
+    fun pendingCount(): Int
 }
 
 @Dao
@@ -150,8 +221,9 @@ interface SyncStateDao {
         LocalMessageEntity::class,
         SyncStateEntity::class,
         LocalConversationReadStateEntity::class,
+        PendingMessageCommandEntity::class,
     ],
-    version = 4,
+    version = 5,
     exportSchema = true,
 )
 abstract class AccountDatabase : RoomDatabase() {
@@ -159,6 +231,7 @@ abstract class AccountDatabase : RoomDatabase() {
     abstract fun conversationDao(): LocalConversationDao
     abstract fun conversationReadStateDao(): LocalConversationReadStateDao
     abstract fun messageDao(): LocalMessageDao
+    abstract fun pendingCommandDao(): PendingCommandDao
     abstract fun syncStateDao(): SyncStateDao
 
     companion object {
@@ -242,6 +315,28 @@ abstract class AccountDatabase : RoomDatabase() {
                         PRIMARY KEY(conversationId, userId)
                     )
                     """.trimIndent(),
+                )
+            }
+        }
+
+        val MIGRATION_4_5 = object : androidx.room.migration.Migration(4, 5) {
+            override fun migrate(
+                database: androidx.sqlite.db.SupportSQLiteDatabase,
+            ) {
+                database.execSQL(
+                    """
+                    CREATE TABLE IF NOT EXISTS pending_commands (
+                        clientMsgId TEXT NOT NULL PRIMARY KEY,
+                        conversationId TEXT NOT NULL,
+                        text TEXT NOT NULL,
+                        createdAt INTEGER NOT NULL,
+                        status TEXT NOT NULL
+                    )
+                    """.trimIndent(),
+                )
+                database.execSQL(
+                    "CREATE INDEX IF NOT EXISTS index_pending_commands_status_createdAt " +
+                        "ON pending_commands (status, createdAt)",
                 )
             }
         }

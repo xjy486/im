@@ -37,6 +37,7 @@ import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.jitong.im.android.auth.SessionState
 import com.jitong.im.android.contact.ConversationSummary
+import java.util.UUID
 
 @Composable
 internal fun JitongApp(
@@ -377,11 +378,18 @@ private fun ConversationScreen(
                         Text(
                             when {
                                 message.localState == "SENDING" -> "发送中"
+                                message.localState == "QUEUED" -> "等待网络"
+                                message.localState == "MANUAL_RETRY" -> "需手动重试"
                                 message.conversationSeq != null -> "序号 ${message.conversationSeq}"
                                 else -> "等待确认"
                             },
                             style = MaterialTheme.typography.bodySmall,
                         )
+                        if (message.localState == "MANUAL_RETRY") {
+                            TextButton(onClick = { viewModel.retry(UUID.fromString(message.clientMsgId)) }) {
+                                Text("重试")
+                            }
+                        }
                     }
                 }
             }

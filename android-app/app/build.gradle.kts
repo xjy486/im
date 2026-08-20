@@ -9,6 +9,9 @@ android {
     namespace = "com.jitong.im.android"
     compileSdk = 35
 
+    fun firebaseProperty(name: String): String =
+        project.findProperty(name)?.toString().orEmpty()
+
     defaultConfig {
         applicationId = "com.jitong.im.android"
         minSdk = 26
@@ -21,6 +24,11 @@ android {
             "BASE_URL",
             "\"${project.findProperty("jitongBaseUrl") ?: "http://10.0.2.2:8080/"}\""
         )
+        buildConfigField("String", "FIREBASE_APPLICATION_ID", "\"${firebaseProperty("firebaseApplicationId")}\"")
+        buildConfigField("String", "FIREBASE_API_KEY", "\"${firebaseProperty("firebaseApiKey")}\"")
+        buildConfigField("String", "FIREBASE_GCM_SENDER_ID", "\"${firebaseProperty("firebaseGcmSenderId")}\"")
+        buildConfigField("String", "FIREBASE_PROJECT_ID", "\"${firebaseProperty("firebaseProjectId")}\"")
+        buildConfigField("String", "FIREBASE_STORAGE_BUCKET", "\"${firebaseProperty("firebaseStorageBucket")}\"")
     }
 
     buildTypes {
@@ -79,6 +87,8 @@ dependencies {
     implementation("androidx.lifecycle:lifecycle-runtime-compose:2.8.7")
     implementation("androidx.lifecycle:lifecycle-viewmodel-compose:2.8.7")
     implementation("androidx.lifecycle:lifecycle-viewmodel-ktx:2.8.7")
+    implementation("androidx.work:work-runtime-ktx:2.10.5")
+    implementation("com.google.firebase:firebase-messaging:25.1.2")
 
     implementation("androidx.room:room-runtime:2.7.0")
     implementation("androidx.room:room-ktx:2.7.0")
