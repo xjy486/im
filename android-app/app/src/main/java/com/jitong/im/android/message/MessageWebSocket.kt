@@ -58,6 +58,9 @@ internal class MessageWebSocket(
         ) ?: false
     }
 
+    @Synchronized
+    fun isConnected(): Boolean = socket != null
+
     private fun closeSocket() {
         val current = socket
         socket = null

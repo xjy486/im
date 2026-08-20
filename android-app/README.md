@@ -21,6 +21,20 @@ T07 的 Android 登录与设备替换最小可运行客户端。工程使用 Kot
 
 - debug 构建允许明文 HTTP 连接，release 构建只允许 HTTPS。
 
+如需启用 FCM，需要向 Gradle 传入 Firebase Android App 配置。配置值只作为
+构建时资源进入 APK，不要把真实配置文件或服务端凭证提交到 Git：
+
+```sh
+./gradlew assembleDebug \
+  -PfirebaseApplicationId=1:1234567890:android:abcdef \
+  -PfirebaseApiKey=AIza... \
+  -PfirebaseGcmSenderId=1234567890 \
+  -PfirebaseProjectId=example-project \
+  -PfirebaseStorageBucket=example-project.firebasestorage.app
+```
+
+FCM 未配置时客户端仍可构建和使用 WSS/离线队列，但不会注册推送 Token。
+
 ## 认证与本地数据约定
 
 - 每次安装生成一个随机 `installationId`，只作为服务端设备绑定输入。

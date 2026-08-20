@@ -36,6 +36,11 @@ jitong:
     access-key: ${MINIO_ACCESS_KEY:jitong-local}
     secret-key: ${MINIO_SECRET_KEY:}
     bucket: ${MINIO_BUCKET:jitong-media}
+  push:
+    enabled: ${FCM_ENABLED:false}
+    project-id: ${FCM_PROJECT_ID:}
+    service-account-json: ${FCM_SERVICE_ACCOUNT_JSON:}
+    token-encryption-key: ${FCM_TOKEN_ENCRYPTION_KEY:}
 
 management:
   endpoints:

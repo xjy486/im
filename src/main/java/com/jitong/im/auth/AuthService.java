@@ -277,9 +277,14 @@ public class AuthService {
         if (userId == null) {
             throw new InvalidCredentialsException();
         }
+        AuthSession session = repository.findSessionByAccessTokenHash(
+                TokenDigests.sha256(accessToken));
         repository.revokeSessionByAccessTokenHash(
                 TokenDigests.sha256(accessToken),
                 clock.instant());
+        if (session != null) {
+            repository.clearPushToken(session.deviceId());
+        }
         auditSink.record(new SecurityAuditEvent(
                 UuidV7.random(),
                 SecurityAuditEventType.LOGOUT,

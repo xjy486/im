@@ -77,6 +77,13 @@ internal class MessageViewModel(
         }
     }
 
+    fun retry(clientMsgId: UUID) {
+        viewModelScope.launch {
+            runCatching { repository.retryPending(clientMsgId) }
+                .onFailure { _state.value = _state.value.copy(message = "消息重试失败，请稍后重试") }
+        }
+    }
+
     class Factory(private val repository: MessageRepository) : ViewModelProvider.Factory {
         @Suppress("UNCHECKED_CAST")
         override fun <T : ViewModel> create(modelClass: Class<T>): T =

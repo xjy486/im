@@ -44,15 +44,18 @@ class MessageWebSocketHandler extends TextWebSocketHandler {
     public void afterConnectionEstablished(WebSocketSession session) throws Exception {
         String authorization = (String) session.getAttributes()
                 .get(MessageWebSocketHandshakeInterceptor.AUTHORIZATION_ATTRIBUTE);
-        AuthenticatedDevice device;
+        AuthenticatedDevice device = null;
         try {
             device = authService.requireAuthenticatedDevice(authorization);
+            outboxDelivery.register(device.deviceId(), session);
             send(session, MessageWire.syncReady(
                     device.deviceId(),
                     device.deviceClass(),
                     syncService.highWatermark(device.userId())));
-            outboxDelivery.register(device.deviceId(), session);
         } catch (RuntimeException exception) {
+            if (device != null) {
+                outboxDelivery.unregister(device.deviceId(), session);
+            }
             session.close(CloseStatus.POLICY_VIOLATION);
             return;
         }

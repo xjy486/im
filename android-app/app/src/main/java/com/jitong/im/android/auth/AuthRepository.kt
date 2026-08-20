@@ -58,9 +58,27 @@ internal class AuthRepository(
         }
     }
 
-    fun logout() = sessionManager.logout()
+    suspend fun logout() {
+        val authorization = sessionManager.snapshot()?.accessToken?.let { "Bearer $it" }
+        sessionManager.prepareForLogout()
+        withContext(Dispatchers.IO) {
+            if (authorization != null) {
+                runCatching { authApi.logout(authorization).execute() }
+            }
+        }
+        sessionManager.finishLogout()
+    }
 
-    suspend fun clearCurrentAccount() = sessionManager.clearCurrentAccount()
+    suspend fun clearCurrentAccount() {
+        val authorization = sessionManager.snapshot()?.accessToken?.let { "Bearer $it" }
+        sessionManager.prepareForLogout()
+        withContext(Dispatchers.IO) {
+            if (authorization != null) {
+                runCatching { authApi.logout(authorization).execute() }
+            }
+        }
+        sessionManager.clearCurrentAccount()
+    }
 
     fun requireReplacement(exception: DeviceReplacementRequiredException) =
         sessionManager.requireReplacement(exception)

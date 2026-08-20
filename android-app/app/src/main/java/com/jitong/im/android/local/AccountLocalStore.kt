@@ -49,6 +49,21 @@ class AccountLocalStore(
     @Synchronized
     fun activeDatabase(): AccountDatabase? = openedDatabase
 
+    @Synchronized
+    fun markPendingCommandsForManualRetry() {
+        val database = openedDatabase ?: return
+        database.runInTransaction {
+            val pending = database.pendingCommandDao().pending()
+            database.pendingCommandDao().markManualRetry()
+            pending.forEach { command ->
+                database.messageDao().updateLocalState(
+                    command.clientMsgId,
+                    "MANUAL_RETRY",
+                )
+            }
+        }
+    }
+
     private fun ensureAccount(
         userId: String,
         accountNo: String,
@@ -95,6 +110,7 @@ class AccountLocalStore(
             .addMigrations(AccountDatabase.MIGRATION_1_2)
             .addMigrations(AccountDatabase.MIGRATION_2_3)
             .addMigrations(AccountDatabase.MIGRATION_3_4)
+            .addMigrations(AccountDatabase.MIGRATION_4_5)
             .build()
     }
 }
