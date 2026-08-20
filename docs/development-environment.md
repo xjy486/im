@@ -26,7 +26,11 @@ brew install --cask temurin@21
 
 项目脚本会通过 `/usr/libexec/java_home -v 21` 自动定位 JDK，因此系统默认 `java` 即使仍指向 Java 8，也不会影响通过项目脚本执行的命令。Maven Wrapper 首次运行时会自动下载项目固定的 Maven 版本。
 
-### 2.2 启动 Docker Desktop
+### 2.2 Docker Desktop 或 Colima
+
+本项目支持 Docker Desktop 和 Colima。
+
+Docker Desktop 启动后验证：
 
 Docker Desktop 安装后启动一次：
 
@@ -39,6 +43,40 @@ open -a Docker
 ```sh
 docker info
 docker compose version
+```
+
+如果使用 Colima，先确认 Colima daemon 和 Docker context：
+
+```sh
+colima status
+docker context use colima
+docker info
+```
+
+Testcontainers 在 macOS + Colima 下需要显式使用 Colima socket。由于 Ryuk 容器不能在当前 Colima socket 配置下挂载该 socket，运行 Maven/Testcontainers 测试时固定设置：
+
+```sh
+export DOCKER_HOST=unix://${HOME}/.colima/default/docker.sock
+export TESTCONTAINERS_RYUK_DISABLED=true
+```
+
+然后执行：
+
+```sh
+./scripts/dev-env.sh ./mvnw verify
+```
+
+`TESTCONTAINERS_RYUK_DISABLED=true` 会关闭 Testcontainers 的自动资源回收容器。测试进程被强制终止后，可检查并清理残留容器：
+
+```sh
+docker ps -a
+docker container prune
+```
+
+Docker Desktop 不需要设置这两个环境变量，直接执行：
+
+```sh
+./scripts/dev-env.sh ./mvnw verify
 ```
 
 ## 3. 每次开始开发

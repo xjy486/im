@@ -18,7 +18,7 @@ public class SyncService {
         this.repository = repository;
     }
 
-    @Transactional(readOnly = true)
+    @Transactional
     SyncPage page(UUID userId, long afterSeq, Long untilSeq, int limit) {
         if (afterSeq < 0 || limit < 1 || limit > 200 || (untilSeq != null && untilSeq < afterSeq)) {
             throw new SyncException(ApiErrorDefinition.INVALID_REQUEST);

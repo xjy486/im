@@ -54,14 +54,14 @@ class MigrationRestartContractTest {
     void an_empty_database_migrates_and_the_service_restarts_against_the_same_schema() throws Exception {
         try (ConfigurableApplicationContext firstStart = startService()) {
             assertHealthy(firstStart);
-            assertSuccessfulMigrationVersions("1", "2", "3", "4");
+            assertSuccessfulMigrationVersions("1", "2", "3", "4", "5", "6", "7", "8");
             insertRestartSentinel();
             insertAuditSentinel(firstStart);
         }
 
         try (ConfigurableApplicationContext restarted = startService()) {
             assertHealthy(restarted);
-            assertSuccessfulMigrationVersions("1", "2", "3", "4");
+            assertSuccessfulMigrationVersions("1", "2", "3", "4", "5", "6", "7", "8");
             assertRestartSentinelPreserved();
             assertAuditSentinelPreserved();
         }

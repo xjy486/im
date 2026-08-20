@@ -193,12 +193,12 @@ class ContactContractTest extends ContractTestEnvironment {
         assertThat(reRequest.getStatusCode()).isEqualTo(HttpStatus.OK);
         assertThat(reRequest.getBody().get("status").asText()).isEqualTo("PENDING");
 
-        JsonNode blockedConversation = exchange(
+        JsonNode conversations = exchange(
                 HttpMethod.GET,
                 "/api/v1/conversations",
                 bobToken,
-                null).getBody().get(0);
-        assertThat(blockedConversation.get("blockedByMe").asBoolean()).isFalse();
+                null).getBody();
+        assertThat(conversations).isEmpty();
     }
 
     @Test
