@@ -7,7 +7,6 @@ import com.jitong.im.android.local.EncryptedMediaCache
 import org.junit.After
 import org.junit.Assert.assertArrayEquals
 import org.junit.Assert.assertFalse
-import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -50,5 +49,24 @@ class EncryptedMediaCacheTest {
         cache.clear()
 
         assertFalse(directory.exists())
+    }
+
+    @Test
+    fun tampered_ciphertext_and_path_traversal_are_not_readable() {
+        val relativePath = cache.put("image", byteArrayOf(1, 2, 3))
+        File(directory, relativePath).writeText("tampered", Charsets.UTF_8)
+        File(directory.parentFile, "outside.enc").writeText("outside", Charsets.UTF_8)
+
+        assertFalse(cache.get("image") != null)
+        assertFalse(cache.getByPath("../outside.enc") != null)
+    }
+
+    @Test
+    fun deleting_the_keystore_key_makes_old_ciphertext_unreadable() {
+        cache.put("image", byteArrayOf(4, 5, 6))
+
+        cache.deleteKey()
+
+        assertFalse(cache.get("image") != null)
     }
 }

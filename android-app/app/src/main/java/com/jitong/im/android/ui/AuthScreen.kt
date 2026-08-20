@@ -34,19 +34,13 @@ import androidx.compose.runtime.setValue
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.graphics.asImageBitmap
-import android.graphics.BitmapFactory
-import androidx.compose.foundation.Image
-import androidx.compose.foundation.clickable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.window.Dialog
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.jitong.im.android.auth.SessionState
 import com.jitong.im.android.contact.ConversationSummary
-import com.jitong.im.android.local.LocalMessageEntity
 import java.util.UUID
 
 @Composable
@@ -331,80 +325,6 @@ private fun ContactListPanel(
                     OutlinedButton(
                         onClick = { viewModel.unblock(conversation.peerUserId) },
                     ) { Text("解除拉黑") }
-                }
-            }
-        }
-    }
-}
-
-@Composable
-internal fun ImageMessageContent(
-    message: LocalMessageEntity,
-    loadMedia: suspend (LocalMessageEntity, Boolean) -> ByteArray?,
-) {
-    var preview by remember(message.messageId, message.mediaId, message.localMediaPath) {
-        mutableStateOf<ByteArray?>(null)
-    }
-    var showFullImage by remember(message.messageId) {
-        mutableStateOf(false)
-    }
-    var fullImage by remember(message.messageId) {
-        mutableStateOf<ByteArray?>(null)
-    }
-    var fullImageLoading by remember(message.messageId) {
-        mutableStateOf(false)
-    }
-
-    LaunchedEffect(message.messageId, message.mediaId, message.localMediaPath) {
-        preview = loadMedia(message, true)
-    }
-    preview?.let { bytes ->
-        BitmapFactory.decodeByteArray(bytes, 0, bytes.size)?.let { bitmap ->
-            Image(
-                bitmap = bitmap.asImageBitmap(),
-                contentDescription = "图片消息",
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .clickable(enabled = message.mediaId != null) {
-                        showFullImage = true
-                    },
-            )
-        }
-    } ?: Text("图片加载中…")
-
-    if (showFullImage) {
-        LaunchedEffect(message.messageId, showFullImage) {
-            fullImageLoading = true
-            fullImage = loadMedia(message, false)
-            fullImageLoading = false
-        }
-        Dialog(onDismissRequest = { showFullImage = false }) {
-            Card(Modifier.fillMaxWidth()) {
-                Column(
-                    modifier = Modifier.padding(16.dp),
-                    verticalArrangement = Arrangement.spacedBy(8.dp),
-                ) {
-                    Text("完整图片", style = MaterialTheme.typography.titleMedium)
-                    when {
-                        fullImageLoading -> CircularProgressIndicator()
-                        fullImage == null -> Text("完整图片加载失败，请重试")
-                        else -> fullImage
-                            ?.let { BitmapFactory.decodeByteArray(it, 0, it.size) }
-                            ?.let { bitmap ->
-                                Image(
-                                    bitmap = bitmap.asImageBitmap(),
-                                    contentDescription = "完整图片预览",
-                                    modifier = Modifier.fillMaxWidth(),
-                                )
-                            }
-                            ?: Text("完整图片加载失败，请重试")
-                    }
-                    TextButton(
-                        onClick = { showFullImage = false },
-                        modifier = Modifier.align(Alignment.End),
-                    ) {
-                        Text("关闭")
-                    }
                 }
             }
         }
