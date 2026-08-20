@@ -11,6 +11,7 @@ import com.jitong.im.auth.UserRetirementException;
 import com.jitong.im.auth.UserRetirementResult;
 import com.jitong.im.contact.ContactException;
 import com.jitong.im.message.MessageException;
+import com.jitong.im.sync.SyncException;
 import jakarta.servlet.http.HttpServletRequest;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -108,6 +109,14 @@ class ApiExceptionHandler {
     @ExceptionHandler(MessageException.class)
     ResponseEntity<ApiErrorResponse> messageFailure(
             MessageException exception,
+            HttpServletRequest request
+    ) {
+        return response(exception.definition(), request);
+    }
+
+    @ExceptionHandler(SyncException.class)
+    ResponseEntity<ApiErrorResponse> syncFailure(
+            SyncException exception,
             HttpServletRequest request
     ) {
         return response(exception.definition(), request);

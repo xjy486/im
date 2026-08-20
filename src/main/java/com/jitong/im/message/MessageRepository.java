@@ -125,6 +125,18 @@ class MessageRepository {
                 .single();
     }
 
+    UUID findUserIdForDevice(UUID deviceId) {
+        return jdbc.sql("""
+                        SELECT user_id
+                        FROM devices
+                        WHERE id = :deviceId AND trust_state = 'ACTIVE'
+                        """)
+                .param("deviceId", deviceId)
+                .query(UUID.class)
+                .optional()
+                .orElse(null);
+    }
+
     ConversationTarget findConversation(UUID conversationId, UUID userId) {
         return jdbc.sql("""
                         SELECT cc.conversation_id,
@@ -163,6 +175,21 @@ class MessageRepository {
                 .param("afterSequence", afterSequence)
                 .param("limit", limit)
                 .query(this::mapMessage)
+                .list();
+    }
+
+    List<UUID> conversationParticipants(UUID conversationId) {
+        return jdbc.sql("""
+                        SELECT user_low_id
+                        FROM c2c_conversations
+                        WHERE conversation_id = :conversationId
+                        UNION ALL
+                        SELECT user_high_id
+                        FROM c2c_conversations
+                        WHERE conversation_id = :conversationId
+                        """)
+                .param("conversationId", conversationId)
+                .query(UUID.class)
                 .list();
     }
 

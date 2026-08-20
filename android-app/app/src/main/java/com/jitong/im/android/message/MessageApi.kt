@@ -21,6 +21,7 @@ internal interface MessageApi {
         @Query("afterSeq") afterSeq: Long = 0,
         @Query("limit") limit: Int = 200,
     ): Response<MessagePageResponse>
+
 }
 
 internal data class SendMessageRequest(

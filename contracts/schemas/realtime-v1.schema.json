@@ -1,0 +1,180 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://jitong.invalid/contracts/realtime-v1.schema.json",
+  "title": "Jitong realtime protocol v1",
+  "oneOf": [
+    {
+      "$ref": "#/$defs/syncReadyEnvelope"
+    },
+    {
+      "$ref": "#/$defs/messageEnvelope"
+    },
+    {
+      "$ref": "#/$defs/errorEnvelope"
+    }
+  ],
+  "$defs": {
+    "baseEnvelope": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["version", "operation", "requestId", "body"],
+      "properties": {
+        "version": {
+          "const": 1
+        },
+        "operation": {
+          "type": "string"
+        },
+        "requestId": {
+          "type": ["string", "null"],
+          "format": "uuid"
+        },
+        "body": {
+          "type": "object"
+        }
+      }
+    },
+    "syncReadyEnvelope": {
+      "allOf": [
+        {
+          "$ref": "#/$defs/baseEnvelope"
+        },
+        {
+          "type": "object",
+          "properties": {
+            "operation": {
+              "const": "sync.ready"
+            },
+            "body": {
+              "$ref": "#/$defs/syncReadyBody"
+            }
+          }
+        }
+      ]
+    },
+    "messageEnvelope": {
+      "allOf": [
+        {
+          "$ref": "#/$defs/baseEnvelope"
+        },
+        {
+          "type": "object",
+          "properties": {
+            "operation": {
+              "enum": ["message.ack", "message.created"]
+            },
+            "body": {
+              "$ref": "#/$defs/messageBody"
+            }
+          }
+        }
+      ]
+    },
+    "errorEnvelope": {
+      "allOf": [
+        {
+          "$ref": "#/$defs/baseEnvelope"
+        },
+        {
+          "type": "object",
+          "properties": {
+            "operation": {
+              "const": "error"
+            },
+            "body": {
+              "$ref": "#/$defs/errorBody"
+            }
+          }
+        }
+      ]
+    },
+    "syncReadyBody": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["deviceId", "deviceClass", "highWatermark"],
+      "properties": {
+        "deviceId": {
+          "type": "string",
+          "format": "uuid"
+        },
+        "deviceClass": {
+          "type": "string",
+          "enum": ["MOBILE", "PC"]
+        },
+        "highWatermark": {
+          "type": "integer",
+          "minimum": 0
+        }
+      }
+    },
+    "messageBody": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "messageId",
+        "conversationId",
+        "senderId",
+        "clientMsgId",
+        "conversationSeq",
+        "type",
+        "state",
+        "text",
+        "serverAcceptedAt"
+      ],
+      "properties": {
+        "messageId": {
+          "type": "string",
+          "format": "uuid"
+        },
+        "conversationId": {
+          "type": "string",
+          "format": "uuid"
+        },
+        "senderId": {
+          "type": "string",
+          "format": "uuid"
+        },
+        "clientMsgId": {
+          "type": "string",
+          "format": "uuid"
+        },
+        "conversationSeq": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "type": {
+          "const": "TEXT"
+        },
+        "state": {
+          "const": "ACTIVE"
+        },
+        "text": {
+          "type": "string"
+        },
+        "serverAcceptedAt": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "syncSeq": {
+          "type": ["integer", "null"],
+          "minimum": 1
+        }
+      }
+    },
+    "errorBody": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["code", "message"],
+      "properties": {
+        "code": {
+          "type": "string",
+          "pattern": "^[A-Z][A-Z0-9_]*$"
+        },
+        "message": {
+          "type": "string",
+          "minLength": 1
+        }
+      }
+    }
+  }
+}

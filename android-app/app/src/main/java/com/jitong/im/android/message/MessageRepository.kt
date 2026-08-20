@@ -1,7 +1,9 @@
 package com.jitong.im.android.message
 
+import androidx.room.withTransaction
 import com.jitong.im.android.local.AccountDatabase
 import com.jitong.im.android.local.LocalMessageEntity
+import com.jitong.im.android.local.SyncStateEntity
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
@@ -14,8 +16,10 @@ import java.util.concurrent.ConcurrentHashMap
 
 internal class MessageRepository(
     private val api: MessageApi,
+    private val syncApi: SyncApi,
     private val database: () -> AccountDatabase?,
     private val webSocket: MessageWebSocket,
+    private val deviceId: () -> UUID? = { null },
 ) {
     private val pendingAcks = ConcurrentHashMap<UUID, CompletableDeferred<MessageResponse>>()
 
@@ -27,13 +31,127 @@ internal class MessageRepository(
         val db = database() ?: return
         // The authoritative sequence is supplied by the server. The local SQL
         // query is intentionally not used as an ordering source for transport.
-        val response = api.history(conversationId).bodyOrThrow()
+        val response = api.history(conversationId).messageBodyOrThrow()
         withContext(Dispatchers.IO) {
             val dao = db.messageDao()
             response.messages.forEach {
                 dao.deleteByClientMsgId(it.clientMsgId.toString())
                 dao.upsert(it.toEntity())
             }
+        }
+    }
+
+    suspend fun synchronize(currentUserId: UUID, requestedUntil: Long) {
+        val db = database() ?: return
+        var afterSeq = withContext(Dispatchers.IO) {
+            db.syncStateDao().current()?.lastSyncSeq ?: 0L
+        }
+        if (requestedUntil < afterSeq) {
+            throw IOException("Server high watermark moved behind local cursor")
+        }
+        while (afterSeq < requestedUntil) {
+            val page = try {
+                syncApi.page(afterSeq, requestedUntil).syncBodyOrThrow()
+            } catch (exception: SyncResetRequiredException) {
+                fullRestore(currentUserId, requestedUntil)
+                return
+            }
+            try {
+                SyncCursorPolicy.validatePage(page, afterSeq)
+            } catch (exception: SyncResetRequiredException) {
+                fullRestore(currentUserId, requestedUntil)
+                return
+            }
+            page.events
+                .filter { it.eventType == "MESSAGE_CREATED" && it.conversationId != null }
+                .mapNotNull { it.conversationId }
+                .distinct()
+                .forEach { conversationId ->
+                    restoreConversation(conversationId, currentUserId, db)
+                }
+            val nextAfter = page.nextAfterSeq
+            if (nextAfter <= afterSeq && page.hasMore) {
+                throw IOException("Sync cursor did not advance")
+            }
+            afterSeq = nextAfter
+            if (!page.hasMore && afterSeq < requestedUntil) {
+                throw IOException("Sync ended before the requested high watermark")
+            }
+        }
+        withContext(Dispatchers.IO) {
+            db.withTransaction {
+            db.syncStateDao().upsert(
+                SyncStateEntity(
+                    deviceId = deviceId()?.toString().orEmpty(),
+                    lastSyncSeq = requestedUntil,
+                    lastFullRestoreAt = db.syncStateDao().current()?.lastFullRestoreAt,
+                ),
+            )
+            }
+        }
+        syncApi.acknowledge(SyncAckRequest(requestedUntil)).syncBodyOrThrow()
+    }
+
+    private suspend fun fullRestore(currentUserId: UUID, highWatermark: Long) {
+        val db = database() ?: return
+        val conversations = syncApi.conversations().syncBodyOrThrow()
+        withContext(Dispatchers.IO) {
+            db.withTransaction {
+                db.messageDao().clearAll()
+                db.syncStateDao().upsert(
+                    SyncStateEntity(
+                        deviceId = deviceId()?.toString().orEmpty(),
+                        lastSyncSeq = 0,
+                        lastFullRestoreAt = System.currentTimeMillis(),
+                    ),
+                )
+            }
+        }
+        conversations
+            .forEach { conversation ->
+                restoreConversation(conversation.conversationId, currentUserId, db)
+            }
+        withContext(Dispatchers.IO) {
+            db.withTransaction {
+                db.syncStateDao().upsert(
+                    SyncStateEntity(
+                        deviceId = deviceId()?.toString().orEmpty(),
+                        lastSyncSeq = highWatermark,
+                        lastFullRestoreAt = System.currentTimeMillis(),
+                    ),
+                )
+            }
+        }
+        syncApi.acknowledge(SyncAckRequest(highWatermark)).syncBodyOrThrow()
+    }
+
+    private suspend fun restoreConversation(
+        conversationId: UUID,
+        currentUserId: UUID,
+        db: AccountDatabase,
+    ) {
+        var afterConversationSeq = 0L
+        while (true) {
+            val history = api.history(conversationId, afterConversationSeq, 200).messageBodyOrThrow()
+            if (history.messages.isEmpty()) {
+                return
+            }
+            withContext(Dispatchers.IO) {
+                db.withTransaction {
+                    val dao = db.messageDao()
+                    history.messages.forEach {
+                        dao.deleteByClientMsgId(it.clientMsgId.toString())
+                        dao.upsert(it.toEntity(
+                            localState = if (it.senderId == currentUserId) "SENT" else "RECEIVED",
+                        ))
+                    }
+                }
+            }
+            val nextSequence = history.messages.last().conversationSeq
+            if (nextSequence <= afterConversationSeq || history.messages.size < 200) {
+                return
+            }
+            afterConversationSeq = nextSequence
         }
     }
 
@@ -97,25 +215,71 @@ internal class MessageRepository(
         val senderId = body.senderId ?: return
         val clientMsgId = body.clientMsgId ?: return
         val db = database() ?: return
-        withContext(Dispatchers.IO) {
-            val dao = db.messageDao()
-            val existing = dao.findByClientMsgId(clientMsgId.toString())
-            dao.deleteByClientMsgId(clientMsgId.toString())
-            dao.upsert(
-                LocalMessageEntity(
-                    messageId = messageId.toString(),
-                    conversationId = conversationId.toString(),
-                    senderId = senderId.toString(),
-                    clientMsgId = clientMsgId.toString(),
-                    conversationSeq = body.conversationSeq,
-                    type = body.type ?: "TEXT",
-                    state = body.state ?: "ACTIVE",
-                    localState = if (senderId == currentUserId) "SENT" else "RECEIVED",
-                    text = body.text.orEmpty(),
-                    serverAcceptedAt = body.serverAcceptedAt,
-                    createdAt = existing?.createdAt ?: System.currentTimeMillis(),
-                ),
-            )
+        val syncSeq = body.syncSeq
+        if (syncSeq != null) {
+            val lastSyncSeq = withContext(Dispatchers.IO) {
+                db.syncStateDao().current()?.lastSyncSeq ?: 0L
+            }
+            if (syncSeq <= lastSyncSeq) {
+                return
+            }
+            if (syncSeq > lastSyncSeq + 1) {
+                synchronize(currentUserId, syncSeq)
+                return
+            }
+        }
+        if (syncSeq != null) {
+            withContext(Dispatchers.IO) {
+                db.withTransaction {
+                    val dao = db.messageDao()
+                    val existing = dao.findByClientMsgId(clientMsgId.toString())
+                    dao.deleteByClientMsgId(clientMsgId.toString())
+                    dao.upsert(
+                        LocalMessageEntity(
+                            messageId = messageId.toString(),
+                            conversationId = conversationId.toString(),
+                            senderId = senderId.toString(),
+                            clientMsgId = clientMsgId.toString(),
+                            conversationSeq = body.conversationSeq,
+                            type = body.type ?: "TEXT",
+                            state = body.state ?: "ACTIVE",
+                            localState = if (senderId == currentUserId) "SENT" else "RECEIVED",
+                            text = body.text.orEmpty(),
+                            serverAcceptedAt = body.serverAcceptedAt,
+                            createdAt = existing?.createdAt ?: System.currentTimeMillis(),
+                        ),
+                    )
+                    db.syncStateDao().upsert(
+                        SyncStateEntity(
+                            deviceId = deviceId()?.toString().orEmpty(),
+                            lastSyncSeq = syncSeq,
+                            lastFullRestoreAt = db.syncStateDao().current()?.lastFullRestoreAt,
+                        ),
+                    )
+                }
+            }
+            syncApi.acknowledge(SyncAckRequest(syncSeq)).syncBodyOrThrow()
+        } else {
+            withContext(Dispatchers.IO) {
+                val dao = db.messageDao()
+                val existing = dao.findByClientMsgId(clientMsgId.toString())
+                dao.deleteByClientMsgId(clientMsgId.toString())
+                dao.upsert(
+                    LocalMessageEntity(
+                        messageId = messageId.toString(),
+                        conversationId = conversationId.toString(),
+                        senderId = senderId.toString(),
+                        clientMsgId = clientMsgId.toString(),
+                        conversationSeq = body.conversationSeq,
+                        type = body.type ?: "TEXT",
+                        state = body.state ?: "ACTIVE",
+                        localState = if (senderId == currentUserId) "SENT" else "RECEIVED",
+                        text = body.text.orEmpty(),
+                        serverAcceptedAt = body.serverAcceptedAt,
+                        createdAt = existing?.createdAt ?: System.currentTimeMillis(),
+                    ),
+                )
+            }
         }
         pendingAcks[clientMsgId]?.complete(
             MessageResponse(
@@ -132,11 +296,20 @@ internal class MessageRepository(
         )
     }
 
-    private suspend fun upsertAccepted(response: MessageResponse) {
+    private suspend fun upsertAccepted(
+        response: MessageResponse,
+        currentUserId: UUID? = null,
+    ) {
         val dao = database()?.messageDao() ?: return
         withContext(Dispatchers.IO) {
             dao.deleteByClientMsgId(response.clientMsgId.toString())
-            dao.upsert(response.toEntity(localState = "SENT"))
+            dao.upsert(response.toEntity(
+                localState = if (currentUserId != null && response.senderId != currentUserId) {
+                    "RECEIVED"
+                } else {
+                    "SENT"
+                },
+            ))
         }
     }
 
@@ -154,8 +327,15 @@ internal class MessageRepository(
         createdAt = System.currentTimeMillis(),
     )
 
-    private fun <T> Response<T>.bodyOrThrow(): T {
+    private fun <T> Response<T>.messageBodyOrThrow(): T {
         if (isSuccessful && body() != null) return body()!!
         throw IOException("Message request failed with HTTP ${code()}")
     }
+
+    private fun <T> Response<T>.syncBodyOrThrow(): T {
+        if (isSuccessful && body() != null) return body()!!
+        if (code() == 409) throw SyncResetRequiredException()
+        throw IOException("Sync request failed with HTTP ${code()}")
+    }
+
 }

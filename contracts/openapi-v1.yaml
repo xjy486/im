@@ -239,6 +239,60 @@ paths:
           $ref: '#/components/responses/ApiError'
         '409':
           $ref: '#/components/responses/ApiError'
+  /api/v1/sync:
+    get:
+      operationId: getUserSyncPage
+      summary: Read a bounded page of the authenticated user's durable sync stream
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - name: after
+          in: query
+          schema: { type: integer, format: int64, minimum: 0, default: 0 }
+        - name: until
+          in: query
+          required: false
+          schema: { type: integer, format: int64, minimum: 0 }
+        - name: limit
+          in: query
+          schema: { type: integer, minimum: 1, maximum: 200, default: 200 }
+      responses:
+        '200':
+          description: Ordered sync events and the fixed high-watermark boundary
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/SyncPage' }
+        '401':
+          $ref: '#/components/responses/ApiError'
+        '409':
+          description: Cursor is outside the retained event window
+          content:
+            application/json:
+              schema: { $ref: './schemas/error-response-v1.schema.json' }
+  /api/v1/sync/ack:
+    post:
+      operationId: acknowledgeUserSync
+      summary: Acknowledge sync progress for the authenticated device only
+      security: [{ bearerAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [syncSeq]
+              properties:
+                syncSeq: { type: integer, format: int64, minimum: 0 }
+      responses:
+        '200':
+          description: Device-scoped cursor acknowledgement
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/SyncAckResponse' }
+        '400':
+          $ref: '#/components/responses/ApiError'
+        '401':
+          $ref: '#/components/responses/ApiError'
 components:
   securitySchemes:
     bearerAuth:
@@ -358,6 +412,38 @@ components:
         messages:
           type: array
           items: { $ref: '#/components/schemas/Message' }
+    SyncEvent:
+      type: object
+      additionalProperties: false
+      required: [syncSeq, eventType, entityId, conversationId, createdAt]
+      properties:
+        syncSeq: { type: integer, format: int64, minimum: 1 }
+        eventType: { type: string }
+        entityId: { type: string, format: uuid }
+        conversationId: { type: [string, 'null'], format: uuid }
+        createdAt: { type: string, format: date-time }
+    SyncPage:
+      type: object
+      additionalProperties: false
+      required: [version, afterSeq, highWatermark, untilSeq, nextAfterSeq, hasMore, events]
+      properties:
+        version: { const: 1 }
+        afterSeq: { type: integer, format: int64, minimum: 0 }
+        highWatermark: { type: integer, format: int64, minimum: 0 }
+        untilSeq: { type: integer, format: int64, minimum: 0 }
+        nextAfterSeq: { type: integer, format: int64, minimum: 0 }
+        hasMore: { type: boolean }
+        events:
+          type: array
+          items: { $ref: '#/components/schemas/SyncEvent' }
+    SyncAckResponse:
+      type: object
+      additionalProperties: false
+      required: [version, deviceId, ackedSeq]
+      properties:
+        version: { const: 1 }
+        deviceId: { type: string, format: uuid }
+        ackedSeq: { type: integer, format: int64, minimum: 0 }
   responses:
     ApiError:
       description: Versioned error response

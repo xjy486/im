@@ -2,8 +2,8 @@ package com.jitong.im.message;
 
 import com.jitong.im.contact.ContactService;
 import com.jitong.im.platform.error.ApiErrorDefinition;
+import com.jitong.im.sync.SyncService;
 import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -17,27 +17,27 @@ public class MessageService {
 
     private final MessageRepository repository;
     private final ContactService contactService;
-    private final ApplicationEventPublisher eventPublisher;
+    private final SyncService syncService;
     private final Clock clock;
 
     @Autowired
     public MessageService(
             MessageRepository repository,
             ContactService contactService,
-            ApplicationEventPublisher eventPublisher
+            SyncService syncService
     ) {
-        this(repository, contactService, eventPublisher, Clock.systemUTC());
+        this(repository, contactService, syncService, Clock.systemUTC());
     }
 
     MessageService(
             MessageRepository repository,
             ContactService contactService,
-            ApplicationEventPublisher eventPublisher,
+            SyncService syncService,
             Clock clock
     ) {
         this.repository = repository;
         this.contactService = contactService;
-        this.eventPublisher = eventPublisher;
+        this.syncService = syncService;
         this.clock = clock;
     }
 
@@ -76,7 +76,15 @@ public class MessageService {
                 clientMsgId,
                 text,
                 clock.instant());
-        eventPublisher.publishEvent(new MessageAcceptedEvent(message));
+        for (UUID participantId : repository.conversationParticipants(conversationId).stream().sorted().toList()) {
+            long syncSeq = syncService.allocateSequence(participantId);
+            syncService.recordEvent(
+                    participantId,
+                    syncSeq,
+                    "MESSAGE_CREATED",
+                    message.messageId(),
+                    conversationId);
+        }
         return new MessageSendResult(message, true);
     }
 

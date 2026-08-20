@@ -8,6 +8,7 @@ public enum ApiErrorDefinition {
     AUTH_INVALID(HttpStatus.UNAUTHORIZED, "Authentication is invalid"),
     TOKEN_EXPIRED(HttpStatus.UNAUTHORIZED, "Authentication token has expired"),
     DEVICE_REPLACEMENT_REQUIRED(HttpStatus.CONFLICT, "Device replacement confirmation is required"),
+    SYNC_RESET_REQUIRED(HttpStatus.CONFLICT, "The synchronization cursor is outside the retained window"),
     FORBIDDEN(HttpStatus.FORBIDDEN, "Access is forbidden"),
     NOT_CONTACT(HttpStatus.FORBIDDEN, "The conversation is not available"),
     IDEMPOTENCY_CONFLICT(HttpStatus.CONFLICT, "The client message identifier is already in use"),

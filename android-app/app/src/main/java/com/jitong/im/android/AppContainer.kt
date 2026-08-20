@@ -44,6 +44,7 @@ internal class AppContainer(context: Context) {
     private val authenticatedApi = authenticatedRetrofit.create(AuthApi::class.java)
     private val authenticatedContactApi = authenticatedRetrofit.create(ContactApi::class.java)
     private val authenticatedMessageApi = authenticatedRetrofit.create(MessageApi::class.java)
+    private val authenticatedSyncApi = authenticatedRetrofit.create(com.jitong.im.android.message.SyncApi::class.java)
     private val messageWebSocket = MessageWebSocket(
         client = authenticatedClient,
         baseUrl = BuildConfig.BASE_URL,
@@ -62,8 +63,10 @@ internal class AppContainer(context: Context) {
     val contactRepository = ContactRepository(authenticatedContactApi)
     val messageRepository = MessageRepository(
         api = authenticatedMessageApi,
+        syncApi = authenticatedSyncApi,
         database = { localStore.activeDatabase() },
         webSocket = messageWebSocket,
+        deviceId = { sessionManager.snapshot()?.deviceId?.let(UUID::fromString) },
     )
 
     private val messageScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
@@ -75,7 +78,13 @@ internal class AppContainer(context: Context) {
                     messageRepository.connect()
                     messageWebSocket.events.collect { event ->
                         val userId = sessionManager.snapshot()?.userId?.let(UUID::fromString) ?: return@collect
-                        messageRepository.apply(event, userId)
+                        when (event.operation) {
+                            "sync.ready" -> {
+                                val watermark = event.body?.highWatermark ?: return@collect
+                                messageRepository.synchronize(userId, watermark)
+                            }
+                            "message.created", "message.ack" -> messageRepository.apply(event, userId)
+                        }
                     }
                 } else {
                     messageRepository.disconnect()

@@ -19,6 +19,7 @@ import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 
 import java.util.Map;
+import java.util.List;
 import java.util.UUID;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
@@ -177,6 +178,57 @@ class MessageContractTest extends ContractTestEnvironment {
         assertThat(tooLong.getBody().get("code").asText()).isEqualTo("TEXT_TOO_LONG");
     }
 
+    @Test
+    void keeps_each_device_cursor_independent_while_syncing_the_same_message_stream() throws Exception {
+        TestUser alice = createUser("Alice");
+        TestUser bob = createUser("Bob");
+        String aliceMobileToken = login(alice.accountNo(), "alice-sync-mobile", "MOBILE");
+        String alicePcToken = login(alice.accountNo(), "alice-sync-pc", "PC");
+        String bobToken = login(bob.accountNo(), "bob-sync-mobile", "MOBILE");
+
+        JsonNode request = post(
+                "/api/v1/contact-requests",
+                aliceMobileToken,
+                Map.of("accountNo", bob.accountNo(), "verification", ""));
+        UUID requestId = UUID.fromString(request.get("requestId").asText());
+        UUID conversationId = UUID.fromString(exchange(
+                HttpMethod.POST,
+                "/api/v1/contact-requests/" + requestId + "/accept",
+                bobToken,
+                null).getBody().get("conversationId").asText());
+
+        for (String text : List.of("one", "two", "three")) {
+            post(
+                    "/api/v1/conversations/" + conversationId + "/messages",
+                    aliceMobileToken,
+                    Map.of("clientMsgId", UUID.randomUUID(), "text", text));
+        }
+
+        JsonNode mobilePage = exchange(
+                HttpMethod.GET,
+                "/api/v1/sync?after=0&until=3",
+                aliceMobileToken,
+                null).getBody();
+        assertThat(mobilePage.get("events")).hasSize(3);
+        assertThat(mobilePage.get("nextAfterSeq").asLong()).isEqualTo(3);
+
+        JsonNode mobileAck = exchange(
+                HttpMethod.POST,
+                "/api/v1/sync/ack",
+                aliceMobileToken,
+                Map.of("syncSeq", 3)).getBody();
+        assertThat(mobileAck.get("ackedSeq").asLong()).isEqualTo(3);
+
+        JsonNode pcPage = exchange(
+                HttpMethod.GET,
+                "/api/v1/sync?after=0&until=3",
+                alicePcToken,
+                null).getBody();
+        assertThat(pcPage.get("events")).hasSize(3);
+        assertThat(pcPage.get("events").get(0).get("syncSeq").asLong()).isEqualTo(1);
+        assertThat(pcPage.get("events").get(2).get("syncSeq").asLong()).isEqualTo(3);
+    }
+
     private JsonNode post(String path, String token, Object body) throws Exception {
         return exchange(HttpMethod.POST, path, token, body).getBody();
     }
@@ -260,6 +312,10 @@ class MessageContractTest extends ContractTestEnvironment {
     }
 
     private String login(String accountNo, String installationId) throws Exception {
+        return login(accountNo, installationId, "MOBILE");
+    }
+
+    private String login(String accountNo, String installationId, String deviceClass) throws Exception {
         HttpHeaders headers = new HttpHeaders();
         headers.setContentType(MediaType.APPLICATION_JSON);
         ResponseEntity<String> response = http.postForEntity(
@@ -267,7 +323,8 @@ class MessageContractTest extends ContractTestEnvironment {
                 new HttpEntity<>(json(Map.of(
                         "accountNo", accountNo,
                         "password", "correct horse battery staple",
-                        "installationId", installationId)), headers),
+                        "installationId", installationId,
+                        "deviceClass", deviceClass)), headers),
                 String.class);
         return objectMapper.readTree(response.getBody()).get("accessToken").asText();
     }

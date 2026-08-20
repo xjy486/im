@@ -18,14 +18,22 @@ final class MessageWire {
     }
 
     static WireEnvelope created(MessageRecord message) {
+        return created(message, null);
+    }
+
+    static WireEnvelope created(MessageRecord message, Long syncSeq) {
         return new WireEnvelope(
                 1,
                 "message.created",
                 null,
-                body(message));
+                body(message, syncSeq));
     }
 
     private static MessageBody body(MessageRecord message) {
+        return body(message, null);
+    }
+
+    private static MessageBody body(MessageRecord message, Long syncSeq) {
         return new MessageBody(
                 message.messageId(),
                 message.conversationId(),
@@ -35,7 +43,8 @@ final class MessageWire {
                 message.type(),
                 message.state(),
                 message.text(),
-                message.serverAcceptedAt());
+                message.serverAcceptedAt(),
+                syncSeq);
     }
 
     static WireEnvelope error(UUID requestId, ApiErrorDefinition definition) {
@@ -44,6 +53,14 @@ final class MessageWire {
                 "error",
                 requestId,
                 new ErrorBody(definition.code(), definition.message()));
+    }
+
+    static WireEnvelope syncReady(UUID deviceId, String deviceClass, long highWatermark) {
+        return new WireEnvelope(
+                1,
+                "sync.ready",
+                null,
+                new SyncReadyBody(deviceId, deviceClass, highWatermark));
     }
 
     record WireEnvelope(
@@ -63,13 +80,21 @@ final class MessageWire {
             String type,
             String state,
             String text,
-            java.time.Instant serverAcceptedAt
+            java.time.Instant serverAcceptedAt,
+            Long syncSeq
     ) {
     }
 
     record ErrorBody(
             String code,
             String message
+    ) {
+    }
+
+    record SyncReadyBody(
+            UUID deviceId,
+            String deviceClass,
+            long highWatermark
     ) {
     }
 }

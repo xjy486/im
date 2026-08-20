@@ -254,21 +254,20 @@ public class AuthService {
     }
 
     User requireUser(String authorizationHeader) {
-        String accessToken = bearerToken(authorizationHeader);
-        AuthSession session = repository.findSessionByAccessTokenHash(TokenDigests.sha256(accessToken));
-        if (session == null
-                || !"ACTIVE".equals(session.status())
-                || !"ACTIVE".equals(session.deviceTrustState())) {
-            throw new InvalidCredentialsException();
-        }
-        if (!session.expiresAt().isAfter(clock.instant())) {
-            throw new ExpiredAccessTokenException();
-        }
+        AuthSession session = requireSession(authorizationHeader);
         return new User(session.userId(), null, null, null);
     }
 
     public UUID requireUserId(String authorizationHeader) {
         return requireUser(authorizationHeader).id();
+    }
+
+    public AuthenticatedDevice requireAuthenticatedDevice(String authorizationHeader) {
+        AuthSession session = requireSession(authorizationHeader);
+        return new AuthenticatedDevice(
+                session.userId(),
+                session.deviceId(),
+                repository.findDeviceClass(session.deviceId()));
     }
 
     @Transactional
@@ -338,6 +337,20 @@ public class AuthService {
             throw new InvalidCredentialsException();
         }
         return authorizationHeader.substring("Bearer ".length());
+    }
+
+    private AuthSession requireSession(String authorizationHeader) {
+        String accessToken = bearerToken(authorizationHeader);
+        AuthSession session = repository.findSessionByAccessTokenHash(TokenDigests.sha256(accessToken));
+        if (session == null
+                || !"ACTIVE".equals(session.status())
+                || !"ACTIVE".equals(session.deviceTrustState())) {
+            throw new InvalidCredentialsException();
+        }
+        if (!session.expiresAt().isAfter(clock.instant())) {
+            throw new ExpiredAccessTokenException();
+        }
+        return session;
     }
 
     private String normalizeInstallationId(String installationId) {

@@ -61,6 +61,14 @@ data class LocalMessageEntity(
     val createdAt: Long,
 )
 
+@Entity(tableName = "sync_state")
+data class SyncStateEntity(
+    @PrimaryKey val id: Int = 1,
+    val deviceId: String,
+    val lastSyncSeq: Long,
+    val lastFullRestoreAt: Long?,
+)
+
 @Dao
 interface LocalConversationDao {
     @Insert(onConflict = OnConflictStrategy.REPLACE)
@@ -89,6 +97,18 @@ interface LocalMessageDao {
 
     @Query("DELETE FROM local_message WHERE clientMsgId = :clientMsgId")
     fun deleteByClientMsgId(clientMsgId: String)
+
+    @Query("DELETE FROM local_message")
+    fun clearAll()
+}
+
+@Dao
+interface SyncStateDao {
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    fun upsert(state: SyncStateEntity)
+
+    @Query("SELECT * FROM sync_state WHERE id = 1")
+    fun current(): SyncStateEntity?
 }
 
 @Database(
@@ -96,14 +116,16 @@ interface LocalMessageDao {
         LocalAccountEntity::class,
         LocalConversationEntity::class,
         LocalMessageEntity::class,
+        SyncStateEntity::class,
     ],
-    version = 2,
+    version = 3,
     exportSchema = true,
 )
 abstract class AccountDatabase : RoomDatabase() {
     abstract fun accountDao(): LocalAccountDao
     abstract fun conversationDao(): LocalConversationDao
     abstract fun messageDao(): LocalMessageDao
+    abstract fun syncStateDao(): SyncStateDao
 
     companion object {
         val MIGRATION_1_2 = object : androidx.room.migration.Migration(1, 2) {
@@ -148,6 +170,27 @@ abstract class AccountDatabase : RoomDatabase() {
                 database.execSQL(
                     "CREATE INDEX IF NOT EXISTS index_local_message_clientMsgId " +
                         "ON local_message (clientMsgId)",
+                )
+            }
+        }
+
+        val MIGRATION_2_3 = object : androidx.room.migration.Migration(2, 3) {
+            override fun migrate(
+                database: androidx.sqlite.db.SupportSQLiteDatabase,
+            ) {
+                database.execSQL(
+                    """
+                    CREATE TABLE IF NOT EXISTS sync_state (
+                        id INTEGER NOT NULL PRIMARY KEY,
+                        deviceId TEXT NOT NULL DEFAULT '',
+                        lastSyncSeq INTEGER NOT NULL,
+                        lastFullRestoreAt INTEGER
+                    )
+                    """.trimIndent(),
+                )
+                database.execSQL(
+                    "INSERT OR IGNORE INTO sync_state (id, deviceId, lastSyncSeq, lastFullRestoreAt) " +
+                        "VALUES (1, '', 0, NULL)",
                 )
             }
         }
