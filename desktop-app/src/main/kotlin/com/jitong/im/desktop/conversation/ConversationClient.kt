@@ -121,6 +121,19 @@ data class DesktopAvatarCrop(
 )
 
 @Serializable
+data class DesktopMediaUploadResponse(
+    val version: Int,
+    val mediaId: String,
+    val purpose: String,
+    val state: String,
+    val contentType: String,
+    val width: Int,
+    val height: Int,
+    val byteSize: Long,
+    val sha256: String,
+)
+
+@Serializable
 data class DesktopGroupProfile(
     val conversationId: String,
     val avatarUrl: String? = null,
@@ -176,8 +189,10 @@ data class DesktopMessage(
     val conversationSeq: Long,
     val type: String,
     val state: String,
-    val text: String,
+    val text: String? = null,
+    val mediaId: String? = null,
     val serverAcceptedAt: String,
+    val recalledAt: String? = null,
 )
 
 @Serializable
@@ -190,7 +205,9 @@ data class DesktopMessagePage(
 @Serializable
 data class DesktopSendMessageRequest(
     val clientMsgId: String,
-    val text: String,
+    val type: String = "TEXT",
+    val text: String? = null,
+    val mediaId: String? = null,
 )
 
 @Serializable
@@ -211,7 +228,9 @@ data class DesktopRealtimeBody(
     val type: String? = null,
     val state: String? = null,
     val text: String? = null,
+    val mediaId: String? = null,
     val serverAcceptedAt: String? = null,
+    val recalledAt: String? = null,
     val syncSeq: Long? = null,
     val userId: String? = null,
     val displayName: String? = null,
@@ -308,6 +327,27 @@ class ConversationClient(
             .put(body)
             .build()
         return requestJson(request)
+    }
+
+    fun uploadImage(
+        accessToken: String,
+        fileName: String,
+        content: ByteArray,
+    ): DesktopMediaUploadResponse {
+        val uploadId = UUID.randomUUID()
+        val body = MultipartBody.Builder()
+            .setType(MultipartBody.FORM)
+            .addFormDataPart(
+                "file",
+                fileName,
+                content.toRequestBody("application/octet-stream".toMediaType()))
+            .build()
+        return requestJson(
+            Request.Builder()
+                .url(url("/api/v1/media/images?uploadId=$uploadId"))
+                .header("Authorization", "Bearer $accessToken")
+                .post(body)
+                .build())
     }
 
     fun removeUserAvatar(accessToken: String) {
@@ -476,7 +516,27 @@ class ConversationClient(
             post(
                 path = "/api/v1/conversations/$conversationId/messages",
                 accessToken = accessToken,
-                body = DesktopSendMessageRequest(clientMsgId, text)))
+                body = DesktopSendMessageRequest(
+                    clientMsgId = clientMsgId,
+                    text = text)))
+
+    fun sendImage(
+        accessToken: String,
+        conversationId: String,
+        clientMsgId: String,
+        mediaId: String,
+    ): DesktopMessage =
+        requestJson(
+            post(
+                path = "/api/v1/conversations/$conversationId/messages",
+                accessToken = accessToken,
+                body = DesktopSendMessageRequest(
+                    clientMsgId = clientMsgId,
+                    type = "IMAGE",
+                    mediaId = mediaId)))
+
+    fun recallMessage(accessToken: String, messageId: String): DesktopMessage =
+        requestJson(post("/api/v1/messages/$messageId/recall", accessToken))
 
     fun readStates(accessToken: String, conversationId: String): DesktopReadStatePage =
         requestJson(get("/api/v1/conversations/$conversationId/read", accessToken))
@@ -622,6 +682,10 @@ class ConversationClient(
         message: DesktopMessage,
         currentUserId: String,
     ) {
+        if (message.state == "RECALLED") {
+            applyRecalledMessage(local, message, currentUserId)
+            return
+        }
         local.replaceMessageByClientId(
             LocalMessage(
                 messageId = message.messageId,
@@ -632,9 +696,37 @@ class ConversationClient(
                 type = message.type,
                 state = message.state,
                 localState = if (message.senderId == currentUserId) "SENT" else "RECEIVED",
-                text = message.text,
+                text = message.text.orEmpty(),
+                mediaId = message.mediaId,
                 serverAcceptedAt = message.serverAcceptedAt,
+                recalledAt = message.recalledAt,
                 createdAt = System.currentTimeMillis()))
+    }
+
+    fun applyRecalledMessage(
+        local: LocalDatabase,
+        message: DesktopMessage,
+        currentUserId: String,
+    ) {
+        val previous = local.findMessageByClientId(message.clientMsgId)
+        val previousMediaId = previous?.mediaId
+        local.replaceMessageByClientId(
+            LocalMessage(
+                messageId = message.messageId,
+                conversationId = message.conversationId,
+                senderId = message.senderId,
+                clientMsgId = message.clientMsgId,
+                conversationSeq = message.conversationSeq,
+                type = message.type,
+                state = "RECALLED",
+                localState = if (message.senderId == currentUserId) "SENT" else "RECEIVED",
+                text = "",
+                mediaId = null,
+                serverAcceptedAt = message.serverAcceptedAt
+                    .ifBlank { previous?.serverAcceptedAt },
+                recalledAt = message.recalledAt,
+                createdAt = previous?.createdAt ?: System.currentTimeMillis()))
+        deleteMessageMedia(local, previousMediaId ?: message.mediaId)
     }
 
     fun newPendingMessage(
@@ -655,6 +747,30 @@ class ConversationClient(
                 state = "ACTIVE",
                 localState = "SENDING",
                 text = text,
+                mediaId = null,
+                serverAcceptedAt = null,
+                createdAt = System.currentTimeMillis()))
+    }
+
+    fun newPendingImage(
+        local: LocalDatabase,
+        conversationId: String,
+        currentUserId: String,
+        clientMsgId: String,
+        mediaId: String,
+    ) {
+        local.upsertMessage(
+            LocalMessage(
+                messageId = "local:$clientMsgId",
+                conversationId = conversationId,
+                senderId = currentUserId,
+                clientMsgId = clientMsgId,
+                conversationSeq = null,
+                type = "IMAGE",
+                state = "ACTIVE",
+                localState = "SENDING",
+                text = "",
+                mediaId = mediaId,
                 serverAcceptedAt = null,
                 createdAt = System.currentTimeMillis()))
     }
@@ -683,6 +799,7 @@ class ConversationClient(
         }
         if (envelope.operation == "user.profile.updated") {
             val userId = body.userId ?: return
+            local.mediaCache().deleteMatching("avatar-$userId-v")
             local.updatePeerProfile(
                 userId,
                 body.displayName.orEmpty(),
@@ -700,6 +817,12 @@ class ConversationClient(
                     avatarUrl = body.avatarUrl,
                     avatarVersion = body.avatarVersion ?: 0))
             local.mediaCache().deleteMatching("group-avatar-$conversationId-v")
+            syncSeq?.let(local::saveLastSyncSeq)
+            return
+        }
+        if (envelope.operation == "message.recalled") {
+            val message = body.toMessage() ?: return
+            applyRecalledMessage(local, message, currentUserId)
             syncSeq?.let(local::saveLastSyncSeq)
             return
         }
@@ -730,8 +853,43 @@ class ConversationClient(
             conversationSeq = conversationSeq,
             type = type ?: "TEXT",
             state = state ?: "ACTIVE",
-            text = text.orEmpty(),
-            serverAcceptedAt = serverAcceptedAt.orEmpty())
+            text = text,
+            mediaId = mediaId,
+            serverAcceptedAt = serverAcceptedAt.orEmpty(),
+            recalledAt = recalledAt)
+    }
+
+    fun loadMedia(
+        accessToken: String,
+        local: LocalDatabase,
+        message: LocalMessage,
+        thumbnail: Boolean,
+    ): ByteArray? {
+        if (message.type != "IMAGE" || message.state != "ACTIVE") return null
+        val mediaId = message.mediaId ?: return null
+        val cacheName = if (thumbnail) {
+            "message-media-$mediaId-thumb"
+        } else {
+            "message-media-$mediaId"
+        }
+        local.mediaCache().getOrNull(cacheName)?.let { return it }
+        val variant = if (thumbnail) "thumb" else "full"
+        httpClient.newCall(
+            get("/api/v1/media/$mediaId?variant=$variant", accessToken))
+            .execute().use { response ->
+                if (response.code == 404 || response.code == 410) return null
+                if (!response.isSuccessful) {
+                    throw ConversationApiException(response.code, response.body?.string().orEmpty())
+                }
+                val bytes = response.body?.bytes() ?: return null
+                local.mediaCache().put(cacheName, bytes)
+                return bytes
+            }
+    }
+
+    fun deleteMessageMedia(local: LocalDatabase, mediaId: String?) {
+        mediaId ?: return
+        local.mediaCache().deleteMatching("message-media-$mediaId")
     }
 
     private inline fun <reified T> requestJson(request: Request): T =
@@ -775,7 +933,11 @@ class ConversationClient(
         val builder = Request.Builder()
             .url(url(path))
             .header("Authorization", "Bearer $accessToken")
-        builder.method(method, null)
+        if (method == "POST") {
+            builder.post(ByteArray(0).toRequestBody())
+        } else {
+            builder.method(method, null)
+        }
         return builder.build()
     }
 

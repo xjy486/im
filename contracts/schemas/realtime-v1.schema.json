@@ -70,7 +70,7 @@
           "type": "object",
           "properties": {
             "operation": {
-              "enum": ["message.ack", "message.created"]
+              "enum": ["message.ack", "message.created", "message.recalled"]
             },
             "body": {
               "$ref": "#/$defs/messageBody"
@@ -210,7 +210,7 @@
           "enum": ["TEXT", "IMAGE"]
         },
         "state": {
-          "const": "ACTIVE"
+          "enum": ["ACTIVE", "RECALLED"]
         },
         "text": {
           "type": ["string", "null"]
@@ -221,6 +221,10 @@
         },
         "serverAcceptedAt": {
           "type": "string",
+          "format": "date-time"
+        },
+        "recalledAt": {
+          "type": ["string", "null"],
           "format": "date-time"
         },
         "syncSeq": {

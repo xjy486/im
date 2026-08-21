@@ -129,15 +129,22 @@ private fun DesktopApp(
     var selfProfile by remember { mutableStateOf<DesktopUserProfile?>(null) }
     var selfAvatarBytes by remember { mutableStateOf<ByteArray?>(null) }
     var selfAvatarLoading by remember { mutableStateOf(false) }
+    var mediaBytes by remember { mutableStateOf<Map<String, ByteArray>>(emptyMap()) }
     val uiScope = androidx.compose.runtime.rememberCoroutineScope()
     val syncMutex = remember { Mutex() }
 
     fun refreshLocal() {
         val local = authStore.localDatabase() ?: return
         val conversations = local.listConversations()
+        val messages = selectedConversationId?.let(local::listMessages).orEmpty()
         data = data.copy(
             conversations = conversations,
-            messages = selectedConversationId?.let(local::listMessages).orEmpty())
+            messages = messages)
+        val activeMediaKeys = messages
+            .filter { it.type == "IMAGE" && it.state == "ACTIVE" && it.mediaId != null }
+            .map { "message-media-${it.mediaId}-thumb" }
+            .toSet()
+        mediaBytes = mediaBytes.filterKeys { it in activeMediaKeys }
         val token = authStore.session?.accessToken ?: session?.accessToken
         val activeAvatarKeys = conversations
             .filter { it.peerAvatarVersion > 0 }
@@ -166,9 +173,30 @@ private fun DesktopApp(
                     .forEach { conversationId ->
                         conversationClient.currentGroupAvatar(token, local, conversationId)
                     }
+                messages
+                    .filter { it.type == "IMAGE" && it.state == "ACTIVE" }
+                    .forEach { message ->
+                        conversationClient.loadMedia(
+                            token,
+                            local,
+                            message,
+                            thumbnail = true)
+                            ?.let { bytes ->
+                                put(
+                                    "message-media-${message.mediaId}-thumb",
+                                    bytes)
+                            }
+                    }
             }
             withContext(Dispatchers.Main.immediate) {
-                avatarBytes = avatarBytes + loaded
+                val loadedAvatars = loaded.filterKeys { key ->
+                    key.startsWith("avatar-") || key.startsWith("group-avatar-")
+                }
+                val loadedMedia = loaded.filterKeys { key ->
+                    key.startsWith("media-") || key.endsWith("-thumb")
+                }
+                avatarBytes = avatarBytes + loadedAvatars
+                mediaBytes = mediaBytes + loadedMedia
             }
         }
     }
@@ -440,6 +468,7 @@ private fun DesktopApp(
             selfProfile = selfProfile,
             selfAvatarBytes = selfAvatarBytes,
             selfAvatarLoading = selfAvatarLoading,
+            mediaBytes = mediaBytes,
             draft = draft,
             error = error,
             onSearchAccountNoChange = { searchAccountNo = it.filter(Char::isDigit).take(11) },
@@ -668,7 +697,60 @@ private fun DesktopApp(
                 selectedConversationId = null
             },
             onChooseAvatar = ::chooseAvatar,
-            onRemoveAvatar = ::removeAvatar)
+            onRemoveAvatar = ::removeAvatar,
+            onChooseImage = {
+                val conversationId = selectedConversationId ?: return@MainScreen
+                val current = authStore.session ?: session ?: return@MainScreen
+                val chooser = JFileChooser()
+                if (chooser.showOpenDialog(null) != JFileChooser.APPROVE_OPTION) return@MainScreen
+                val file = chooser.selectedFile ?: return@MainScreen
+                uiScope.launch {
+                    runCatching {
+                        val bytes = withContext(Dispatchers.IO) { file.readBytes() }
+                        val upload = withContext(Dispatchers.IO) {
+                            conversationClient.uploadImage(current.accessToken, file.name, bytes)
+                        }
+                        val clientMsgId = UUID.randomUUID().toString()
+                        withContext(Dispatchers.IO) {
+                            val local = authStore.localDatabase()
+                                ?: error("PC local database is not open")
+                            conversationClient.newPendingImage(
+                                local,
+                                conversationId,
+                                current.userId,
+                                clientMsgId,
+                                upload.mediaId)
+                            val sent = conversationClient.sendImage(
+                                current.accessToken,
+                                conversationId,
+                                clientMsgId,
+                                upload.mediaId)
+                            conversationClient.applyMessage(local, sent, current.userId)
+                        }
+                        refreshLocal()
+                    }.onFailure { error = messageFor(it) }
+                }
+            },
+            onRecall = { message ->
+                val current = authStore.session ?: session ?: return@MainScreen
+                if (message.senderId != current.userId || message.state != "ACTIVE") return@MainScreen
+                uiScope.launch {
+                    runCatching {
+                        withContext(Dispatchers.IO) {
+                            val local = authStore.localDatabase()
+                                ?: error("PC local database is not open")
+                            val recalled = conversationClient.recallMessage(
+                                current.accessToken,
+                                message.messageId)
+                            conversationClient.applyRecalledMessage(
+                                local,
+                                recalled,
+                                current.userId)
+                        }
+                        refreshLocal()
+                    }.onFailure { error = messageFor(it) }
+                }
+            })
     }
 }
 
@@ -754,6 +836,7 @@ private fun MainScreen(
     selfProfile: DesktopUserProfile?,
     selfAvatarBytes: ByteArray?,
     selfAvatarLoading: Boolean,
+    mediaBytes: Map<String, ByteArray>,
     draft: String,
     error: String?,
     onSearchAccountNoChange: (String) -> Unit,
@@ -773,6 +856,8 @@ private fun MainScreen(
     onClearLocalData: () -> Unit,
     onChooseAvatar: () -> Unit,
     onRemoveAvatar: () -> Unit,
+    onChooseImage: () -> Unit,
+    onRecall: (LocalMessage) -> Unit,
 ) {
     Column(Modifier.fillMaxSize().padding(28.dp)) {
         Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
@@ -917,12 +1002,15 @@ private fun MainScreen(
                 },
                 messages = data.messages,
                 avatarBytes = avatarBytes,
+                mediaBytes = mediaBytes,
                 draft = draft,
                 online = online,
                 error = error,
                 onDraftChange = onDraftChange,
                 onSend = onSend,
-                onMarkRead = onMarkRead)
+                onMarkRead = onMarkRead,
+                onChooseImage = onChooseImage,
+                onRecall = onRecall)
         }
     }
 }
@@ -933,12 +1021,15 @@ private fun ConversationPane(
     selectedConversation: LocalConversation?,
     messages: List<LocalMessage>,
     avatarBytes: Map<String, ByteArray>,
+    mediaBytes: Map<String, ByteArray>,
     draft: String,
     online: Boolean,
     error: String?,
     onDraftChange: (String) -> Unit,
     onSend: () -> Unit,
     onMarkRead: (Long) -> Unit,
+    onChooseImage: () -> Unit,
+    onRecall: (LocalMessage) -> Unit,
 ) {
     if (selectedConversation == null) {
         Column(modifier.padding(28.dp)) {
@@ -962,7 +1053,28 @@ private fun ConversationPane(
                 Card(Modifier.fillMaxWidth().padding(vertical = 4.dp)) {
                     Column(Modifier.padding(12.dp)) {
                         Text(if (message.localState == "SENDING") "Sending…" else message.localState)
-                        Text(message.text)
+                        when {
+                            message.state == "RECALLED" -> Text("Message recalled")
+                            message.type == "IMAGE" -> {
+                                val image = mediaBytes[
+                                    "message-media-${message.mediaId}-thumb"]
+                                if (image == null) {
+                                    Text("Image loading…")
+                                } else {
+                                    Image(
+                                        painter = ImageIO.read(ByteArrayInputStream(image)).toPainter(),
+                                        contentDescription = "Message image",
+                                        modifier = Modifier.size(240.dp))
+                                }
+                            }
+                            else -> Text(message.text)
+                        }
+                        if (message.senderId != selectedConversation.peerUserId
+                            && message.state == "ACTIVE") {
+                            OutlinedButton(onClick = { onRecall(message) }) {
+                                Text("Recall")
+                            }
+                        }
                         message.conversationSeq?.let {
                             Text("Message #$it")
                         }
@@ -976,6 +1088,10 @@ private fun ConversationPane(
                 color = MaterialTheme.colorScheme.error)
         }
         Row(Modifier.fillMaxWidth().padding(top = 8.dp)) {
+            OutlinedButton(enabled = online, onClick = onChooseImage) {
+                Text("Image")
+            }
+            Spacer(Modifier.width(8.dp))
             OutlinedTextField(
                 modifier = Modifier.weight(1f),
                 value = draft,
@@ -1057,6 +1173,15 @@ private suspend fun synchronize(
         untilSeq = page.untilSeq
         page.events
             .also { client.applySyncProfileEvents(current.accessToken, local, it) }
+            .also { events ->
+                if (events.any { it.eventType == "MESSAGE_RECALLED" }) {
+                    client.fullRestore(
+                        current.accessToken,
+                        local,
+                        current.userId,
+                        page.highWatermark)
+                }
+            }
             .mapNotNull { it.conversationId }
             .distinct()
             .forEach { conversationId ->

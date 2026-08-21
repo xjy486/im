@@ -108,6 +108,10 @@ class LocalDatabaseManager(
                         )
                         """.trimIndent())
                     statement.executeUpdate(
+                        "ALTER TABLE local_messages ADD COLUMN IF NOT EXISTS media_id VARCHAR(36)")
+                    statement.executeUpdate(
+                        "ALTER TABLE local_messages ADD COLUMN IF NOT EXISTS recalled_at VARCHAR(64)")
+                    statement.executeUpdate(
                         """
                         CREATE INDEX IF NOT EXISTS local_messages_conversation_idx
                         ON local_messages (conversation_id, conversation_seq, created_at)
@@ -447,8 +451,9 @@ class LocalDatabase internal constructor(
                 """
                 MERGE INTO local_messages (
                     message_id, conversation_id, sender_id, client_msg_id, conversation_seq,
-                    type, state, local_state, text_content, server_accepted_at, created_at
-                ) KEY(message_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    type, state, local_state, text_content, media_id, server_accepted_at,
+                    recalled_at, created_at
+                ) KEY(message_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """.trimIndent()).use { statement ->
                 statement.setString(1, message.messageId)
                 statement.setString(2, message.conversationId)
@@ -463,8 +468,10 @@ class LocalDatabase internal constructor(
                 statement.setString(7, message.state)
                 statement.setString(8, message.localState)
                 statement.setString(9, message.text)
-                statement.setString(10, message.serverAcceptedAt)
-                statement.setLong(11, message.createdAt)
+                statement.setString(10, message.mediaId)
+                statement.setString(11, message.serverAcceptedAt)
+                statement.setString(12, message.recalledAt)
+                statement.setLong(13, message.createdAt)
                 statement.executeUpdate()
             }
         }
@@ -485,8 +492,9 @@ class LocalDatabase internal constructor(
                     """
                     MERGE INTO local_messages (
                         message_id, conversation_id, sender_id, client_msg_id, conversation_seq,
-                        type, state, local_state, text_content, server_accepted_at, created_at
-                    ) KEY(message_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                        type, state, local_state, text_content, media_id, server_accepted_at,
+                        recalled_at, created_at
+                    ) KEY(message_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     """.trimIndent()).use { statement ->
                     statement.setString(1, message.messageId)
                     statement.setString(2, message.conversationId)
@@ -501,8 +509,10 @@ class LocalDatabase internal constructor(
                     statement.setString(7, message.state)
                     statement.setString(8, message.localState)
                     statement.setString(9, message.text)
-                    statement.setString(10, message.serverAcceptedAt)
-                    statement.setLong(11, message.createdAt)
+                    statement.setString(10, message.mediaId)
+                    statement.setString(11, message.serverAcceptedAt)
+                    statement.setString(12, message.recalledAt)
+                    statement.setLong(13, message.createdAt)
                     statement.executeUpdate()
                 }
                 connection.commit()
@@ -535,7 +545,8 @@ class LocalDatabase internal constructor(
             connection.prepareStatement(
                 """
                 SELECT message_id, conversation_id, sender_id, client_msg_id, conversation_seq,
-                       type, state, local_state, text_content, server_accepted_at, created_at
+                       type, state, local_state, text_content, media_id, server_accepted_at,
+                       recalled_at, created_at
                 FROM local_messages
                 WHERE conversation_id = ?
                 ORDER BY CASE WHEN conversation_seq IS NULL THEN 1 ELSE 0 END,
@@ -564,6 +575,25 @@ class LocalDatabase internal constructor(
                         return result.getLong(1)
                     }
                 }
+        }
+    }
+
+    fun findMessageByClientId(clientMsgId: String): LocalMessage? {
+        pool.connection.use { connection ->
+            connection.prepareStatement(
+                """
+                SELECT message_id, conversation_id, sender_id, client_msg_id, conversation_seq,
+                       type, state, local_state, text_content, media_id, server_accepted_at,
+                       recalled_at, created_at
+                FROM local_messages
+                WHERE client_msg_id = ?
+                """.trimIndent()).use { statement ->
+                statement.setString(1, clientMsgId)
+                statement.executeQuery().use { result ->
+                    if (!result.next()) return null
+                    return result.toLocalMessage()
+                }
+            }
         }
     }
 
@@ -607,6 +637,7 @@ class LocalDatabase internal constructor(
                 statement.executeUpdate("DELETE FROM local_read_states")
             }
         }
+        mediaCache.deleteMatching("message-media-")
     }
 
     fun saveSession(session: StoredSession) {
@@ -688,7 +719,9 @@ class LocalDatabase internal constructor(
         state = getString("state"),
         localState = getString("local_state"),
         text = getString("text_content"),
+        mediaId = getString("media_id"),
         serverAcceptedAt = getString("server_accepted_at"),
+        recalledAt = getString("recalled_at"),
         createdAt = getLong("created_at"))
 }
 
@@ -821,7 +854,9 @@ data class LocalMessage(
     val state: String,
     val localState: String,
     val text: String,
+    val mediaId: String? = null,
     val serverAcceptedAt: String?,
+    val recalledAt: String? = null,
     val createdAt: Long,
 )
 

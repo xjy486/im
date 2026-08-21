@@ -153,6 +153,10 @@ internal class MessageRepository(
                         }
                     }
                 }
+            if (page.events.any { it.eventType == "MESSAGE_RECALLED" }) {
+                fullRestore(currentUserId, requestedUntil)
+                return
+            }
             val nextAfter = page.nextAfterSeq
             if (nextAfter <= afterSeq && page.hasMore) {
                 throw IOException("Sync cursor did not advance")
