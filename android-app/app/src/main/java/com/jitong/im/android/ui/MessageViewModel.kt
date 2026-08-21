@@ -31,6 +31,28 @@ internal class MessageViewModel(
     val state: StateFlow<MessageUiState> = _state.asStateFlow()
     private var observeJob: Job? = null
 
+    init {
+        viewModelScope.launch {
+            repository.searchInvalidations.collect {
+                val query = _state.value.searchQuery
+                if (query.isBlank()) return@collect
+                val results = runCatching { repository.search(query) }
+                    .getOrElse {
+                        if (_state.value.searchQuery == query) {
+                            _state.value = _state.value.copy(
+                                searchResults = emptyList(),
+                                message = "本地搜索失败",
+                            )
+                        }
+                        return@collect
+                    }
+                if (_state.value.searchQuery == query) {
+                    _state.value = _state.value.copy(searchResults = results)
+                }
+            }
+        }
+    }
+
     fun open(conversationId: UUID) {
         if (_state.value.conversationId == conversationId && observeJob?.isActive == true) {
             return

@@ -159,6 +159,27 @@ private fun DesktopApp(
             .map { "${it.peerUserId}-v${it.peerAvatarVersion}" }
             .toSet()
         avatarBytes = avatarBytes.filterKeys { it in activeAvatarKeys }
+        val query = localSearchQuery
+        if (query.isBlank()) {
+            data = data.copy(searchResults = emptyList())
+        } else {
+            uiScope.launch(Dispatchers.IO) {
+                val results = runCatching { local.searchMessages(query) }
+                    .getOrElse {
+                        withContext(Dispatchers.Main.immediate) {
+                            if (localSearchQuery == query) {
+                                error = messageFor(it)
+                            }
+                        }
+                        return@launch
+                    }
+                withContext(Dispatchers.Main.immediate) {
+                    if (localSearchQuery == query) {
+                        data = data.copy(searchResults = results)
+                    }
+                }
+            }
+        }
         if (token == null) return
         uiScope.launch(Dispatchers.IO) {
             val loaded = buildMap {
@@ -524,11 +545,9 @@ private fun DesktopApp(
                 data = data.copy(searchResults = emptyList())
             },
             onLocalSearch = ::searchLocalHistory,
-            onOpenSearchResult = { conversationId ->
+            onOpenSearchResult = { conversationId, messageId ->
                 selectedConversationId = conversationId
-                selectedSearchMessageId = data.searchResults
-                    .firstOrNull { it.conversationId == conversationId }
-                    ?.messageId
+                selectedSearchMessageId = messageId
                 refreshLocal()
             },
             onAddContact = {
@@ -639,6 +658,7 @@ private fun DesktopApp(
             },
             onSelectConversation = { conversationId ->
                 selectedConversationId = conversationId
+                selectedSearchMessageId = null
                 uiScope.launch {
                     runCatching {
                         withContext(Dispatchers.IO) {
@@ -918,7 +938,7 @@ private fun MainScreen(
     onSearch: () -> Unit,
     onLocalSearchQueryChange: (String) -> Unit,
     onLocalSearch: () -> Unit,
-    onOpenSearchResult: (String) -> Unit,
+    onOpenSearchResult: (String, String) -> Unit,
     onAddContact: () -> Unit,
     onAcceptRequest: (String) -> Unit,
     onRejectRequest: (String) -> Unit,
@@ -1029,17 +1049,23 @@ private fun MainScreen(
                     verticalArrangement = Arrangement.spacedBy(8.dp),
                 ) {
                     items(localSearchResults, key = { it.messageId }) { result ->
-                    Card(
-                        Modifier
-                            .fillMaxWidth()
-                            .clickable { onOpenSearchResult(result.conversationId) }) {
-                        Column(Modifier.padding(10.dp)) {
-                            Text(result.text)
-                            Text(
-                                "${result.conversationId} · ${result.conversationSeq ?: "pending"}",
-                                style = MaterialTheme.typography.bodySmall)
+                        Card(
+                            Modifier
+                                .fillMaxWidth()
+                                .clickable {
+                                    onOpenSearchResult(
+                                        result.conversationId,
+                                        result.messageId)
+                                },
+                        ) {
+                            Column(Modifier.padding(10.dp)) {
+                                Text(result.text)
+                                Text(
+                                    "${result.conversationId} · ${result.conversationSeq ?: "pending"}",
+                                    style = MaterialTheme.typography.bodySmall,
+                                )
+                            }
                         }
-                    }
                     }
                 }
                 Spacer(Modifier.height(16.dp))
@@ -1175,6 +1201,7 @@ private fun ConversationPane(
                         Text(if (message.localState == "SENDING") "Sending…" else message.localState)
                         when {
                             message.state == "RECALLED" -> Text("Message recalled")
+                            message.state == "MODERATED" -> Text("Message moderated")
                             message.type == "IMAGE" -> {
                                 val image = mediaBytes[
                                     "message-media-${message.mediaId}-thumb"]

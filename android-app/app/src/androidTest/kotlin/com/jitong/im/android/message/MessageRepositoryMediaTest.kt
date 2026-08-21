@@ -58,6 +58,50 @@ class MessageRepositoryMediaTest {
                 val bytes = if (variant == "thumb") thumbnailBytes else fullBytes
                 return Response.success(bytes.toResponseBody("image/jpeg".toMediaType()))
             }
+
+            override suspend fun replaceAvatar(
+                uploadId: UUID,
+                file: okhttp3.MultipartBody.Part,
+                cropX: Int?,
+                cropY: Int?,
+                cropWidth: Int?,
+                cropHeight: Int?,
+            ): Response<com.jitong.im.android.media.AvatarUploadResponse> =
+                error("not used")
+
+            override suspend fun profile(
+                userId: UUID,
+            ): Response<com.jitong.im.android.media.AvatarProfileResponse> =
+                error("not used")
+
+            override suspend fun removeAvatar(): Response<Void> = error("not used")
+
+            override suspend fun downloadAvatar(
+                userId: UUID,
+                variant: String,
+                avatarVersion: Long?,
+            ): Response<okhttp3.ResponseBody> = error("not used")
+
+            override suspend fun replaceGroupAvatar(
+                conversationId: UUID,
+                uploadId: UUID,
+                file: okhttp3.MultipartBody.Part,
+            ): Response<com.jitong.im.android.media.AvatarUploadResponse> =
+                error("not used")
+
+            override suspend fun removeGroupAvatar(
+                conversationId: UUID,
+            ): Response<Void> = error("not used")
+
+            override suspend fun downloadGroupAvatar(
+                conversationId: UUID,
+                variant: String,
+                avatarVersion: Long?,
+            ): Response<okhttp3.ResponseBody> = error("not used")
+
+            override suspend fun downloadAvatarUrl(
+                avatarUrl: String,
+            ): Response<okhttp3.ResponseBody> = error("not used")
         }
         val repository = MessageRepository(
             api = unusedMessageApi(),
@@ -115,6 +159,50 @@ class MessageRepositoryMediaTest {
                 requestedVariants += variant
                 return Response.success("unexpected".toResponseBody("image/jpeg".toMediaType()))
             }
+
+            override suspend fun replaceAvatar(
+                uploadId: UUID,
+                file: okhttp3.MultipartBody.Part,
+                cropX: Int?,
+                cropY: Int?,
+                cropWidth: Int?,
+                cropHeight: Int?,
+            ): Response<com.jitong.im.android.media.AvatarUploadResponse> =
+                error("not used")
+
+            override suspend fun profile(
+                userId: UUID,
+            ): Response<com.jitong.im.android.media.AvatarProfileResponse> =
+                error("not used")
+
+            override suspend fun removeAvatar(): Response<Void> = error("not used")
+
+            override suspend fun downloadAvatar(
+                userId: UUID,
+                variant: String,
+                avatarVersion: Long?,
+            ): Response<okhttp3.ResponseBody> = error("not used")
+
+            override suspend fun replaceGroupAvatar(
+                conversationId: UUID,
+                uploadId: UUID,
+                file: okhttp3.MultipartBody.Part,
+            ): Response<com.jitong.im.android.media.AvatarUploadResponse> =
+                error("not used")
+
+            override suspend fun removeGroupAvatar(
+                conversationId: UUID,
+            ): Response<Void> = error("not used")
+
+            override suspend fun downloadGroupAvatar(
+                conversationId: UUID,
+                variant: String,
+                avatarVersion: Long?,
+            ): Response<okhttp3.ResponseBody> = error("not used")
+
+            override suspend fun downloadAvatarUrl(
+                avatarUrl: String,
+            ): Response<okhttp3.ResponseBody> = error("not used")
         }
         val repository = MessageRepository(
             api = unusedMessageApi(),
@@ -183,6 +271,14 @@ class MessageRepositoryMediaTest {
 
         override suspend fun conversations(): Response<List<SyncConversationResponse>> =
             error("not used")
+
+        override suspend fun groupProfile(
+            conversationId: UUID,
+        ): Response<GroupProfileResponse> = error("not used")
+
+        override suspend fun profile(
+            userId: UUID,
+        ): Response<UserProfileResponse> = error("not used")
 
         override suspend fun readStates(
             conversationId: UUID,

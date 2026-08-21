@@ -67,6 +67,8 @@ record ConversationSummary(
         long peerReadSeq,
         String avatarUrl,
         long avatarVersion,
-        String avatarFallback
+        String avatarFallback,
+        boolean searchVisible,
+        long searchVisibleAfterSeq
 ) {
 }

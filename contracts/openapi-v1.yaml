@@ -802,7 +802,7 @@ components:
         avatarVersion: { type: integer, format: int64, minimum: 0 }
     ConversationSummary:
       type: object
-      required: [version, conversationId, peerUserId, peerAccountNo, peerDisplayName, status, relationship, blockedByMe, readSeq, peerReadSeq, avatarVersion]
+      required: [version, conversationId, peerUserId, peerAccountNo, peerDisplayName, status, relationship, blockedByMe, readSeq, peerReadSeq, avatarVersion, searchVisible, searchVisibleAfterSeq]
       properties:
         version: { const: 1 }
         conversationId: { type: string, format: uuid }
@@ -814,6 +814,8 @@ components:
         blockedByMe: { type: boolean }
         readSeq: { type: integer, format: int64, minimum: 0 }
         peerReadSeq: { type: integer, format: int64, minimum: 0 }
+        searchVisible: { type: boolean }
+        searchVisibleAfterSeq: { type: integer, format: int64, minimum: 0 }
         avatarUrl: { type: [string, 'null'] }
         avatarVersion: { type: integer, format: int64, minimum: 0 }
     AvatarUploadResponse:

@@ -636,6 +636,8 @@ private fun ConversationScreen(
                     Column(Modifier.padding(14.dp)) {
                         if (message.state == "RECALLED") {
                             Text("消息已撤回")
+                        } else if (message.state == "MODERATED") {
+                            Text("消息已被治理")
                         } else if (message.type == "IMAGE") {
                             ImageMessageContent(message) { item, thumbnail ->
                                 viewModel.loadMedia(item, thumbnail)
@@ -649,6 +651,7 @@ private fun ConversationScreen(
                                 message.localState == "QUEUED" -> "等待网络"
                                 message.localState == "MANUAL_RETRY" -> "需手动重试"
                                 message.state == "RECALLED" -> "撤回"
+                                message.state == "MODERATED" -> "已被治理"
                                 message.conversationSeq != null -> "序号 ${message.conversationSeq}"
                                 else -> "等待确认"
                             },

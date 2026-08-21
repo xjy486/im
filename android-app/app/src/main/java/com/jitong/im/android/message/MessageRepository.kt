@@ -13,6 +13,7 @@ import com.jitong.im.android.media.ImageNormalizer
 import com.jitong.im.android.local.SyncStateEntity
 import com.jitong.im.search.LocalSearchText
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.CompletableDeferred
@@ -40,6 +41,7 @@ internal class MessageRepository(
     private val pendingFlushMutex = Mutex()
     private var pendingSendScheduler: (() -> Unit)? = null
     private var automaticSendingEnabled = false
+    internal val searchInvalidations = MutableSharedFlow<Unit>(extraBufferCapacity = 1)
 
     suspend fun search(
         query: String,
@@ -94,6 +96,7 @@ internal class MessageRepository(
                 updatedAt = System.currentTimeMillis(),
             )
         }
+        searchInvalidations.tryEmit(Unit)
     }
 
     fun observe(conversationId: UUID): Flow<List<LocalMessageEntity>> =
@@ -284,6 +287,7 @@ internal class MessageRepository(
             }
         }
         syncApi.acknowledge(SyncAckRequest(highWatermark)).syncBodyOrThrow()
+        searchInvalidations.tryEmit(Unit)
     }
 
     private suspend fun applyConversationSummary(conversation: SyncConversationResponse) {
@@ -935,6 +939,7 @@ internal class MessageRepository(
                 }
             }
             deleteMessageMedia(body.mediaId?.toString() ?: localMediaId, localMediaPath)
+            searchInvalidations.tryEmit(Unit)
             if (syncSeq != null) {
                 syncApi.acknowledge(SyncAckRequest(syncSeq)).syncBodyOrThrow()
             }

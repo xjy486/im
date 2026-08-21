@@ -474,6 +474,8 @@ class ContactRepository {
                                u.avatar_version, c.status,
                                COALESCE(my_read.read_seq, 0) AS read_seq,
                                COALESCE(peer_read.read_seq, 0) AS peer_read_seq,
+                               TRUE AS search_visible,
+                               0 AS search_visible_after_seq,
                                CASE WHEN c.status = 'ACTIVE' THEN 'ACTIVE' ELSE 'READ_ONLY' END AS relationship,
                                EXISTS (
                                    SELECT 1
@@ -524,7 +526,9 @@ class ContactRepository {
                                 ? fallback(row.getString("display_name"))
                                 : java.util.Objects.requireNonNullElse(
                                         row.getString("avatar_fallback"),
-                                        fallback(row.getString("display_name")))))
+                                        fallback(row.getString("display_name"))),
+                        row.getBoolean("search_visible"),
+                        row.getLong("search_visible_after_seq")))
                 .list();
     }
 

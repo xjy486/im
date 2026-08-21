@@ -1062,6 +1062,7 @@ class LocalDatabase internal constructor(
               AND conversation.search_visible = TRUE
               AND (lm.conversation_seq IS NULL OR lm.conversation_seq > conversation.search_visible_after_seq)
               AND mst.term IN ($placeholders)
+              AND LOCATE(?, lm.search_text) > 0
               $conversationClause
             GROUP BY lm.message_id, lm.conversation_id, lm.sender_id, lm.client_msg_id,
                      lm.conversation_seq, lm.type, lm.state, lm.local_state,
@@ -1076,6 +1077,7 @@ class LocalDatabase internal constructor(
             plan.terms.forEach {
                 statement.setString(index++, it)
             }
+            statement.setString(index++, plan.normalizedQuery)
             if (conversationId != null) statement.setString(index++, conversationId)
             statement.setInt(index++, plan.terms.size)
             statement.setInt(index, limit)
