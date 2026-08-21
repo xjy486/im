@@ -196,6 +196,10 @@ internal class MessageRepository(
                 applyReadStates(
                     syncApi.readStates(conversation.conversationId).readBodyOrThrow(),
                 )
+                val groupProfile = syncApi.groupProfile(conversation.conversationId)
+                if (groupProfile.isSuccessful && groupProfile.body() != null) {
+                    applyGroupProfile(groupProfile.body()!!)
+                }
             }
         withContext(Dispatchers.IO) {
             db.withTransaction {
@@ -739,15 +743,9 @@ internal class MessageRepository(
                 synchronize(currentUserId, syncSeq)
                 return
             }
+            val profile = syncApi.groupProfile(conversationId).syncBodyOrThrow()
+            applyGroupProfile(profile)
             withContext(Dispatchers.IO) {
-                val profile = syncApi.groupProfile(conversationId).syncBodyOrThrow()
-                db.groupProfileDao().upsert(
-                    LocalGroupProfileEntity(
-                        conversationId = profile.conversationId.toString(),
-                        avatarUrl = profile.avatarUrl,
-                        avatarVersion = profile.avatarVersion,
-                    ),
-                )
                 db.syncStateDao().upsert(
                     SyncStateEntity(
                         deviceId = deviceId()?.toString().orEmpty(),

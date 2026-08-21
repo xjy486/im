@@ -61,11 +61,18 @@ internal class AvatarRepository(
             cropWidth = cropWidth,
             cropHeight = cropHeight,
         )
-        return response.bodyOrThrow("Avatar replacement")
+        val result = response.bodyOrThrow("Avatar replacement")
+        currentUser()?.let { userId ->
+            cache()?.deleteMatching("avatar-$userId-v", "avatar-$userId-v${result.avatarVersion}")
+        }
+        return result
     }
 
     suspend fun removeUserAvatar() {
         api.removeAvatar().requireSuccess("Avatar removal")
+        currentUser()?.let { userId ->
+            cache()?.deleteMatching("avatar-$userId-v")
+        }
     }
 
     private fun userAvatarCacheName(userId: UUID, version: Long) =

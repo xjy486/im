@@ -9,7 +9,7 @@ import com.jitong.im.android.MainActivity
 internal class NotificationClickActivity : Activity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        (application as JitongApplication).container.handleNotificationClick()
+        (application as JitongApplication).container.handleNotification("NEW_MESSAGE")
         startActivity(Intent(this, MainActivity::class.java))
         finish()
     }

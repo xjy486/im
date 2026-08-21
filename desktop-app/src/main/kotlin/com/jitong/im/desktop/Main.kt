@@ -42,6 +42,7 @@ import com.jitong.im.desktop.conversation.ConversationClient
 import com.jitong.im.desktop.conversation.DesktopContactRequestSummary
 import com.jitong.im.desktop.conversation.DesktopContactSearchResult
 import com.jitong.im.desktop.conversation.DesktopRealtimeClient
+import com.jitong.im.desktop.conversation.DesktopUserProfile
 import com.jitong.im.desktop.conversation.RealtimeCommandException
 import com.jitong.im.desktop.conversation.SyncGapException
 import com.jitong.im.desktop.local.LocalConversation
@@ -57,7 +58,9 @@ import kotlinx.coroutines.withContext
 import java.nio.file.Path
 import java.util.UUID
 import java.io.ByteArrayInputStream
+import java.io.File
 import javax.imageio.ImageIO
+import javax.swing.JFileChooser
 
 fun main() = application {
     val authStore = rememberDesktopAuthStore()
@@ -123,6 +126,9 @@ private fun DesktopApp(
     var draft by remember { mutableStateOf("") }
     var online by remember { mutableStateOf(false) }
     var avatarBytes by remember { mutableStateOf<Map<String, ByteArray>>(emptyMap()) }
+    var selfProfile by remember { mutableStateOf<DesktopUserProfile?>(null) }
+    var selfAvatarBytes by remember { mutableStateOf<ByteArray?>(null) }
+    var selfAvatarLoading by remember { mutableStateOf(false) }
     val uiScope = androidx.compose.runtime.rememberCoroutineScope()
     val syncMutex = remember { Mutex() }
 
@@ -133,19 +139,96 @@ private fun DesktopApp(
             conversations = conversations,
             messages = selectedConversationId?.let(local::listMessages).orEmpty())
         val token = authStore.session?.accessToken ?: session?.accessToken
-        if (token != null) {
-            conversations
-                .filter { it.peerAvatarVersion > 0 }
-                .forEach { conversation ->
-                    conversationClient.loadUserAvatar(
-                        token,
+        val activeAvatarKeys = conversations
+            .filter { it.peerAvatarVersion > 0 }
+            .map { "${it.peerUserId}-v${it.peerAvatarVersion}" }
+            .toSet()
+        avatarBytes = avatarBytes.filterKeys { it in activeAvatarKeys }
+        if (token == null) return
+        uiScope.launch(Dispatchers.IO) {
+            val loaded = buildMap {
+                conversations
+                    .filter { it.peerAvatarVersion > 0 }
+                    .forEach { conversation ->
+                        conversationClient.loadUserAvatar(
+                            token,
+                            local,
+                            conversation.peerUserId,
+                            conversation.peerAvatarVersion)
+                            ?.let { bytes ->
+                                put(
+                                    "${conversation.peerUserId}-v${conversation.peerAvatarVersion}",
+                                    bytes)
+                            }
+                    }
+                conversations
+                    .map { it.conversationId }
+                    .forEach { conversationId ->
+                        conversationClient.currentGroupAvatar(token, local, conversationId)
+                    }
+            }
+            withContext(Dispatchers.Main.immediate) {
+                avatarBytes = avatarBytes + loaded
+            }
+        }
+    }
+
+    fun refreshSelfProfile() {
+        val current = authStore.session ?: session ?: return
+        val local = authStore.localDatabase() ?: return
+        selfAvatarLoading = true
+        uiScope.launch {
+            runCatching {
+                withContext(Dispatchers.IO) {
+                    val profile = conversationClient.userProfile(current.accessToken, current.userId)
+                    val bytes = conversationClient.loadUserAvatar(
+                        current.accessToken,
                         local,
-                        conversation.peerUserId,
-                        conversation.peerAvatarVersion)
-                        ?.let { bytes ->
-                            avatarBytes = avatarBytes + (conversation.peerUserId to bytes)
-                        }
+                        profile.userId,
+                        profile.avatarVersion)
+                    profile to bytes
                 }
+            }.onSuccess { (profile, bytes) ->
+                selfProfile = profile
+                selfAvatarBytes = bytes
+            }.onFailure { error = messageFor(it) }
+            selfAvatarLoading = false
+        }
+    }
+
+    fun chooseAvatar() {
+        val current = authStore.session ?: session ?: return
+        val chooser = JFileChooser()
+        if (chooser.showOpenDialog(null) != JFileChooser.APPROVE_OPTION) return
+        val file: File = chooser.selectedFile ?: return
+        selfAvatarLoading = true
+        uiScope.launch {
+            runCatching {
+                val bytes = withContext(Dispatchers.IO) { file.readBytes() }
+                withContext(Dispatchers.IO) {
+                    conversationClient.replaceUserAvatar(
+                        current.accessToken,
+                        file.name,
+                        bytes,
+                        conversationClient.deriveSquareCrop(bytes))
+                }
+            }.onSuccess { refreshSelfProfile() }
+                .onFailure { error = messageFor(it) }
+            selfAvatarLoading = false
+        }
+    }
+
+    fun removeAvatar() {
+        val current = authStore.session ?: session ?: return
+        selfAvatarLoading = true
+        uiScope.launch {
+            runCatching {
+                withContext(Dispatchers.IO) {
+                    conversationClient.removeUserAvatar(current.accessToken)
+                }
+            }.onSuccess { refreshSelfProfile() }
+                .onFailure { error = messageFor(it) }
+            selfAvatarLoading = false
         }
     }
 
@@ -192,6 +275,7 @@ private fun DesktopApp(
             }.onFailure { error = messageFor(it) }
         }
         refreshLocal()
+        refreshSelfProfile()
         refreshRequests()
         val realtime = DesktopRealtimeClient(
             baseUrl = serverUrl(),
@@ -353,6 +437,9 @@ private fun DesktopApp(
             searchAccountNo = searchAccountNo,
             searchResult = searchResult,
             avatarBytes = avatarBytes,
+            selfProfile = selfProfile,
+            selfAvatarBytes = selfAvatarBytes,
+            selfAvatarLoading = selfAvatarLoading,
             draft = draft,
             error = error,
             onSearchAccountNoChange = { searchAccountNo = it.filter(Char::isDigit).take(11) },
@@ -579,7 +666,9 @@ private fun DesktopApp(
                 session = null
                 data = DesktopData()
                 selectedConversationId = null
-            })
+            },
+            onChooseAvatar = ::chooseAvatar,
+            onRemoveAvatar = ::removeAvatar)
     }
 }
 
@@ -662,6 +751,9 @@ private fun MainScreen(
     searchAccountNo: String,
     searchResult: DesktopContactSearchResult?,
     avatarBytes: Map<String, ByteArray>,
+    selfProfile: DesktopUserProfile?,
+    selfAvatarBytes: ByteArray?,
+    selfAvatarLoading: Boolean,
     draft: String,
     error: String?,
     onSearchAccountNoChange: (String) -> Unit,
@@ -679,6 +771,8 @@ private fun MainScreen(
     onMarkRead: (Long) -> Unit,
     onLogout: () -> Unit,
     onClearLocalData: () -> Unit,
+    onChooseAvatar: () -> Unit,
+    onRemoveAvatar: () -> Unit,
 ) {
     Column(Modifier.fillMaxSize().padding(28.dp)) {
         Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
@@ -697,6 +791,36 @@ private fun MainScreen(
             }
         }
         Spacer(Modifier.height(20.dp))
+        Card(Modifier.fillMaxWidth()) {
+            Row(
+                Modifier.padding(12.dp),
+                horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                DesktopAvatar(
+                    bytes = selfAvatarBytes,
+                    fallback = selfProfile?.avatarFallback ?: "?",
+                    size = 56.dp)
+                Column(Modifier.weight(1f)) {
+                    Text(
+                        selfProfile?.displayName ?: "Your profile",
+                        style = MaterialTheme.typography.titleMedium)
+                    Text("Your avatar is private and versioned.")
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        Button(
+                            onClick = onChooseAvatar,
+                            enabled = !selfAvatarLoading) {
+                            Text("Choose avatar")
+                        }
+                        OutlinedButton(
+                            onClick = onRemoveAvatar,
+                            enabled = !selfAvatarLoading &&
+                                (selfProfile?.avatarVersion ?: 0) > 0) {
+                            Text("Remove")
+                        }
+                    }
+                }
+            }
+        }
+        Spacer(Modifier.height(12.dp))
         Row(Modifier.fillMaxWidth()) {
             Column(Modifier.width(280.dp)) {
                 Text("Contacts", style = MaterialTheme.typography.titleLarge)
@@ -755,7 +879,8 @@ private fun MainScreen(
                     Card(Modifier.fillMaxWidth().padding(top = 8.dp)) {
                         Column(Modifier.padding(8.dp)) {
                             DesktopAvatar(
-                                bytes = avatarBytes[conversation.peerUserId],
+                                bytes = avatarBytes[
+                                    "${conversation.peerUserId}-v${conversation.peerAvatarVersion}"],
                                 fallback = conversation.peerAvatarFallback)
                             OutlinedButton(
                                 modifier = Modifier.fillMaxWidth(),
@@ -823,7 +948,8 @@ private fun ConversationPane(
     }
     Column(modifier) {
         DesktopAvatar(
-            bytes = avatarBytes[selectedConversation.peerUserId],
+            bytes = avatarBytes[
+                "${selectedConversation.peerUserId}-v${selectedConversation.peerAvatarVersion}"],
             fallback = selectedConversation.peerAvatarFallback,
             size = 64.dp)
         Text(
@@ -879,10 +1005,20 @@ private fun ConversationPane(
 
 @Composable
 private fun DefaultAvatar(fallback: String) {
+    DefaultAvatar(fallback, 48.dp)
+}
+
+@Composable
+private fun DefaultAvatar(
+    fallback: String,
+    size: androidx.compose.ui.unit.Dp,
+) {
     Card {
         Text(
             fallback.take(2),
-            modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp),
+            modifier = Modifier
+                .size(size)
+                .padding(horizontal = 12.dp, vertical = 8.dp),
             style = MaterialTheme.typography.titleMedium)
     }
 }
@@ -897,7 +1033,7 @@ private fun DesktopAvatar(
         bytes?.let { ImageIO.read(ByteArrayInputStream(it))?.toPainter() }
     }
     if (painter == null) {
-        DefaultAvatar(fallback)
+        DefaultAvatar(fallback, size)
     } else {
         Image(
             painter = painter,
@@ -935,6 +1071,10 @@ private suspend fun synchronize(
     } while (page.hasMore)
     val conversations = client.list(current.accessToken)
     client.replaceConversations(local, conversations)
+    client.restoreGroupProfiles(
+        current.accessToken,
+        local,
+        conversations.map { it.conversationId })
     client.acknowledge(current.accessToken, afterSeq)
     local.saveLastSyncSeq(afterSeq)
     return highWatermark

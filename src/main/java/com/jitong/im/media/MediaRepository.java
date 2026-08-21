@@ -155,6 +155,7 @@ class MediaRepository {
         return jdbc.sql("""
                         UPDATE media
                         SET state = 'BOUND',
+                            attached_message_id = NULL,
                             attached_entity_id = :entityId,
                             attached_entity_type = :entityType,
                             bound_at = :boundAt
@@ -162,6 +163,10 @@ class MediaRepository {
                           AND uploader_id = :uploaderId
                           AND purpose = 'AVATAR'
                           AND state = 'TEMP'
+                          AND attached_message_id IS NULL
+                          AND attached_entity_id IS NULL
+                          AND attached_entity_type IS NULL
+                          AND bound_at IS NULL
                         """)
                 .param("mediaId", mediaId)
                 .param("uploaderId", uploaderId)

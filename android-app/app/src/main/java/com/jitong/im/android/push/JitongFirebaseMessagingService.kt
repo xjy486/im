@@ -12,6 +12,11 @@ import com.jitong.im.android.R
 internal class JitongFirebaseMessagingService : FirebaseMessagingService() {
     override fun onMessageReceived(message: RemoteMessage) {
         val payload = NotificationPayload.from(message.data) ?: return
+        val application = application as? JitongApplication
+        if (payload.type == "PROFILE_CHANGED") {
+            application?.containerOrNull()?.handleNotification("PROFILE_CHANGED")
+            return
+        }
         NotificationChannels.ensure(this)
         val notificationId = (System.currentTimeMillis() and 0x7fffffff).toInt()
         val intent = Intent(this, NotificationClickActivity::class.java).apply {

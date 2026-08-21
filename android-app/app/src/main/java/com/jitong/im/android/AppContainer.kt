@@ -147,7 +147,7 @@ internal class AppContainer(context: Context) {
         messageRepository.syncLatest(userId)
     }
 
-    fun handleNotificationClick() {
+    fun handleNotification(type: String) {
         notificationSyncPending = true
         if (sessionManager.state.value is com.jitong.im.android.auth.SessionState.SignedIn) {
             syncAfterNotification()

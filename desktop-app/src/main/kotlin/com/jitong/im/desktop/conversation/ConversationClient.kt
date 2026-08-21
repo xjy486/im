@@ -4,14 +4,17 @@ import com.jitong.im.desktop.local.LocalConversation
 import com.jitong.im.desktop.local.LocalDatabase
 import com.jitong.im.desktop.local.LocalMessage
 import com.jitong.im.desktop.local.LocalReadState
+import com.jitong.im.desktop.local.LocalGroupProfile
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
 import okhttp3.MediaType.Companion.toMediaType
+import okhttp3.MultipartBody
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.RequestBody.Companion.toRequestBody
 import java.io.IOException
+import java.util.UUID
 
 @Serializable
 data class DesktopConversationSummary(
@@ -94,6 +97,34 @@ data class DesktopUserProfile(
     val avatarUrl: String? = null,
     val avatarVersion: Long = 0,
     val avatarFallback: String = "?",
+)
+
+@Serializable
+data class DesktopAvatarUploadResponse(
+    val version: Int,
+    val mediaId: String,
+    val purpose: String,
+    val state: String,
+    val contentType: String,
+    val width: Int,
+    val height: Int,
+    val byteSize: Long,
+    val avatarVersion: Long,
+    val thumbnailUrl: String,
+)
+
+data class DesktopAvatarCrop(
+    val x: Int,
+    val y: Int,
+    val width: Int,
+    val height: Int,
+)
+
+@Serializable
+data class DesktopGroupProfile(
+    val conversationId: String,
+    val avatarUrl: String? = null,
+    val avatarVersion: Long = 0,
 )
 
 @Serializable
@@ -244,6 +275,56 @@ class ConversationClient(
     fun list(accessToken: String): List<DesktopConversationSummary> =
         requestJson(get("/api/v1/conversations", accessToken))
 
+    fun userProfile(accessToken: String, userId: String): DesktopUserProfile =
+        requestJson(get("/api/v1/users/$userId/profile", accessToken))
+
+    fun replaceUserAvatar(
+        accessToken: String,
+        fileName: String,
+        content: ByteArray,
+        crop: DesktopAvatarCrop? = null,
+    ): DesktopAvatarUploadResponse {
+        val uploadId = UUID.randomUUID()
+        val path = buildString {
+            append("/api/v1/users/me/avatar?uploadId=")
+            append(uploadId)
+            crop?.let {
+                append("&cropX=${it.x}")
+                append("&cropY=${it.y}")
+                append("&cropWidth=${it.width}")
+                append("&cropHeight=${it.height}")
+            }
+        }
+        val body = MultipartBody.Builder()
+            .setType(MultipartBody.FORM)
+            .addFormDataPart(
+                "file",
+                fileName,
+                content.toRequestBody("application/octet-stream".toMediaType()))
+            .build()
+        val request = Request.Builder()
+            .url(url(path))
+            .header("Authorization", "Bearer $accessToken")
+            .put(body)
+            .build()
+        return requestJson(request)
+    }
+
+    fun removeUserAvatar(accessToken: String) {
+        execute(requestWithoutBody("/api/v1/users/me/avatar", accessToken, "DELETE"))
+    }
+
+    fun deriveSquareCrop(content: ByteArray): DesktopAvatarCrop? {
+        val image = javax.imageio.ImageIO.read(java.io.ByteArrayInputStream(content))
+            ?: return null
+        val side = minOf(image.width, image.height)
+        return DesktopAvatarCrop(
+            x = (image.width - side) / 2,
+            y = (image.height - side) / 2,
+            width = side,
+            height = side)
+    }
+
     fun restoreConversation(
         accessToken: String,
         local: LocalDatabase,
@@ -290,6 +371,7 @@ class ConversationClient(
                 currentUserId)
             restoreReadStates(accessToken, local, conversation.conversationId)
         }
+        restoreGroupProfiles(accessToken, local, conversations.map { it.conversationId })
         acknowledge(accessToken, highWatermark)
         local.saveLastSyncSeq(highWatermark)
     }
@@ -331,6 +413,38 @@ class ConversationClient(
                     avatarFallback = profile.avatarFallback)
                 local.mediaCache().deleteMatching("avatar-$userId-v")
             }
+        events
+            .filter { it.eventType == "GROUP_PROFILE_UPDATED" && it.conversationId != null }
+            .map { it.conversationId!! }
+            .distinct()
+            .forEach { conversationId ->
+                val profile = requestJson<DesktopGroupProfile>(
+                    get("/api/v1/groups/$conversationId/profile", accessToken))
+                local.upsertGroupProfile(
+                    LocalGroupProfile(
+                        conversationId = profile.conversationId,
+                        avatarUrl = profile.avatarUrl,
+                        avatarVersion = profile.avatarVersion))
+                local.mediaCache().deleteMatching("group-avatar-$conversationId-v")
+            }
+    }
+
+    fun restoreGroupProfiles(
+        accessToken: String,
+        local: LocalDatabase,
+        conversationIds: List<String>,
+    ) {
+        conversationIds.distinct().forEach { conversationId ->
+            val profile = requestJsonOrNull<DesktopGroupProfile>(
+                get("/api/v1/groups/$conversationId/profile", accessToken))
+                    ?: return@forEach
+            local.upsertGroupProfile(
+                LocalGroupProfile(
+                    conversationId = profile.conversationId,
+                    avatarUrl = profile.avatarUrl,
+                    avatarVersion = profile.avatarVersion))
+            local.mediaCache().deleteMatching("group-avatar-$conversationId-v")
+        }
     }
 
     fun acknowledge(accessToken: String, syncSeq: Long) {
@@ -446,6 +560,40 @@ class ConversationClient(
         }
     }
 
+    fun loadGroupAvatar(
+        accessToken: String,
+        local: LocalDatabase,
+        conversationId: String,
+        avatarVersion: Long,
+    ): ByteArray? {
+        if (avatarVersion <= 0) return null
+        val cacheName = "group-avatar-$conversationId-v$avatarVersion"
+        local.mediaCache().getOrNull(cacheName)?.let { return it }
+        local.mediaCache().deleteMatching("group-avatar-$conversationId-v", cacheName)
+        httpClient.newCall(
+            get(
+                "/api/v1/groups/$conversationId/avatar" +
+                    "?variant=thumb&avatarVersion=$avatarVersion",
+                accessToken)).execute().use { response ->
+            if (response.code == 404 || response.code == 410) return null
+            if (!response.isSuccessful) {
+                throw ConversationApiException(response.code, response.body?.string().orEmpty())
+            }
+            val bytes = response.body?.bytes() ?: return null
+            local.mediaCache().put(cacheName, bytes)
+            return bytes
+        }
+    }
+
+    fun currentGroupAvatar(
+        accessToken: String,
+        local: LocalDatabase,
+        conversationId: String,
+    ): ByteArray? {
+        val profile = local.groupProfile(conversationId) ?: return null
+        return loadGroupAvatar(accessToken, local, conversationId, profile.avatarVersion)
+    }
+
     fun replaceConversations(
         local: LocalDatabase,
         conversations: List<DesktopConversationSummary>,
@@ -545,6 +693,13 @@ class ConversationClient(
             return
         }
         if (envelope.operation == "group.profile.updated") {
+            val conversationId = body.conversationId ?: return
+            local.upsertGroupProfile(
+                LocalGroupProfile(
+                    conversationId = conversationId,
+                    avatarUrl = body.avatarUrl,
+                    avatarVersion = body.avatarVersion ?: 0))
+            local.mediaCache().deleteMatching("group-avatar-$conversationId-v")
             syncSeq?.let(local::saveLastSyncSeq)
             return
         }
@@ -581,6 +736,14 @@ class ConversationClient(
 
     private inline fun <reified T> requestJson(request: Request): T =
         json.decodeFromString(execute(request))
+
+    private inline fun <reified T> requestJsonOrNull(request: Request): T? {
+        return try {
+            requestJson(request)
+        } catch (exception: ConversationApiException) {
+            if (exception.statusCode == 404) null else throw exception
+        }
+    }
 
     private fun get(path: String, accessToken: String): Request = Request.Builder()
         .url(url(path))

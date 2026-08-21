@@ -122,6 +122,14 @@ class LocalDatabaseManager(
                         )
                         """.trimIndent())
                     statement.executeUpdate(
+                        """
+                        CREATE TABLE IF NOT EXISTS local_group_profiles (
+                            conversation_id VARCHAR(36) PRIMARY KEY,
+                            avatar_url VARCHAR(1000),
+                            avatar_version BIGINT NOT NULL DEFAULT 0
+                        )
+                        """.trimIndent())
+                    statement.executeUpdate(
                         "ALTER TABLE local_conversations ADD COLUMN IF NOT EXISTS peer_avatar_url VARCHAR(1000)")
                     statement.executeUpdate(
                         "ALTER TABLE local_conversations ADD COLUMN IF NOT EXISTS peer_avatar_version BIGINT NOT NULL DEFAULT 0")
@@ -372,6 +380,42 @@ class LocalDatabase internal constructor(
                 statement.setLong(5, System.currentTimeMillis())
                 statement.setString(6, userId)
                 statement.executeUpdate()
+            }
+        }
+    }
+
+    fun upsertGroupProfile(profile: LocalGroupProfile) {
+        pool.connection.use { connection ->
+            connection.prepareStatement(
+                """
+                MERGE INTO local_group_profiles (
+                    conversation_id, avatar_url, avatar_version
+                ) KEY(conversation_id) VALUES (?, ?, ?)
+                """.trimIndent()).use { statement ->
+                statement.setString(1, profile.conversationId)
+                statement.setString(2, profile.avatarUrl)
+                statement.setLong(3, profile.avatarVersion)
+                statement.executeUpdate()
+            }
+        }
+    }
+
+    fun groupProfile(conversationId: String): LocalGroupProfile? {
+        pool.connection.use { connection ->
+            connection.prepareStatement(
+                """
+                SELECT conversation_id, avatar_url, avatar_version
+                FROM local_group_profiles
+                WHERE conversation_id = ?
+                """.trimIndent()).use { statement ->
+                statement.setString(1, conversationId)
+                statement.executeQuery().use { result ->
+                    if (!result.next()) return null
+                    return LocalGroupProfile(
+                        conversationId = result.getString("conversation_id"),
+                        avatarUrl = result.getString("avatar_url"),
+                        avatarVersion = result.getLong("avatar_version"))
+                }
             }
         }
     }
@@ -759,6 +803,12 @@ data class LocalConversation(
     val readSeq: Long,
     val peerReadSeq: Long,
     val updatedAt: Long,
+)
+
+data class LocalGroupProfile(
+    val conversationId: String,
+    val avatarUrl: String?,
+    val avatarVersion: Long,
 )
 
 data class LocalMessage(
