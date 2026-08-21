@@ -64,6 +64,19 @@ class AccountDatabaseSearchTest {
     }
 
     @Test
+    fun english_search_is_case_and_punctuation_insensitive() {
+        database.messageDao().upsert(message("english", "Hello, Android world!", 1))
+
+        val plan = LocalSearchText.plan("  HELLO android  ")!!
+        assertEquals(
+            listOf("english"),
+            database.messageDao()
+                .searchIndexed(null, plan.ftsMatch, plan.normalizedQuery, 100)
+                .map { it.messageId },
+        )
+    }
+
+    @Test
     fun recalled_and_invisible_conversation_history_is_not_searchable() {
         database.messageDao().upsert(message("active", "secret active", 1))
         database.messageDao().upsert(message("recalled", "secret recalled", 2, state = "RECALLED"))
@@ -104,11 +117,12 @@ class AccountDatabaseSearchTest {
             }
         }
 
+        val plan = LocalSearchText.plan("common")!!
         repeat(5) {
             database.messageDao().searchIndexed(
                 null,
-                "wcommon",
-                "common",
+                plan.ftsMatch,
+                plan.normalizedQuery,
                 100,
             )
         }
@@ -116,8 +130,8 @@ class AccountDatabaseSearchTest {
             val started = System.nanoTime()
             database.messageDao().searchIndexed(
                 null,
-                "wcommon",
-                "common",
+                plan.ftsMatch,
+                plan.normalizedQuery,
                 100,
             )
             System.nanoTime() - started

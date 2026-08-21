@@ -75,4 +75,56 @@ class LocalDatabaseMessageTest {
             assertNull(message.text.takeIf { it.isNotEmpty() })
         }
     }
+
+    @Test
+    fun clearing_one_conversation_only_removes_its_media_cache_entries() {
+        val manager = LocalDatabaseManager(createTempDirectory("jitong-clear-media"), InMemoryKeychain())
+        manager.open("12345678903").use { database ->
+            database.upsertMessage(
+                imageMessage(
+                    messageId = "message-1",
+                    conversationId = "conversation-1",
+                    mediaId = "media-1",
+                ),
+            )
+            database.upsertMessage(
+                imageMessage(
+                    messageId = "message-2",
+                    conversationId = "conversation-2",
+                    mediaId = "media-2",
+                ),
+            )
+            database.mediaCache().put("message-media-media-1", byteArrayOf(1))
+            database.mediaCache().put("message-media-media-1-thumb", byteArrayOf(2))
+            database.mediaCache().put("message-media-media-2", byteArrayOf(3))
+
+            database.clearConversationMessages("conversation-1")
+
+            assertNull(database.mediaCache().getOrNull("message-media-media-1"))
+            assertNull(database.mediaCache().getOrNull("message-media-media-1-thumb"))
+            assertEquals(
+                byteArrayOf(3).toList(),
+                database.mediaCache().getOrNull("message-media-media-2")?.toList(),
+            )
+        }
+    }
+
+    private fun imageMessage(
+        messageId: String,
+        conversationId: String,
+        mediaId: String,
+    ) = LocalMessage(
+        messageId = messageId,
+        conversationId = conversationId,
+        senderId = "user-1",
+        clientMsgId = "client-$messageId",
+        conversationSeq = 1,
+        type = "IMAGE",
+        state = "ACTIVE",
+        localState = "RECEIVED",
+        text = "",
+        mediaId = mediaId,
+        serverAcceptedAt = "2026-08-20T00:00:00Z",
+        createdAt = 1,
+    )
 }

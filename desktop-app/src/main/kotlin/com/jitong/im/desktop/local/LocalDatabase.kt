@@ -509,6 +509,26 @@ class LocalDatabase internal constructor(
     }
 
     fun clearConversationMessages(conversationId: String) {
+        val mediaIds = pool.connection.use { connection ->
+            connection.prepareStatement(
+                """
+                SELECT media_id
+                FROM local_messages
+                WHERE conversation_id = ?
+                  AND type = 'IMAGE'
+                  AND media_id IS NOT NULL
+                """.trimIndent(),
+            ).use { statement ->
+                statement.setString(1, conversationId)
+                statement.executeQuery().use { result ->
+                    buildList {
+                        while (result.next()) {
+                            add(result.getString("media_id"))
+                        }
+                    }
+                }
+            }
+        }
         pool.connection.use { connection ->
             connection.autoCommit = false
             try {
@@ -532,7 +552,7 @@ class LocalDatabase internal constructor(
                 connection.autoCommit = true
             }
         }
-        mediaCache.deleteMatching("message-media-")
+        mediaIds.forEach { mediaCache.deleteMatching("message-media-$it") }
     }
 
     fun upsertGroupProfile(profile: LocalGroupProfile) {
