@@ -713,6 +713,11 @@ internal class MessageRepository(
     suspend fun apply(event: WireEvent, currentUserId: UUID) {
         val body = event.body ?: return
         val db = database() ?: return
+        if (event.operation == "error") {
+            throw MessageSendException(
+                retryable = body.code == "INVALID_REQUEST",
+                message = body.message ?: "Realtime message command failed")
+        }
         if (event.operation == "user.profile.updated") {
             val profileUserId = body.userId ?: return
             val profileVersion = body.avatarVersion ?: return

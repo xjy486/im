@@ -578,7 +578,10 @@ class LocalDatabase internal constructor(
         }
     }
 
-    fun findMessageByClientId(clientMsgId: String): LocalMessage? {
+    fun findMessageByClientId(
+        conversationId: String?,
+        clientMsgId: String,
+    ): LocalMessage? {
         pool.connection.use { connection ->
             connection.prepareStatement(
                 """
@@ -587,8 +590,11 @@ class LocalDatabase internal constructor(
                        recalled_at, created_at
                 FROM local_messages
                 WHERE client_msg_id = ?
+                  AND (? IS NULL OR conversation_id = ?)
                 """.trimIndent()).use { statement ->
                 statement.setString(1, clientMsgId)
+                statement.setString(2, conversationId)
+                statement.setString(3, conversationId)
                 statement.executeQuery().use { result ->
                     if (!result.next()) return null
                     return result.toLocalMessage()
@@ -609,7 +615,7 @@ class LocalDatabase internal constructor(
         cacheName: String,
         content: ByteArray,
     ): Boolean {
-        if (findMessageByClientId(clientMsgId)?.state != "ACTIVE") return false
+        if (findMessageByClientId(null, clientMsgId)?.state != "ACTIVE") return false
         mediaCache.put(cacheName, content)
         return true
     }

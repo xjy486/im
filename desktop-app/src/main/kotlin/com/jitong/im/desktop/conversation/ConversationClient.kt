@@ -712,7 +712,9 @@ class ConversationClient(
         message: DesktopMessage,
         currentUserId: String,
     ) {
-        val previous = local.findMessageByClientId(message.clientMsgId)
+        val previous = local.findMessageByClientId(
+            message.conversationId,
+            message.clientMsgId)
         val previousMediaId = previous?.mediaId
         local.replaceMessageByClientId(
             LocalMessage(
@@ -876,7 +878,9 @@ class ConversationClient(
         } else {
             "message-media-$mediaId"
         }
-        if (local.findMessageByClientId(message.clientMsgId)?.state != "ACTIVE") {
+        if (local.findMessageByClientId(
+                message.conversationId,
+                message.clientMsgId)?.state != "ACTIVE") {
             return null
         }
         local.mediaCache().getOrNull(cacheName)?.let { return it }

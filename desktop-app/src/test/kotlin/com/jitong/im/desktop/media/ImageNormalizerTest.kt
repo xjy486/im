@@ -24,8 +24,7 @@ class ImageNormalizerTest {
 
         assertEquals(2048, decoded.width)
         assertEquals(512, decoded.height)
-        assertEquals("image/jpeg", ImageIO.getImageReadersByFormatName("jpg").next().formatName
-            .let { "image/jpeg" })
+        assertEquals("JPEG", ImageIO.getImageReadersByFormatName("jpg").next().formatName)
     }
 
     @Test

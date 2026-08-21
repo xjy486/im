@@ -7,6 +7,9 @@
       "$ref": "#/$defs/syncReadyEnvelope"
     },
     {
+      "$ref": "#/$defs/messageSendEnvelope"
+    },
+    {
       "$ref": "#/$defs/messageEnvelope"
     },
     {
@@ -74,6 +77,24 @@
             },
             "body": {
               "$ref": "#/$defs/messageBody"
+            }
+          }
+        }
+      ]
+    },
+    "messageSendEnvelope": {
+      "allOf": [
+        {
+          "$ref": "#/$defs/baseEnvelope"
+        },
+        {
+          "type": "object",
+          "properties": {
+            "operation": {
+              "const": "message.send"
+            },
+            "body": {
+              "$ref": "#/$defs/messageSendBody"
             }
           }
         }
@@ -183,7 +204,8 @@
         "state",
         "text",
         "mediaId",
-        "serverAcceptedAt"
+        "serverAcceptedAt",
+        "recalledAt"
       ],
       "properties": {
         "messageId": {
@@ -210,7 +232,7 @@
           "enum": ["TEXT", "IMAGE"]
         },
         "state": {
-          "enum": ["ACTIVE", "RECALLED"]
+          "enum": ["ACTIVE", "RECALLED", "MODERATED"]
         },
         "text": {
           "type": ["string", "null"]
@@ -232,6 +254,53 @@
           "minimum": 1
         }
       }
+    },
+    "messageSendBody": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["conversationId", "clientMsgId", "type"],
+      "properties": {
+        "conversationId": {
+          "type": "string",
+          "format": "uuid"
+        },
+        "clientMsgId": {
+          "type": "string",
+          "format": "uuid"
+        },
+        "type": {
+          "enum": ["TEXT", "IMAGE"]
+        },
+        "text": {
+          "type": ["string", "null"]
+        },
+        "mediaId": {
+          "type": ["string", "null"],
+          "format": "uuid"
+        }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "type": { "const": "TEXT" }
+            }
+          },
+          "then": {
+            "required": ["text"]
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "type": { "const": "IMAGE" }
+            }
+          },
+          "then": {
+            "required": ["mediaId"]
+          }
+        }
+      ]
     },
     "conversationReadBody": {
       "type": "object",

@@ -13,6 +13,10 @@ import kotlin.test.assertNull
 import okhttp3.OkHttpClient
 import okhttp3.mockwebserver.MockResponse
 import okhttp3.mockwebserver.MockWebServer
+import java.awt.Color
+import java.awt.image.BufferedImage
+import java.io.ByteArrayOutputStream
+import javax.imageio.ImageIO
 import java.util.UUID
 
 class ConversationClientTest {
@@ -71,7 +75,7 @@ class ConversationClientTest {
             val uploaded = client.uploadImage(
                 "access",
                 "photo.png",
-                byteArrayOf(1, 2, 3, 4))
+                imageBytes(40, 20))
             val sent = client.sendImage(
                 "access",
                 "conversation-1",
@@ -127,6 +131,7 @@ class ConversationClientTest {
                 mediaId = "media-1",
                 serverAcceptedAt = "2026-08-20T00:00:00Z",
                 createdAt = 1)
+            local.upsertMessage(message)
 
             assertEquals(
                 image.toList(),
@@ -140,8 +145,21 @@ class ConversationClientTest {
             assertFalse(encryptedFile.readBytes().contentEquals(image))
 
             local.mediaCache().put("message-media-media-1", image)
-            local.replaceMessageByClientId(message.copy(state = "RECALLED", mediaId = null))
-            client.deleteMessageMedia(local, message.mediaId)
+            client.applyRecalledMessage(
+                local,
+                DesktopMessage(
+                    messageId = "message-1",
+                    conversationId = "conversation-1",
+                    senderId = "user-1",
+                    clientMsgId = "client-1",
+                    conversationSeq = 1,
+                    type = "IMAGE",
+                    state = "RECALLED",
+                    text = null,
+                    mediaId = null,
+                    serverAcceptedAt = "2026-08-20T00:00:00Z",
+                    recalledAt = "2026-08-20T00:00:30Z"),
+                "user-1")
             assertNull(local.mediaCache().getOrNull("message-media-media-1"))
             assertNull(local.mediaCache().getOrNull("message-media-media-1-thumb"))
             local.close()
@@ -178,6 +196,7 @@ class ConversationClientTest {
                     peerReadSeq = 0,
                     updatedAt = 1))
             local.mediaCache().put("avatar-user-2-v1", byteArrayOf(1))
+            server.enqueue(MockResponse().setBody(byteArrayOf(2, 3, 4)))
 
             client.applyRealtime(
                 local,
@@ -197,6 +216,9 @@ class ConversationClientTest {
             assertEquals(2, local.listConversations().single().peerAvatarVersion)
             assertEquals("Robert", local.listConversations().single().peerDisplayName)
             assertNull(local.mediaCache().getOrNull("avatar-user-2-v1"))
+            assertEquals(
+                listOf(2, 3, 4),
+                client.loadUserAvatar("access", local, "user-2", 2)?.toList())
             local.close()
         } finally {
             server.shutdown()
@@ -263,5 +285,16 @@ class ConversationClientTest {
         } finally {
             server.shutdown()
         }
+    }
+
+    private fun imageBytes(width: Int, height: Int): ByteArray {
+        val image = BufferedImage(width, height, BufferedImage.TYPE_INT_RGB)
+        val graphics = image.createGraphics()
+        graphics.color = Color.MAGENTA
+        graphics.fillRect(0, 0, width, height)
+        graphics.dispose()
+        return ByteArrayOutputStream().also { output ->
+            check(ImageIO.write(image, "png", output))
+        }.toByteArray()
     }
 }

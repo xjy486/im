@@ -117,7 +117,7 @@ internal class AppContainer(context: Context) {
                                 messageRepository.synchronize(userId, watermark)
                             }
                             "message.created", "message.ack", "message.recalled", "conversation.read",
-                            "user.profile.updated", "group.profile.updated" ->
+                            "user.profile.updated", "group.profile.updated", "error" ->
                                 messageRepository.apply(event, userId)
                         }
                     }

@@ -228,4 +228,6 @@ internal data class WireMessageBody(
     val avatarUrl: String?,
     val avatarVersion: Long?,
     val avatarFallback: String?,
+    val code: String?,
+    val message: String?,
 )
