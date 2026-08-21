@@ -10,7 +10,8 @@
 
 ## 本地启动
 
-需要已启动的 Docker Desktop、OpenSSL 和 curl。首次启动会生成仅本机使用、已被 Git 忽略的 `.env`：
+需要 Colima、OpenSSL 和 curl。macOS 本地脚本会在 Colima 未运行时自动启动它，
+并使用 Colima Docker socket。首次启动会生成仅本机使用、已被 Git 忽略的 `.env`：
 
 ```sh
 ./scripts/dev-up.sh
@@ -33,10 +34,16 @@ curl http://127.0.0.1:8080/api/v1/system/health
 ```sh
 JITONG_DOMAIN=im.example.com \
 CADDY_EMAIL=ops@example.com \
-docker compose -f compose.yaml -f compose.production.yaml --env-file .env up --build -d
+./scripts/docker-runtime.sh docker compose \
+  -f compose.yaml -f compose.production.yaml --env-file .env up --build -d
 ```
 
 生产覆盖文件仅公开 Caddy 的 80/443 端口；PostgreSQL、MinIO 和 Spring Boot 仍只在容器网络中可达。
+如需直接执行 Compose 命令，先运行：
+
+```sh
+./scripts/docker-runtime.sh --check
+```
 
 如果 PostgreSQL 和 MinIO 使用 SSH 转发运行在本机 `5432`、`9000`、`9001`，请使用独立的云端联调配置，不要修改 Docker 的 `.env`：
 
@@ -50,7 +57,9 @@ cp .env.forward.example .env.forward
 
 ## 测试
 
-需要 JDK 21 和 Docker。项目统一使用 Maven Wrapper；契约测试通过 Testcontainers 启动真实 PostgreSQL 与 MinIO，并从随机 HTTP 端口验证公开行为：
+需要 JDK 21 和 Docker。macOS 本地验证统一使用 Colima；项目统一使用 Maven
+Wrapper。契约测试通过 Testcontainers 启动真实 PostgreSQL 与 MinIO，并从随机
+HTTP 端口验证公开行为：
 
 ```sh
 ./scripts/dev-env.sh ./mvnw test

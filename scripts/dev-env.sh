@@ -76,14 +76,7 @@ fi
 
 DOCKER_BIN=$(find_docker || true)
 if [ -z "$DOCKER_BIN" ]; then
-    printf '%s\n' 'Docker CLI was not found. Install and start Docker Desktop.' >&2
-    exit 1
-fi
-
-if ! "$DOCKER_BIN" info >/dev/null 2>&1; then
-    printf '%s\n' 'Docker Desktop is installed, but its daemon is not ready.' >&2
-    printf '%s\n' 'Start it with: open -a Docker' >&2
-    printf '%s\n' 'Wait until `docker info` succeeds, then retry.' >&2
+    printf '%s\n' 'Docker CLI was not found.' >&2
     exit 1
 fi
 
@@ -91,23 +84,20 @@ export JAVA_HOME="$JAVA_21_HOME"
 export PATH="$JAVA_HOME/bin:$(dirname -- "$DOCKER_BIN"):$PATH"
 cd "$PROJECT_DIR"
 
-print_environment() {
-    printf 'Project: %s\n' "$PROJECT_DIR"
-    printf 'JAVA_HOME: %s\n' "$JAVA_HOME"
-    "$JAVA_HOME/bin/java" -version
-    "$DOCKER_BIN" --version
-    "$DOCKER_BIN" compose version
-    "$PROJECT_DIR/mvnw" --version
-}
-
 case "${1:-}" in
     --check)
-        print_environment
+        printf 'Project: %s\n' "$PROJECT_DIR"
+        printf 'JAVA_HOME: %s\n' "$JAVA_HOME"
+        "$JAVA_HOME/bin/java" -version
+        "$DOCKER_BIN" --version
+        "$PROJECT_DIR/mvnw" --version
+        DOCKER_BIN="$DOCKER_BIN" "$PROJECT_DIR/scripts/docker-runtime.sh" --check
         exit 0
         ;;
     --shell)
         shift
-        print_environment
+        "$PROJECT_DIR/mvnw" --version
+        eval "$(DOCKER_BIN="$DOCKER_BIN" "$PROJECT_DIR/scripts/docker-runtime.sh" --print-env)"
         exec "${SHELL:-/bin/zsh}" -i
         ;;
     --)
@@ -116,8 +106,9 @@ case "${1:-}" in
 esac
 
 if [ "$#" -eq 0 ]; then
-    print_environment
+    "$PROJECT_DIR/mvnw" --version
+    eval "$(DOCKER_BIN="$DOCKER_BIN" "$PROJECT_DIR/scripts/docker-runtime.sh" --print-env)"
     exec "${SHELL:-/bin/zsh}" -i
 fi
 
-exec "$@"
+DOCKER_BIN="$DOCKER_BIN" exec "$PROJECT_DIR/scripts/docker-runtime.sh" "$@"

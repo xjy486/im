@@ -14,7 +14,7 @@ fi
 JITONG_HTTP_PORT=$(sed -n 's/^JITONG_HTTP_PORT=//p' "$ENV_FILE")
 HEALTH_URL="http://127.0.0.1:${JITONG_HTTP_PORT:-8080}/api/v1/system/health"
 
-"$DOCKER_BIN" compose \
+DOCKER_BIN="$DOCKER_BIN" "$PROJECT_DIR/scripts/docker-runtime.sh" "$DOCKER_BIN" compose \
     --project-directory "$PROJECT_DIR" \
     --env-file "$ENV_FILE" \
     restart server >/dev/null

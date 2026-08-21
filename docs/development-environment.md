@@ -9,7 +9,7 @@
 | 操作系统 | macOS arm64 | 当前主开发环境；CI 使用 Linux |
 | JDK | 21 | `pom.xml`、Docker 构建和 CI 均使用 Java 21 |
 | Maven | Wrapper 中的 3.9.11 | 只使用 `./mvnw`，不要求安装全局 `mvn` |
-| Docker | Docker Desktop + Compose plugin | `docker compose` 必须可用，Testcontainers 也依赖 Docker daemon |
+| Docker | macOS 本地开发使用 Colima；CI 使用 Linux Docker | `docker compose` 必须可用，Testcontainers 也依赖 Docker daemon |
 | 其他命令 | Git、OpenSSL、curl | macOS 默认通常已提供；启动脚本会使用它们 |
 
 仓库根目录的 `.java-version` 固定为 `21`。IDE、jenv 或其他版本管理器应读取或遵循该版本。
@@ -26,26 +26,18 @@ brew install --cask temurin@21
 
 项目脚本会通过 `/usr/libexec/java_home -v 21` 自动定位 JDK，因此系统默认 `java` 即使仍指向 Java 8，也不会影响通过项目脚本执行的命令。Maven Wrapper 首次运行时会自动下载项目固定的 Maven 版本。
 
-### 2.2 Docker Desktop 或 Colima
+### 2.2 Colima
 
-本项目支持 Docker Desktop 和 Colima。
+macOS 本地开发和验证统一使用 Colima。Colima 未运行时，仓库脚本会自动执行
+`colima start`，不再切换到 Docker Desktop。
 
-Docker Desktop 启动后验证：
-
-Docker Desktop 安装后启动一次：
-
-```sh
-open -a Docker
-```
-
-等待菜单栏显示 Docker 已就绪，然后验证：
+首次安装：
 
 ```sh
-docker info
-docker compose version
+brew install colima
 ```
 
-如果使用 Colima，先确认 Colima daemon 和 Docker context：
+验证：
 
 ```sh
 colima status
@@ -60,11 +52,15 @@ export DOCKER_HOST=unix://${HOME}/.colima/default/docker.sock
 export TESTCONTAINERS_RYUK_DISABLED=true
 ```
 
-然后执行：
+推荐始终通过仓库脚本执行：
 
 ```sh
+./scripts/dev-env.sh --check
 ./scripts/dev-env.sh ./mvnw verify
 ```
+
+`./scripts/docker-runtime.sh --check` 可以单独查看当前 Docker 运行时和
+Testcontainers 配置。仓库脚本会在 Colima 未运行时自动执行 `colima start`。
 
 `TESTCONTAINERS_RYUK_DISABLED=true` 会关闭 Testcontainers 的自动资源回收容器。测试进程被强制终止后，可检查并清理残留容器：
 
@@ -73,11 +69,8 @@ docker ps -a
 docker container prune
 ```
 
-Docker Desktop 不需要设置这两个环境变量，直接执行：
-
-```sh
-./scripts/dev-env.sh ./mvnw verify
-```
+不要在 macOS 上直接执行裸的 `./mvnw verify`、`docker compose` 或
+`docker run` 来替代仓库脚本，因为这可能绕过 Colima socket 配置。
 
 ## 3. 每次开始开发
 
@@ -157,11 +150,12 @@ Android Emulator 复用说明见 [Android Emulator 复用说明](android-emulato
 curl http://127.0.0.1:8080/api/v1/system/health
 ```
 
-查看状态与日志：
+查看状态与日志。直接通过 runtime wrapper 执行 Docker 命令：
 
 ```sh
-docker compose --env-file .env ps
-docker compose --env-file .env logs -f server
+./scripts/docker-runtime.sh --check
+./scripts/docker-runtime.sh docker compose --env-file .env ps
+./scripts/docker-runtime.sh docker compose --env-file .env logs -f server
 ```
 
 验证服务重启和 Flyway migration 保持完整：
@@ -173,7 +167,7 @@ docker compose --env-file .env logs -f server
 停止容器但保留 PostgreSQL、MinIO 和 Caddy 数据卷：
 
 ```sh
-docker compose --env-file .env down
+./scripts/docker-runtime.sh docker compose --env-file .env down
 ```
 
 只有明确需要清空全部本地数据时才执行 `docker compose --env-file .env down --volumes`；该操作不可恢复本地数据库和对象存储内容。
@@ -227,9 +221,12 @@ IntelliJ IDEA 导入项目时：
 ### Docker 已安装但测试仍无法连接
 
 ```sh
-open -a Docker
+colima status
+colima start
+docker context use colima
+export DOCKER_HOST=unix://${HOME}/.colima/default/docker.sock
+export TESTCONTAINERS_RYUK_DISABLED=true
 docker info
-docker context show
 ```
 
 必须等 `docker info` 成功后再运行 Testcontainers 或 Compose 命令。

@@ -34,7 +34,7 @@ if ! command -v "$DOCKER_BIN" >/dev/null 2>&1; then
     fi
 fi
 
-"$DOCKER_BIN" compose \
+DOCKER_BIN="$DOCKER_BIN" "$PROJECT_DIR/scripts/docker-runtime.sh" "$DOCKER_BIN" compose \
     --project-directory "$PROJECT_DIR" \
     --env-file "$ENV_FILE" \
     up --build --detach --wait
