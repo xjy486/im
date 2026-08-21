@@ -597,6 +597,23 @@ class LocalDatabase internal constructor(
         }
     }
 
+    @Synchronized
+    fun deleteMessageMediaCache(mediaId: String?) {
+        mediaId ?: return
+        mediaCache.deleteMatching("message-media-$mediaId")
+    }
+
+    @Synchronized
+    fun putMessageMediaIfActive(
+        clientMsgId: String,
+        cacheName: String,
+        content: ByteArray,
+    ): Boolean {
+        if (findMessageByClientId(clientMsgId)?.state != "ACTIVE") return false
+        mediaCache.put(cacheName, content)
+        return true
+    }
+
     fun upsertReadState(state: LocalReadState) {
         pool.connection.use { connection ->
             connection.prepareStatement(

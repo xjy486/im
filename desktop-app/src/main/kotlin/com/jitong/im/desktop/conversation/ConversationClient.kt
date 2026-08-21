@@ -5,6 +5,7 @@ import com.jitong.im.desktop.local.LocalDatabase
 import com.jitong.im.desktop.local.LocalMessage
 import com.jitong.im.desktop.local.LocalReadState
 import com.jitong.im.desktop.local.LocalGroupProfile
+import com.jitong.im.desktop.media.ImageNormalizer
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
@@ -241,6 +242,8 @@ data class DesktopRealtimeBody(
     val avatarUrl: String? = null,
     val avatarVersion: Long? = null,
     val avatarFallback: String? = null,
+    val deviceId: String? = null,
+    val deviceClass: String? = null,
 )
 
 class ConversationClient(
@@ -340,7 +343,8 @@ class ConversationClient(
             .addFormDataPart(
                 "file",
                 fileName,
-                content.toRequestBody("application/octet-stream".toMediaType()))
+                ImageNormalizer.normalize(content)
+                    .toRequestBody("image/jpeg".toMediaType()))
             .build()
         return requestJson(
             Request.Builder()
@@ -726,7 +730,7 @@ class ConversationClient(
                     .ifBlank { previous?.serverAcceptedAt },
                 recalledAt = message.recalledAt,
                 createdAt = previous?.createdAt ?: System.currentTimeMillis()))
-        deleteMessageMedia(local, previousMediaId ?: message.mediaId)
+        local.deleteMessageMediaCache(previousMediaId ?: message.mediaId)
     }
 
     fun newPendingMessage(
@@ -872,6 +876,9 @@ class ConversationClient(
         } else {
             "message-media-$mediaId"
         }
+        if (local.findMessageByClientId(message.clientMsgId)?.state != "ACTIVE") {
+            return null
+        }
         local.mediaCache().getOrNull(cacheName)?.let { return it }
         val variant = if (thumbnail) "thumb" else "full"
         httpClient.newCall(
@@ -882,14 +889,15 @@ class ConversationClient(
                     throw ConversationApiException(response.code, response.body?.string().orEmpty())
                 }
                 val bytes = response.body?.bytes() ?: return null
-                local.mediaCache().put(cacheName, bytes)
+                if (!local.putMessageMediaIfActive(message.clientMsgId, cacheName, bytes)) {
+                    return null
+                }
                 return bytes
             }
     }
 
     fun deleteMessageMedia(local: LocalDatabase, mediaId: String?) {
-        mediaId ?: return
-        local.mediaCache().deleteMatching("message-media-$mediaId")
+        local.deleteMessageMediaCache(mediaId)
     }
 
     private inline fun <reified T> requestJson(request: Request): T =

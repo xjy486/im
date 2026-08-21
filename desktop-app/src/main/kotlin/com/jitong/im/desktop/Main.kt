@@ -190,10 +190,10 @@ private fun DesktopApp(
             }
             withContext(Dispatchers.Main.immediate) {
                 val loadedAvatars = loaded.filterKeys { key ->
-                    key.startsWith("avatar-") || key.startsWith("group-avatar-")
+                    key in activeAvatarKeys || key.startsWith("group-avatar-")
                 }
                 val loadedMedia = loaded.filterKeys { key ->
-                    key.startsWith("media-") || key.endsWith("-thumb")
+                    key.startsWith("message-media-")
                 }
                 avatarBytes = avatarBytes + loadedAvatars
                 mediaBytes = mediaBytes + loadedMedia
