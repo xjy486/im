@@ -60,7 +60,7 @@ class MessageRepository {
         return jdbc.sql("""
                         SELECT id, conversation_id, sender_id, client_msg_id,
                                conversation_seq, type, state, text_content,
-                               media_id, server_accepted_at
+                               media_id, server_accepted_at, recalled_at
                         FROM messages
                         WHERE sender_id = :senderId AND client_msg_id = :clientMsgId
                         """)
@@ -145,13 +145,54 @@ class MessageRepository {
         return jdbc.sql("""
                         SELECT id, conversation_id, sender_id, client_msg_id,
                                conversation_seq, type, state, text_content,
-                               media_id, server_accepted_at
+                               media_id, server_accepted_at, recalled_at
                         FROM messages
                         WHERE id = :messageId
                         """)
                 .param("messageId", messageId)
                 .query(this::mapMessage)
                 .single();
+    }
+
+    UUID findConversationId(UUID messageId) {
+        return jdbc.sql("""
+                        SELECT conversation_id
+                        FROM messages
+                        WHERE id = :messageId
+                        """)
+                .param("messageId", messageId)
+                .query(UUID.class)
+                .optional()
+                .orElse(null);
+    }
+
+    MessageRecord findByIdForUpdate(UUID messageId) {
+        return jdbc.sql("""
+                        SELECT id, conversation_id, sender_id, client_msg_id,
+                               conversation_seq, type, state, text_content,
+                               media_id, server_accepted_at, recalled_at
+                        FROM messages
+                        WHERE id = :messageId
+                        FOR UPDATE
+                        """)
+                .param("messageId", messageId)
+                .query(this::mapMessage)
+                .optional()
+                .orElse(null);
+    }
+
+    void recallMessage(UUID messageId, Instant recalledAt) {
+        jdbc.sql("""
+                        UPDATE messages
+                        SET state = 'RECALLED',
+                            text_content = NULL,
+                            media_id = NULL,
+                            recalled_at = :recalledAt
+                        WHERE id = :messageId AND state = 'ACTIVE'
+                        """)
+                .param("messageId", messageId)
+                .param("recalledAt", utc(recalledAt), Types.TIMESTAMP_WITH_TIMEZONE)
+                .update();
     }
 
     UUID findUserIdForDevice(UUID deviceId) {
@@ -193,7 +234,7 @@ class MessageRepository {
         return jdbc.sql("""
                         SELECT id, conversation_id, sender_id, client_msg_id,
                                conversation_seq, type, state, text_content,
-                               media_id, server_accepted_at
+                               media_id, server_accepted_at, recalled_at
                         FROM messages
                         WHERE conversation_id = :conversationId
                           AND conversation_seq > :afterSequence
@@ -233,7 +274,13 @@ class MessageRepository {
                 row.getString("state"),
                 row.getString("text_content"),
                 row.getObject("media_id", UUID.class),
-                row.getObject("server_accepted_at", OffsetDateTime.class).toInstant());
+                row.getObject("server_accepted_at", OffsetDateTime.class).toInstant(),
+                nullableInstant(row, "recalled_at"));
+    }
+
+    private static Instant nullableInstant(java.sql.ResultSet row, String column) throws java.sql.SQLException {
+        OffsetDateTime value = row.getObject(column, OffsetDateTime.class);
+        return value == null ? null : value.toInstant();
     }
 
     private static OffsetDateTime utc(Instant value) {

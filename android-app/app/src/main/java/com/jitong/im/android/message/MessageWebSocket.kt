@@ -217,6 +217,7 @@ internal data class WireMessageBody(
     val text: String?,
     val mediaId: UUID?,
     val serverAcceptedAt: String?,
+    val recalledAt: String?,
     val syncSeq: Long?,
     val deviceId: UUID?,
     val deviceClass: String?,

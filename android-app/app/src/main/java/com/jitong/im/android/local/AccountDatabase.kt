@@ -66,6 +66,7 @@ data class LocalMessageEntity(
     val mediaId: String? = null,
     val localMediaPath: String? = null,
     val serverAcceptedAt: String?,
+    val recalledAt: String? = null,
     val createdAt: Long,
 )
 
@@ -275,7 +276,7 @@ interface SyncStateDao {
         PendingMessageCommandEntity::class,
         LocalGroupProfileEntity::class,
     ],
-    version = 8,
+    version = 9,
     exportSchema = true,
 )
 abstract class AccountDatabase : RoomDatabase() {
@@ -419,6 +420,12 @@ abstract class AccountDatabase : RoomDatabase() {
                 database.execSQL(
                     "ALTER TABLE local_conversation ADD COLUMN peerAvatarVersion INTEGER NOT NULL DEFAULT 0",
                 )
+            }
+        }
+
+        val MIGRATION_8_9 = object : androidx.room.migration.Migration(8, 9) {
+            override fun migrate(database: androidx.sqlite.db.SupportSQLiteDatabase) {
+                database.execSQL("ALTER TABLE local_message ADD COLUMN recalledAt TEXT")
             }
         }
 

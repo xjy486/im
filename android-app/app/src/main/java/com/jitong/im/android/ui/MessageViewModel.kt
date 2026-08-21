@@ -14,6 +14,7 @@ import java.util.UUID
 
 internal data class MessageUiState(
     val conversationId: UUID? = null,
+    val currentUserId: UUID? = null,
     val messages: List<LocalMessageEntity> = emptyList(),
     val draft: String = "",
     val loading: Boolean = false,
@@ -34,11 +35,13 @@ internal class MessageViewModel(
         observeJob?.cancel()
         _state.value = _state.value.copy(
             conversationId = conversationId,
+            currentUserId = null,
             messages = emptyList(),
             loading = true,
             message = null,
         )
         observeJob = viewModelScope.launch {
+            _state.value = _state.value.copy(currentUserId = repository.currentUserId())
             launch {
                 runCatching { repository.openConversation(conversationId) }
                     .onFailure { _state.value = _state.value.copy(message = "历史消息加载失败") }
@@ -88,6 +91,13 @@ internal class MessageViewModel(
 
     suspend fun loadMedia(message: LocalMessageEntity, thumbnail: Boolean): ByteArray? =
         repository.loadMedia(message, thumbnail)
+
+    fun recall(message: LocalMessageEntity) {
+        viewModelScope.launch {
+            runCatching { repository.recall(message) }
+                .onFailure { _state.value = _state.value.copy(message = "消息撤回失败，请稍后重试") }
+        }
+    }
 
     fun retry(clientMsgId: UUID) {
         viewModelScope.launch {

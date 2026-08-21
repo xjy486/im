@@ -12,6 +12,7 @@ public enum ApiErrorDefinition {
     FORBIDDEN(HttpStatus.FORBIDDEN, "Access is forbidden"),
     NOT_CONTACT(HttpStatus.FORBIDDEN, "The conversation is not available"),
     IDEMPOTENCY_CONFLICT(HttpStatus.CONFLICT, "The client message identifier is already in use"),
+    RECALL_WINDOW_EXPIRED(HttpStatus.CONFLICT, "The message recall window has expired"),
     TEXT_TOO_LONG(HttpStatus.BAD_REQUEST, "Message text is too long"),
     TEXT_TOO_LARGE(HttpStatus.BAD_REQUEST, "Message text is too large"),
     FRAME_TOO_LARGE(HttpStatus.BAD_REQUEST, "Message frame is too large"),

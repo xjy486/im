@@ -421,7 +421,9 @@ private fun ConversationScreen(
             items(state.messages, key = { it.messageId }) { message ->
                 Card(Modifier.fillMaxWidth()) {
                     Column(Modifier.padding(14.dp)) {
-                        if (message.type == "IMAGE") {
+                        if (message.state == "RECALLED") {
+                            Text("消息已撤回")
+                        } else if (message.type == "IMAGE") {
                             ImageMessageContent(message) { item, thumbnail ->
                                 viewModel.loadMedia(item, thumbnail)
                             }
@@ -433,11 +435,20 @@ private fun ConversationScreen(
                                 message.localState == "SENDING" -> "发送中"
                                 message.localState == "QUEUED" -> "等待网络"
                                 message.localState == "MANUAL_RETRY" -> "需手动重试"
+                                message.state == "RECALLED" -> "撤回"
                                 message.conversationSeq != null -> "序号 ${message.conversationSeq}"
                                 else -> "等待确认"
                             },
                             style = MaterialTheme.typography.bodySmall,
                         )
+                        if (message.state == "ACTIVE" &&
+                            message.localState == "SENT" &&
+                            message.senderId == state.currentUserId?.toString()
+                        ) {
+                            TextButton(onClick = { viewModel.recall(message) }) {
+                                Text("撤回")
+                            }
+                        }
                         if (message.localState == "MANUAL_RETRY") {
                             TextButton(onClick = { viewModel.retry(UUID.fromString(message.clientMsgId)) }) {
                                 Text("重试")

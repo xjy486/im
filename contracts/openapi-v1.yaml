@@ -266,6 +266,29 @@ paths:
           $ref: '#/components/responses/ApiError'
         '409':
           $ref: '#/components/responses/ApiError'
+  /api/v1/messages/{messageId}/recall:
+    post:
+      operationId: recallMessage
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - name: messageId
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        '200':
+          description: Idempotent recalled message tombstone
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Message' }
+        '401':
+          $ref: '#/components/responses/ApiError'
+        '403':
+          $ref: '#/components/responses/ApiError'
+        '404':
+          $ref: '#/components/responses/ApiError'
+        '409':
+          $ref: '#/components/responses/ApiError'
   /api/v1/contact-requests/{requestId}/accept:
     post:
       operationId: acceptContactRequest
@@ -773,7 +796,7 @@ components:
       additionalProperties: false
       required:
         [messageId, conversationId, senderId, clientMsgId, conversationSeq,
-         type, state, text, mediaId, serverAcceptedAt]
+         type, state, text, mediaId, serverAcceptedAt, recalledAt]
       properties:
         messageId: { type: string, format: uuid }
         conversationId: { type: string, format: uuid }
@@ -781,10 +804,11 @@ components:
         clientMsgId: { type: string, format: uuid }
         conversationSeq: { type: integer, format: int64, minimum: 1 }
         type: { type: string, enum: [TEXT, IMAGE] }
-        state: { const: ACTIVE }
+        state: { type: string, enum: [ACTIVE, RECALLED, MODERATED] }
         text: { type: [string, 'null'] }
         mediaId: { type: [string, 'null'], format: uuid }
         serverAcceptedAt: { type: string, format: date-time }
+        recalledAt: { type: [string, 'null'], format: date-time }
     ConversationMessagePage:
       type: object
       additionalProperties: false

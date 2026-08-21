@@ -133,6 +133,7 @@ class AccountLocalStore(
             .addMigrations(AccountDatabase.MIGRATION_5_6)
             .addMigrations(AccountDatabase.MIGRATION_6_7)
             .addMigrations(AccountDatabase.MIGRATION_7_8)
+            .addMigrations(AccountDatabase.MIGRATION_8_9)
             .build()
     }
 

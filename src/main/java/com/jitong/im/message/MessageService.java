@@ -9,6 +9,7 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.time.Clock;
+import java.time.Duration;
 import java.time.Instant;
 import java.util.List;
 import java.util.UUID;
@@ -171,6 +172,46 @@ public class MessageService {
                 1,
                 conversationId,
                 List.copyOf(repository.listMessages(conversationId, afterSequence, limit)));
+    }
+
+    @Transactional
+    public MessageRecord recall(UUID senderId, UUID messageId) {
+        UUID conversationId = repository.findConversationId(messageId);
+        if (conversationId == null) {
+            throw new MessageException(ApiErrorDefinition.RESOURCE_NOT_FOUND);
+        }
+        if (repository.lockConversation(conversationId, senderId) == null) {
+            throw new MessageException(ApiErrorDefinition.FORBIDDEN);
+        }
+        MessageRecord message = repository.findByIdForUpdate(messageId);
+        if (message == null || !senderId.equals(message.senderId())) {
+            throw new MessageException(ApiErrorDefinition.FORBIDDEN);
+        }
+        if ("RECALLED".equals(message.state())) {
+            return message;
+        }
+        if (!"ACTIVE".equals(message.state())) {
+            throw new MessageException(ApiErrorDefinition.FORBIDDEN);
+        }
+        Instant now = clock.instant();
+        if (!now.isBefore(message.serverAcceptedAt().plus(Duration.ofSeconds(60)))) {
+            throw new MessageException(ApiErrorDefinition.RECALL_WINDOW_EXPIRED);
+        }
+        if (message.mediaId() != null && mediaService != null) {
+            mediaService.expireBoundMedia(message.messageId());
+        }
+        repository.recallMessage(messageId, now);
+        MessageRecord recalled = repository.findById(messageId);
+        for (UUID participantId : repository.conversationParticipants(message.conversationId()).stream().sorted().toList()) {
+            long syncSeq = syncService.allocateSequence(participantId);
+            syncService.recordEvent(
+                    participantId,
+                    syncSeq,
+                    "MESSAGE_RECALLED",
+                    message.messageId(),
+                    message.conversationId());
+        }
+        return recalled;
     }
 
     MessageRepository.ConversationTarget target(UUID conversationId, UUID userId) {

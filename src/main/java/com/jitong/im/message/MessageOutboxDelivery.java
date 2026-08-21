@@ -88,6 +88,12 @@ class MessageOutboxDelivery implements OutboxDelivery {
             // durable sync state is no longer readable by that device either.
             return true;
         }
+        if ("MESSAGE_CREATED".equals(record.eventType())) {
+            MessageRecord current = messageRepository.findById(record.entityId());
+            if (current != null && "RECALLED".equals(current.state())) {
+                return true;
+            }
+        }
         Set<WebSocketSession> sessions = sessionsByDevice.get(record.targetDeviceId());
         if (sessions == null || sessions.isEmpty()) {
             if (!pushTokenService.isMobile(record.targetDeviceId())) {
@@ -97,6 +103,9 @@ class MessageOutboxDelivery implements OutboxDelivery {
         }
         MessageWire.WireEnvelope envelope = switch (record.eventType()) {
             case "MESSAGE_CREATED" -> MessageWire.created(
+                    messageRepository.findById(record.entityId()),
+                    record.syncSeq());
+            case "MESSAGE_RECALLED" -> MessageWire.recalled(
                     messageRepository.findById(record.entityId()),
                     record.syncSeq());
             case "CONVERSATION_READ" -> MessageWire.conversationRead(
@@ -173,7 +182,7 @@ class MessageOutboxDelivery implements OutboxDelivery {
         }
         String token = pushTokenService.find(record.targetDeviceId());
         FcmDeliveryResult result = switch (record.eventType()) {
-            case "MESSAGE_CREATED" -> fcmSender.sendNewMessage(token);
+            case "MESSAGE_CREATED", "MESSAGE_RECALLED" -> fcmSender.sendNewMessage(token);
             case "USER_PROFILE_UPDATED", "GROUP_PROFILE_UPDATED" ->
                     fcmSender.sendProfileChanged(token);
             default -> FcmDeliveryResult.SENT;

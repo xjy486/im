@@ -44,6 +44,10 @@ internal class MessageRepository(
         database()?.messageDao()?.observe(conversationId.toString())
             ?: kotlinx.coroutines.flow.flowOf(emptyList())
 
+    suspend fun currentUserId(): UUID? = withContext(Dispatchers.IO) {
+        database()?.accountDao()?.current()?.userId?.let(UUID::fromString)
+    }
+
     suspend fun loadHistory(conversationId: UUID) {
         val db = database() ?: return
         // The authoritative sequence is supplied by the server. The local SQL

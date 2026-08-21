@@ -29,6 +29,14 @@ final class MessageWire {
                 body(message, syncSeq));
     }
 
+    static WireEnvelope recalled(MessageRecord message, Long syncSeq) {
+        return new WireEnvelope(
+                1,
+                "message.recalled",
+                null,
+                body(message, syncSeq));
+    }
+
     private static MessageBody body(MessageRecord message) {
         return body(message, null);
     }
@@ -45,6 +53,7 @@ final class MessageWire {
                 message.text(),
                 message.mediaId(),
                 message.serverAcceptedAt(),
+                message.recalledAt(),
                 syncSeq);
     }
 
@@ -133,6 +142,7 @@ final class MessageWire {
             String text,
             UUID mediaId,
             java.time.Instant serverAcceptedAt,
+            java.time.Instant recalledAt,
             Long syncSeq
     ) {
     }

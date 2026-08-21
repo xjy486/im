@@ -116,7 +116,7 @@ internal class AppContainer(context: Context) {
                                 val watermark = event.body?.highWatermark ?: return@collect
                                 messageRepository.synchronize(userId, watermark)
                             }
-                            "message.created", "message.ack", "conversation.read",
+                            "message.created", "message.ack", "message.recalled", "conversation.read",
                             "user.profile.updated", "group.profile.updated" ->
                                 messageRepository.apply(event, userId)
                         }

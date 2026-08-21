@@ -26,6 +26,8 @@ class MessageSendTransportTest {
                     afterSeq: Long,
                     limit: Int,
                 ): Response<MessagePageResponse> = error("not used")
+
+                override suspend fun recall(messageId: UUID): Response<MessageResponse> = error("not used")
             },
         )
 
@@ -61,6 +63,8 @@ class MessageSendTransportTest {
             afterSeq: Long,
             limit: Int,
         ): Response<MessagePageResponse> = error("not used")
+
+        override suspend fun recall(messageId: UUID): Response<MessageResponse> = error("not used")
     }
 
     private fun response() = MessageResponse(

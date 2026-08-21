@@ -14,7 +14,8 @@ record MessageRecord(
         String state,
         String text,
         UUID mediaId,
-        Instant serverAcceptedAt
+        Instant serverAcceptedAt,
+        Instant recalledAt
 ) {
     MessageRecord(
             UUID messageId,
@@ -37,7 +38,34 @@ record MessageRecord(
                 state,
                 text,
                 null,
-                serverAcceptedAt);
+                serverAcceptedAt,
+                null);
+    }
+
+    MessageRecord(
+            UUID messageId,
+            UUID conversationId,
+            UUID senderId,
+            UUID clientMsgId,
+            long conversationSeq,
+            String type,
+            String state,
+            String text,
+            UUID mediaId,
+            Instant serverAcceptedAt
+    ) {
+        this(
+                messageId,
+                conversationId,
+                senderId,
+                clientMsgId,
+                conversationSeq,
+                type,
+                state,
+                text,
+                mediaId,
+                serverAcceptedAt,
+                null);
     }
 }
 

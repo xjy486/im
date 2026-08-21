@@ -22,6 +22,8 @@ internal interface MessageApi {
         @Query("limit") limit: Int = 200,
     ): Response<MessagePageResponse>
 
+    @POST("api/v1/messages/{messageId}/recall")
+    suspend fun recall(@retrofit2.http.Path("messageId") messageId: UUID): Response<MessageResponse>
 }
 
 internal data class SendMessageRequest(
@@ -42,6 +44,7 @@ internal data class MessageResponse(
     val text: String?,
     val mediaId: UUID? = null,
     val serverAcceptedAt: String,
+    val recalledAt: String? = null,
 )
 
 internal data class MessagePageResponse(
