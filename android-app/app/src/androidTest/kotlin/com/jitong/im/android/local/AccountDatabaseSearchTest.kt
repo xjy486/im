@@ -67,6 +67,7 @@ class AccountDatabaseSearchTest {
     fun recalled_and_invisible_conversation_history_is_not_searchable() {
         database.messageDao().upsert(message("active", "secret active", 1))
         database.messageDao().upsert(message("recalled", "secret recalled", 2, state = "RECALLED"))
+        database.messageDao().upsert(message("moderated", "secret moderated", 3, state = "MODERATED"))
 
         val plan = LocalSearchText.plan("secret")!!
         assertEquals(
