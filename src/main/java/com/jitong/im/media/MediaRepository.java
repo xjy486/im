@@ -43,18 +43,54 @@ class MediaRepository {
             String sha256,
             Instant createdAt
     ) {
+        return insertTemp(
+                mediaId,
+                "MESSAGE_IMAGE",
+                uploaderId,
+                uploadId,
+                originalObjectKey,
+                thumbnailObjectKey,
+                contentType,
+                width,
+                height,
+                byteSize,
+                sha256,
+                null,
+                null,
+                createdAt);
+    }
+
+    MediaRecord insertTemp(
+            UUID mediaId,
+            String purpose,
+            UUID uploaderId,
+            UUID uploadId,
+            String originalObjectKey,
+            String thumbnailObjectKey,
+            String contentType,
+            int width,
+            int height,
+            long byteSize,
+            String sha256,
+            UUID attachedEntityId,
+            String attachedEntityType,
+            Instant createdAt
+    ) {
         jdbc.sql("""
                         INSERT INTO media (
                             id, purpose, uploader_id, upload_id, state,
                             original_object_key, thumbnail_object_key, content_type,
-                            width, height, byte_size, sha256, created_at
+                            width, height, byte_size, sha256, attached_entity_id,
+                            attached_entity_type, created_at
                         ) VALUES (
-                            :id, 'MESSAGE_IMAGE', :uploaderId, :uploadId, 'TEMP',
+                            :id, :purpose, :uploaderId, :uploadId, 'TEMP',
                             :originalObjectKey, :thumbnailObjectKey, :contentType,
-                            :width, :height, :byteSize, :sha256, :createdAt
+                            :width, :height, :byteSize, :sha256, :attachedEntityId,
+                            :attachedEntityType, :createdAt
                         )
                         """)
                 .param("id", mediaId)
+                .param("purpose", purpose)
                 .param("uploaderId", uploaderId)
                 .param("uploadId", uploadId)
                 .param("originalObjectKey", originalObjectKey)
@@ -64,6 +100,8 @@ class MediaRepository {
                 .param("height", height)
                 .param("byteSize", byteSize)
                 .param("sha256", sha256)
+                .param("attachedEntityId", attachedEntityId, Types.OTHER)
+                .param("attachedEntityType", attachedEntityType, Types.VARCHAR)
                 .param("createdAt", utc(createdAt), Types.TIMESTAMP_WITH_TIMEZONE)
                 .update();
         return findById(mediaId);
@@ -104,6 +142,50 @@ class MediaRepository {
                 .param("uploaderId", uploaderId)
                 .param("messageId", messageId)
                 .param("boundAt", utc(boundAt), Types.TIMESTAMP_WITH_TIMEZONE)
+                .update() == 1;
+    }
+
+    boolean bindToAvatar(
+            UUID mediaId,
+            UUID uploaderId,
+            String entityType,
+            UUID entityId,
+            Instant boundAt
+    ) {
+        return jdbc.sql("""
+                        UPDATE media
+                        SET state = 'BOUND',
+                            attached_entity_id = :entityId,
+                            attached_entity_type = :entityType,
+                            bound_at = :boundAt
+                        WHERE id = :mediaId
+                          AND uploader_id = :uploaderId
+                          AND purpose = 'AVATAR'
+                          AND state = 'TEMP'
+                        """)
+                .param("mediaId", mediaId)
+                .param("uploaderId", uploaderId)
+                .param("entityId", entityId)
+                .param("entityType", entityType)
+                .param("boundAt", utc(boundAt), Types.TIMESTAMP_WITH_TIMEZONE)
+                .update() == 1;
+    }
+
+    boolean expireAvatar(UUID mediaId, String entityType, UUID entityId, Instant expiredAt) {
+        return jdbc.sql("""
+                        UPDATE media
+                        SET state = 'EXPIRED',
+                            expired_at = COALESCE(expired_at, :expiredAt)
+                        WHERE id = :mediaId
+                          AND purpose = 'AVATAR'
+                          AND attached_entity_id = :entityId
+                          AND attached_entity_type = :entityType
+                          AND state = 'BOUND'
+                        """)
+                .param("mediaId", mediaId)
+                .param("entityType", entityType)
+                .param("entityId", entityId)
+                .param("expiredAt", utc(expiredAt), Types.TIMESTAMP_WITH_TIMEZONE)
                 .update() == 1;
     }
 
@@ -200,12 +282,13 @@ class MediaRepository {
 
     private String selectSql() {
         return """
-                SELECT id, purpose, uploader_id, upload_id, state,
-                       original_object_key, thumbnail_object_key, content_type,
-                       width, height, byte_size, sha256, attached_message_id,
-                       created_at, bound_at, expired_at, objects_deleted_at
-                FROM media
-                """;
+                        SELECT id, purpose, uploader_id, upload_id, state,
+                               original_object_key, thumbnail_object_key, content_type,
+                               width, height, byte_size, sha256, attached_message_id,
+                               created_at, bound_at, expired_at, objects_deleted_at,
+                               attached_entity_id, attached_entity_type
+                        FROM media
+                        """;
     }
 
     private MediaRecord map(java.sql.ResultSet row, int rowNum) throws java.sql.SQLException {
@@ -226,7 +309,9 @@ class MediaRepository {
                 instant(row, "created_at"),
                 nullableInstant(row, "bound_at"),
                 nullableInstant(row, "expired_at"),
-                nullableInstant(row, "objects_deleted_at"));
+                nullableInstant(row, "objects_deleted_at"),
+                row.getObject("attached_entity_id", UUID.class),
+                row.getString("attached_entity_type"));
     }
 
     private static Instant instant(java.sql.ResultSet row, String column) throws java.sql.SQLException {

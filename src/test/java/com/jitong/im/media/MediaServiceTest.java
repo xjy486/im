@@ -36,6 +36,8 @@ class MediaServiceTest {
                 Instant.now(),
                 null,
                 null,
+                null,
+                null,
                 null));
 
         MediaService service = new MediaService(
@@ -100,6 +102,8 @@ class MediaServiceTest {
                 "a".repeat(64),
                 null,
                 Instant.parse("2026-08-18T23:59:59Z"),
+                null,
+                null,
                 null,
                 null,
                 null));

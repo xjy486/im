@@ -51,6 +51,18 @@ class EncryptedMediaCache(
     }
 
     @Synchronized
+    fun deleteMatching(prefix: String, keepName: String? = null) {
+        if (!directory.isDirectory) return
+        directory.listFiles()
+            ?.filter { file ->
+                file.isFile
+                    && file.name.startsWith(prefix)
+                    && (keepName == null || file.name != "$keepName.enc")
+            }
+            ?.forEach { it.delete() }
+    }
+
+    @Synchronized
     fun clear() {
         directory.deleteRecursively()
     }

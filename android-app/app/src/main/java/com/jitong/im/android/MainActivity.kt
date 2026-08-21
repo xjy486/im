@@ -13,6 +13,7 @@ import com.jitong.im.android.ui.AuthViewModel
 import com.jitong.im.android.ui.ContactViewModel
 import com.jitong.im.android.ui.JitongApp
 import com.jitong.im.android.ui.MessageViewModel
+import com.jitong.im.android.ui.AvatarViewModel
 
 class MainActivity : ComponentActivity() {
     private val viewModel: AuthViewModel by viewModels {
@@ -27,6 +28,10 @@ class MainActivity : ComponentActivity() {
         val container = (application as JitongApplication).container
         MessageViewModel.Factory(container.messageRepository)
     }
+    private val avatarViewModel: AvatarViewModel by viewModels {
+        val container = (application as JitongApplication).container
+        AvatarViewModel.Factory(container.avatarRepository)
+    }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -37,7 +42,7 @@ class MainActivity : ComponentActivity() {
         }
         setContent {
             MaterialTheme(colorScheme = lightColorScheme()) {
-                JitongApp(viewModel, contactViewModel, messageViewModel)
+                JitongApp(viewModel, contactViewModel, messageViewModel, avatarViewModel)
             }
         }
     }

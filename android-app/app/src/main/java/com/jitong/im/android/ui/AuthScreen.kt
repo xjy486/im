@@ -48,6 +48,7 @@ internal fun JitongApp(
     viewModel: AuthViewModel,
     contactViewModel: ContactViewModel,
     messageViewModel: MessageViewModel,
+    avatarViewModel: AvatarViewModel,
 ) {
     val state by viewModel.sessionState.collectAsStateWithLifecycle()
     Surface(modifier = Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) {
@@ -55,7 +56,13 @@ internal fun JitongApp(
             SessionState.SignedOut -> LoginScreen(viewModel)
             SessionState.Restoring -> RestoringScreen()
             is SessionState.ReplacementRequired -> ReplacementScreen(current, viewModel)
-            is SessionState.SignedIn -> HomeScreen(current, viewModel, contactViewModel, messageViewModel)
+            is SessionState.SignedIn -> HomeScreen(
+                current,
+                viewModel,
+                contactViewModel,
+                messageViewModel,
+                avatarViewModel,
+            )
             is SessionState.Error -> LoginScreen(viewModel, current.message)
         }
     }
@@ -163,12 +170,15 @@ private fun HomeScreen(
     viewModel: AuthViewModel,
     contactViewModel: ContactViewModel,
     messageViewModel: MessageViewModel,
+    avatarViewModel: AvatarViewModel,
 ) {
     val contactState by contactViewModel.state.collectAsStateWithLifecycle()
+    val avatarState by avatarViewModel.state.collectAsStateWithLifecycle()
     var selectedTab by rememberSaveable { mutableStateOf("contacts") }
     var selectedConversationId by rememberSaveable { mutableStateOf<String?>(null) }
     LaunchedEffect(state.session.userId) {
         contactViewModel.refresh()
+        avatarViewModel.refresh()
     }
     val selectedConversation = contactState.conversations
         .firstOrNull { it.conversationId.toString() == selectedConversationId }
@@ -176,6 +186,7 @@ private fun HomeScreen(
         ConversationScreen(
             conversation = selectedConversation,
             viewModel = messageViewModel,
+            loadAvatar = avatarViewModel::loadUserAvatar,
             onBack = { selectedConversationId = null },
         )
         return
@@ -205,12 +216,14 @@ private fun HomeScreen(
             else -> ContactListPanel(
                 state = contactState,
                 viewModel = contactViewModel,
+                loadAvatar = avatarViewModel::loadUserAvatar,
                 onOpenConversation = { selectedConversationId = it.toString() },
             )
         }
         contactState.message?.let {
             Text(it, color = MaterialTheme.colorScheme.error)
         }
+        AvatarProfilePanel(avatarState, avatarViewModel)
         Card(Modifier.fillMaxWidth()) {
             Column(Modifier.padding(18.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 Text("账号 ${state.session.accountNo}", style = MaterialTheme.typography.titleMedium)
@@ -249,6 +262,11 @@ private fun ContactSearchPanel(state: ContactUiState, viewModel: ContactViewMode
         state.searchResult?.let { result ->
             Card(Modifier.fillMaxWidth()) {
                 Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                    AvatarView(
+                        bytes = null,
+                        fallback = result.avatarFallback,
+                        size = 48.dp,
+                    )
                     Text(result.displayName, style = MaterialTheme.typography.titleMedium)
                     Text("账号 ${result.accountNo}")
                     Text("关系 ${result.relationship}")
@@ -292,6 +310,7 @@ private fun ContactRequestsPanel(state: ContactUiState, viewModel: ContactViewMo
 private fun ContactListPanel(
     state: ContactUiState,
     viewModel: ContactViewModel,
+    loadAvatar: suspend (UUID, Long) -> ByteArray?,
     onOpenConversation: (java.util.UUID) -> Unit,
 ) {
     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -301,6 +320,12 @@ private fun ContactListPanel(
         state.contacts.forEach { contact ->
             Card(Modifier.fillMaxWidth()) {
                 Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                    RemoteAvatar(
+                        userId = contact.userId,
+                        avatarVersion = contact.avatarVersion,
+                        fallback = contact.avatarFallback,
+                        load = loadAvatar,
+                    )
                     Text(contact.displayName, style = MaterialTheme.typography.titleMedium)
                     Text("账号 ${contact.accountNo}")
                     Text("会话 ${contact.conversationId}")
@@ -335,6 +360,7 @@ private fun ContactListPanel(
 private fun ConversationScreen(
     conversation: ConversationSummary,
     viewModel: MessageViewModel,
+    loadAvatar: suspend (UUID, Long) -> ByteArray?,
     onBack: () -> Unit,
 ) {
     val state by viewModel.state.collectAsStateWithLifecycle()
@@ -368,6 +394,13 @@ private fun ConversationScreen(
         verticalArrangement = Arrangement.spacedBy(16.dp),
     ) {
         TextButton(onClick = onBack) { Text("返回联系人") }
+        RemoteAvatar(
+            userId = conversation.peerUserId,
+            avatarVersion = conversation.avatarVersion,
+            fallback = conversation.avatarFallback,
+            load = loadAvatar,
+            size = 64.dp,
+        )
         Text(conversation.peerDisplayName, style = MaterialTheme.typography.headlineMedium)
         Text("账号 ${conversation.peerAccountNo}")
         Text("会话 ID ${conversation.conversationId}", style = MaterialTheme.typography.bodySmall)
@@ -438,5 +471,45 @@ private fun ConversationScreen(
             Text("发送图片")
         }
         state.message?.let { Text(it, color = MaterialTheme.colorScheme.error) }
+    }
+}
+
+@Composable
+private fun AvatarProfilePanel(
+    state: AvatarUiState,
+    viewModel: AvatarViewModel,
+) {
+    val context = LocalContext.current
+    val picker = rememberLauncherForActivityResult(
+        ActivityResultContracts.GetContent(),
+    ) { uri ->
+        if (uri == null) return@rememberLauncherForActivityResult
+        val bytes = context.contentResolver.openInputStream(uri)?.use { it.readBytes() }
+            ?: return@rememberLauncherForActivityResult
+        viewModel.replace(bytes)
+    }
+    Card(Modifier.fillMaxWidth()) {
+        Column(
+            Modifier.padding(14.dp),
+            verticalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+            Text("我的头像", style = MaterialTheme.typography.titleMedium)
+            AvatarView(
+                bytes = state.bytes,
+                fallback = state.profile?.avatarFallback ?: "?",
+                size = 72.dp,
+            )
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                Button(
+                    onClick = { picker.launch("image/*") },
+                    enabled = !state.loading,
+                ) { Text("更换头像") }
+                OutlinedButton(
+                    onClick = viewModel::remove,
+                    enabled = !state.loading,
+                ) { Text("移除头像") }
+            }
+            state.message?.let { Text(it, color = MaterialTheme.colorScheme.error) }
+        }
     }
 }

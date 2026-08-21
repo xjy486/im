@@ -21,7 +21,9 @@ record MediaRecord(
         Instant createdAt,
         Instant boundAt,
         Instant expiredAt,
-        Instant objectsDeletedAt
+        Instant objectsDeletedAt,
+        UUID attachedEntityId,
+        String attachedEntityType
 ) {
 }
 
@@ -35,6 +37,20 @@ record MediaUploadResponse(
         int height,
         long byteSize,
         String sha256
+) {
+}
+
+record AvatarUploadResponse(
+        int version,
+        UUID mediaId,
+        String purpose,
+        String state,
+        String contentType,
+        int width,
+        int height,
+        long byteSize,
+        long avatarVersion,
+        String thumbnailUrl
 ) {
 }
 

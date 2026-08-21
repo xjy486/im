@@ -86,12 +86,17 @@ class AccountLocalStore(
             openedDatabase = it
             openedAccountNo = accountNo
         }
+        val current = database.accountDao().current()
         database.accountDao().upsert(
-            LocalAccountEntity(
+            (current ?: LocalAccountEntity(
                 userId = userId,
                 accountNo = accountNo,
                 deviceId = deviceId,
                 displayName = null,
+            )).copy(
+                userId = userId,
+                accountNo = accountNo,
+                deviceId = deviceId,
             ),
         )
         return database
@@ -126,6 +131,8 @@ class AccountLocalStore(
             .addMigrations(AccountDatabase.MIGRATION_3_4)
             .addMigrations(AccountDatabase.MIGRATION_4_5)
             .addMigrations(AccountDatabase.MIGRATION_5_6)
+            .addMigrations(AccountDatabase.MIGRATION_6_7)
+            .addMigrations(AccountDatabase.MIGRATION_7_8)
             .build()
     }
 

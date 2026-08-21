@@ -17,6 +17,9 @@ data class LocalAccountEntity(
     val accountNo: String,
     val deviceId: String,
     val displayName: String?,
+    val avatarUrl: String? = null,
+    val avatarVersion: Long = 0,
+    val avatarFallback: String = "?",
 )
 
 @Dao
@@ -34,6 +37,9 @@ data class LocalConversationEntity(
     val peerUserId: String,
     val peerAccountNo: String,
     val peerDisplayName: String,
+    val peerAvatarUrl: String? = null,
+    val peerAvatarVersion: Long = 0,
+    val peerAvatarFallback: String = "?",
     val status: String,
     val relationship: String,
     val lastSequence: Long,
@@ -99,10 +105,46 @@ data class PendingMessageCommandEntity(
     val mediaPath: String? = null,
 )
 
+@Entity(tableName = "local_group_profile")
+data class LocalGroupProfileEntity(
+    @PrimaryKey val conversationId: String,
+    val avatarUrl: String?,
+    val avatarVersion: Long,
+)
+
 @Dao
 interface LocalConversationDao {
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     fun upsert(conversation: LocalConversationEntity)
+
+    @Query(
+        """
+        UPDATE local_conversation
+        SET peerDisplayName = :displayName,
+            peerAvatarUrl = :avatarUrl,
+            peerAvatarVersion = :avatarVersion,
+            peerAvatarFallback = :avatarFallback,
+            updatedAt = :updatedAt
+        WHERE peerUserId = :userId
+        """,
+    )
+    fun updatePeerProfile(
+        userId: String,
+        displayName: String,
+        avatarUrl: String?,
+        avatarVersion: Long,
+        avatarFallback: String,
+        updatedAt: Long,
+    )
+}
+
+@Dao
+interface LocalGroupProfileDao {
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    fun upsert(profile: LocalGroupProfileEntity)
+
+    @Query("SELECT * FROM local_group_profile WHERE conversationId = :conversationId LIMIT 1")
+    fun find(conversationId: String): LocalGroupProfileEntity?
 }
 
 @Dao
@@ -231,8 +273,9 @@ interface SyncStateDao {
         SyncStateEntity::class,
         LocalConversationReadStateEntity::class,
         PendingMessageCommandEntity::class,
+        LocalGroupProfileEntity::class,
     ],
-    version = 6,
+    version = 8,
     exportSchema = true,
 )
 abstract class AccountDatabase : RoomDatabase() {
@@ -242,6 +285,7 @@ abstract class AccountDatabase : RoomDatabase() {
     abstract fun messageDao(): LocalMessageDao
     abstract fun pendingCommandDao(): PendingCommandDao
     abstract fun syncStateDao(): SyncStateDao
+    abstract fun groupProfileDao(): LocalGroupProfileDao
 
     companion object {
         val MIGRATION_1_2 = object : androidx.room.migration.Migration(1, 2) {
@@ -360,6 +404,43 @@ abstract class AccountDatabase : RoomDatabase() {
                 database.execSQL("ALTER TABLE pending_commands ADD COLUMN mediaId TEXT")
                 database.execSQL("ALTER TABLE pending_commands ADD COLUMN uploadId TEXT")
                 database.execSQL("ALTER TABLE pending_commands ADD COLUMN mediaPath TEXT")
+            }
+        }
+
+        val MIGRATION_6_7 = object : androidx.room.migration.Migration(6, 7) {
+            override fun migrate(
+                database: androidx.sqlite.db.SupportSQLiteDatabase,
+            ) {
+                database.execSQL("ALTER TABLE local_account ADD COLUMN avatarUrl TEXT")
+                database.execSQL(
+                    "ALTER TABLE local_account ADD COLUMN avatarVersion INTEGER NOT NULL DEFAULT 0",
+                )
+                database.execSQL("ALTER TABLE local_conversation ADD COLUMN peerAvatarUrl TEXT")
+                database.execSQL(
+                    "ALTER TABLE local_conversation ADD COLUMN peerAvatarVersion INTEGER NOT NULL DEFAULT 0",
+                )
+            }
+        }
+
+        val MIGRATION_7_8 = object : androidx.room.migration.Migration(7, 8) {
+            override fun migrate(
+                database: androidx.sqlite.db.SupportSQLiteDatabase,
+            ) {
+                database.execSQL(
+                    "ALTER TABLE local_account ADD COLUMN avatarFallback TEXT NOT NULL DEFAULT '?'",
+                )
+                database.execSQL(
+                    "ALTER TABLE local_conversation ADD COLUMN peerAvatarFallback TEXT NOT NULL DEFAULT '?'",
+                )
+                database.execSQL(
+                    """
+                    CREATE TABLE IF NOT EXISTS local_group_profile (
+                        conversationId TEXT NOT NULL PRIMARY KEY,
+                        avatarUrl TEXT,
+                        avatarVersion INTEGER NOT NULL
+                    )
+                    """.trimIndent(),
+                )
             }
         }
     }

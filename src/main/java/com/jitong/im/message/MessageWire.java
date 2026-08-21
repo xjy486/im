@@ -76,6 +76,42 @@ final class MessageWire {
                         syncSeq));
     }
 
+    static WireEnvelope userProfileUpdated(
+            UUID userId,
+            String displayName,
+            String avatarUrl,
+            long avatarVersion,
+            long syncSeq
+    ) {
+        return new WireEnvelope(
+                1,
+                "user.profile.updated",
+                null,
+                new UserProfileBody(
+                        userId,
+                        displayName,
+                        avatarUrl,
+                        avatarVersion,
+                        syncSeq));
+    }
+
+    static WireEnvelope groupProfileUpdated(
+            UUID conversationId,
+            String avatarUrl,
+            long avatarVersion,
+            long syncSeq
+    ) {
+        return new WireEnvelope(
+                1,
+                "group.profile.updated",
+                null,
+                new GroupProfileBody(
+                        conversationId,
+                        avatarUrl,
+                        avatarVersion,
+                        syncSeq));
+    }
+
     record WireEnvelope(
             int version,
             String operation,
@@ -117,6 +153,23 @@ final class MessageWire {
             UUID userId,
             long readSeq,
             Long syncSeq
+    ) {
+    }
+
+    record UserProfileBody(
+            UUID userId,
+            String displayName,
+            String avatarUrl,
+            long avatarVersion,
+            long syncSeq
+    ) {
+    }
+
+    record GroupProfileBody(
+            UUID conversationId,
+            String avatarUrl,
+            long avatarVersion,
+            long syncSeq
     ) {
     }
 }

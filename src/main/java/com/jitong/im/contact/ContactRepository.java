@@ -22,7 +22,7 @@ class ContactRepository {
 
     ContactUser findSearchableUser(String accountNo) {
         return jdbc.sql("""
-                        SELECT id, account_no, display_name
+                        SELECT id, account_no, display_name, avatar_media_id, avatar_version
                         FROM users
                         WHERE account_no = :accountNo
                           AND status = 'ACTIVE'
@@ -32,14 +32,16 @@ class ContactRepository {
                 .query((row, rowNum) -> new ContactUser(
                         row.getObject("id", UUID.class),
                         row.getString("account_no").trim(),
-                        row.getString("display_name")))
+                        row.getString("display_name"),
+                        row.getObject("avatar_media_id", UUID.class),
+                        row.getLong("avatar_version")))
                 .optional()
                 .orElse(null);
     }
 
     ContactUser findActiveUser(UUID userId) {
         return jdbc.sql("""
-                        SELECT id, account_no, display_name
+                        SELECT id, account_no, display_name, avatar_media_id, avatar_version
                         FROM users
                         WHERE id = :userId AND status = 'ACTIVE'
                         """)
@@ -47,14 +49,16 @@ class ContactRepository {
                 .query((row, rowNum) -> new ContactUser(
                         row.getObject("id", UUID.class),
                         row.getString("account_no").trim(),
-                        row.getString("display_name")))
+                        row.getString("display_name"),
+                        row.getObject("avatar_media_id", UUID.class),
+                        row.getLong("avatar_version")))
                 .optional()
                 .orElse(null);
     }
 
     ContactUser findActiveUserByAccountNo(String accountNo) {
         return jdbc.sql("""
-                        SELECT id, account_no, display_name
+                        SELECT id, account_no, display_name, avatar_media_id, avatar_version
                         FROM users
                         WHERE account_no = :accountNo AND status = 'ACTIVE'
                         """)
@@ -62,7 +66,9 @@ class ContactRepository {
                 .query((row, rowNum) -> new ContactUser(
                         row.getObject("id", UUID.class),
                         row.getString("account_no").trim(),
-                        row.getString("display_name")))
+                        row.getString("display_name"),
+                        row.getObject("avatar_media_id", UUID.class),
+                        row.getLong("avatar_version")))
                 .optional()
                 .orElse(null);
     }
@@ -402,7 +408,8 @@ class ContactRepository {
     List<ContactSummary> listContacts(UUID userId) {
         return jdbc.sql("""
                         SELECT CASE WHEN c.user_low_id = :userId THEN c.user_high_id ELSE c.user_low_id END AS peer_id,
-                               u.account_no, u.display_name, cc.conversation_id
+                        u.account_no, u.display_name, u.avatar_media_id,
+                               u.avatar_version, cc.conversation_id
                         FROM contacts c
                         JOIN users u ON u.id = CASE WHEN c.user_low_id = :userId THEN c.user_high_id ELSE c.user_low_id END
                         JOIN c2c_conversations cc ON cc.user_low_id = c.user_low_id AND cc.user_high_id = c.user_high_id
@@ -417,7 +424,15 @@ class ContactRepository {
                         row.getString("account_no").trim(),
                         row.getString("display_name"),
                         row.getObject("conversation_id", UUID.class),
-                        "ACTIVE"))
+                        "ACTIVE",
+                        avatarUrl(
+                                row.getObject("peer_id", UUID.class),
+                                row.getObject("avatar_media_id", UUID.class),
+                                row.getLong("avatar_version")),
+                        row.getLong("avatar_version"),
+                        "ACTIVE".equals(row.getString("status"))
+                                ? fallback(row.getString("display_name"))
+                                : "?"))
                 .list();
     }
 
@@ -425,7 +440,8 @@ class ContactRepository {
         return jdbc.sql("""
                         SELECT cc.conversation_id,
                                CASE WHEN cc.user_low_id = :userId THEN cc.user_high_id ELSE cc.user_low_id END AS peer_id,
-                               u.account_no, u.display_name, c.status,
+                               u.account_no, u.display_name, u.avatar_media_id,
+                               u.avatar_version, c.status,
                                COALESCE(my_read.read_seq, 0) AS read_seq,
                                COALESCE(peer_read.read_seq, 0) AS peer_read_seq,
                                CASE WHEN c.status = 'ACTIVE' THEN 'ACTIVE' ELSE 'READ_ONLY' END AS relationship,
@@ -464,8 +480,33 @@ class ContactRepository {
                         row.getString("relationship"),
                         row.getBoolean("blocked_by_me"),
                         row.getLong("read_seq"),
-                        row.getLong("peer_read_seq")))
+                        row.getLong("peer_read_seq"),
+                        "ACTIVE".equals(row.getString("status"))
+                                ? avatarUrl(
+                                        row.getObject("peer_id", UUID.class),
+                                        row.getObject("avatar_media_id", UUID.class),
+                                        row.getLong("avatar_version"))
+                                : null,
+                        "ACTIVE".equals(row.getString("status"))
+                                ? row.getLong("avatar_version")
+                                : 0,
+                        fallback(row.getString("display_name"))))
                 .list();
+    }
+
+    private String avatarUrl(UUID userId, UUID avatarMediaId, long avatarVersion) {
+        return avatarMediaId == null || avatarVersion == 0
+                ? null
+                : "/api/v1/users/" + userId
+                + "/avatar?variant=thumb&avatarVersion=" + avatarVersion;
+    }
+
+    private String fallback(String displayName) {
+        if (displayName == null || displayName.isBlank()) {
+            return "?";
+        }
+        int codePoint = displayName.codePointAt(0);
+        return new String(Character.toChars(codePoint));
     }
 
     private void markConversationReadOnly(UUID firstUserId, UUID secondUserId) {
@@ -496,7 +537,13 @@ class ContactRepository {
         return OffsetDateTime.ofInstant(value, ZoneOffset.UTC);
     }
 
-    record ContactUser(UUID id, String accountNo, String displayName) {
+    record ContactUser(
+            UUID id,
+            String accountNo,
+            String displayName,
+            UUID avatarMediaId,
+            long avatarVersion
+    ) {
     }
 
     record ContactRequestRecord(

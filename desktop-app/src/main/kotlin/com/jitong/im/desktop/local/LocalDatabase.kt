@@ -79,6 +79,9 @@ class LocalDatabaseManager(
                             peer_user_id VARCHAR(36) NOT NULL,
                             peer_account_no VARCHAR(11) NOT NULL,
                             peer_display_name VARCHAR(255) NOT NULL,
+                            peer_avatar_url VARCHAR(1000),
+                            peer_avatar_version BIGINT NOT NULL DEFAULT 0,
+                            peer_avatar_fallback VARCHAR(8) NOT NULL DEFAULT '?',
                             status VARCHAR(32) NOT NULL,
                             relationship VARCHAR(32) NOT NULL,
                             blocked_by_me BOOLEAN NOT NULL,
@@ -118,6 +121,12 @@ class LocalDatabaseManager(
                             PRIMARY KEY (conversation_id, user_id)
                         )
                         """.trimIndent())
+                    statement.executeUpdate(
+                        "ALTER TABLE local_conversations ADD COLUMN IF NOT EXISTS peer_avatar_url VARCHAR(1000)")
+                    statement.executeUpdate(
+                        "ALTER TABLE local_conversations ADD COLUMN IF NOT EXISTS peer_avatar_version BIGINT NOT NULL DEFAULT 0")
+                    statement.executeUpdate(
+                        "ALTER TABLE local_conversations ADD COLUMN IF NOT EXISTS peer_avatar_fallback VARCHAR(8) NOT NULL DEFAULT '?'")
                 }
             }
         } catch (exception: RuntimeException) {
@@ -132,7 +141,8 @@ class LocalDatabaseManager(
         return LocalDatabase(
             accountNo = normalizedAccount,
             databasePath = databasePath,
-            pool = pool)
+            pool = pool,
+            mediaCache = mediaCache(normalizedAccount))
     }
 
     fun clear(accountNo: String) {
@@ -210,7 +220,9 @@ class LocalDatabase internal constructor(
     val accountNo: String,
     val databasePath: Path,
     private val pool: JdbcConnectionPool,
+    private val mediaCache: EncryptedMediaCache,
 ) : AutoCloseable {
+    fun mediaCache(): EncryptedMediaCache = mediaCache
     fun lastSyncSeq(): Long {
         pool.connection.use { connection ->
             connection.prepareStatement(
@@ -245,19 +257,23 @@ class LocalDatabase internal constructor(
                 """
                 MERGE INTO local_conversations (
                     conversation_id, peer_user_id, peer_account_no, peer_display_name,
+                    peer_avatar_url, peer_avatar_version, peer_avatar_fallback,
                     status, relationship, blocked_by_me, read_seq, peer_read_seq, updated_at
-                ) KEY(conversation_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ) KEY(conversation_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """.trimIndent()).use { statement ->
                 statement.setString(1, conversation.conversationId)
                 statement.setString(2, conversation.peerUserId)
                 statement.setString(3, conversation.peerAccountNo)
                 statement.setString(4, conversation.peerDisplayName)
-                statement.setString(5, conversation.status)
-                statement.setString(6, conversation.relationship)
-                statement.setBoolean(7, conversation.blockedByMe)
-                statement.setLong(8, conversation.readSeq)
-                statement.setLong(9, conversation.peerReadSeq)
-                statement.setLong(10, conversation.updatedAt)
+                statement.setString(5, conversation.peerAvatarUrl)
+                statement.setLong(6, conversation.peerAvatarVersion)
+                statement.setString(7, conversation.peerAvatarFallback)
+                statement.setString(8, conversation.status)
+                statement.setString(9, conversation.relationship)
+                statement.setBoolean(10, conversation.blockedByMe)
+                statement.setLong(11, conversation.readSeq)
+                statement.setLong(12, conversation.peerReadSeq)
+                statement.setLong(13, conversation.updatedAt)
                 statement.executeUpdate()
             }
         }
@@ -274,20 +290,24 @@ class LocalDatabase internal constructor(
                     """
                     INSERT INTO local_conversations (
                         conversation_id, peer_user_id, peer_account_no, peer_display_name,
+                        peer_avatar_url, peer_avatar_version, peer_avatar_fallback,
                         status, relationship, blocked_by_me, read_seq, peer_read_seq, updated_at
-                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     """.trimIndent()).use { statement ->
                     conversations.forEach { conversation ->
                         statement.setString(1, conversation.conversationId)
                         statement.setString(2, conversation.peerUserId)
                         statement.setString(3, conversation.peerAccountNo)
                         statement.setString(4, conversation.peerDisplayName)
-                        statement.setString(5, conversation.status)
-                        statement.setString(6, conversation.relationship)
-                        statement.setBoolean(7, conversation.blockedByMe)
-                        statement.setLong(8, conversation.readSeq)
-                        statement.setLong(9, conversation.peerReadSeq)
-                        statement.setLong(10, conversation.updatedAt)
+                        statement.setString(5, conversation.peerAvatarUrl)
+                        statement.setLong(6, conversation.peerAvatarVersion)
+                        statement.setString(7, conversation.peerAvatarFallback)
+                        statement.setString(8, conversation.status)
+                        statement.setString(9, conversation.relationship)
+                        statement.setBoolean(10, conversation.blockedByMe)
+                        statement.setLong(11, conversation.readSeq)
+                        statement.setLong(12, conversation.peerReadSeq)
+                        statement.setLong(13, conversation.updatedAt)
                         statement.addBatch()
                     }
                     statement.executeBatch()
@@ -327,11 +347,38 @@ class LocalDatabase internal constructor(
         }
     }
 
+    fun updatePeerProfile(
+        userId: String,
+        displayName: String,
+        avatarUrl: String?,
+        avatarVersion: Long,
+    ) {
+        pool.connection.use { connection ->
+            connection.prepareStatement(
+                """
+                UPDATE local_conversations
+                SET peer_display_name = ?,
+                    peer_avatar_url = ?,
+                    peer_avatar_version = ?,
+                    updated_at = ?
+                WHERE peer_user_id = ?
+                """.trimIndent()).use { statement ->
+                statement.setString(1, displayName)
+                statement.setString(2, avatarUrl)
+                statement.setLong(3, avatarVersion)
+                statement.setLong(4, System.currentTimeMillis())
+                statement.setString(5, userId)
+                statement.executeUpdate()
+            }
+        }
+    }
+
     fun listConversations(): List<LocalConversation> {
         pool.connection.use { connection ->
             connection.prepareStatement(
                 """
                 SELECT conversation_id, peer_user_id, peer_account_no, peer_display_name,
+                       peer_avatar_url, peer_avatar_version, peer_avatar_fallback,
                        status, relationship, blocked_by_me, read_seq, peer_read_seq, updated_at
                 FROM local_conversations
                 ORDER BY updated_at DESC, peer_display_name, peer_account_no
@@ -572,6 +619,9 @@ class LocalDatabase internal constructor(
         peerUserId = getString("peer_user_id"),
         peerAccountNo = getString("peer_account_no"),
         peerDisplayName = getString("peer_display_name"),
+        peerAvatarUrl = getString("peer_avatar_url"),
+        peerAvatarVersion = getLong("peer_avatar_version"),
+        peerAvatarFallback = getString("peer_avatar_fallback"),
         status = getString("status"),
         relationship = getString("relationship"),
         blockedByMe = getBoolean("blocked_by_me"),
@@ -648,6 +698,19 @@ class EncryptedMediaCache internal constructor(
         }
     }
 
+    fun getOrNull(mediaId: String): ByteArray? =
+        runCatching { get(mediaId) }.getOrNull()
+
+    fun deleteMatching(prefix: String, keepMediaId: String? = null) {
+        if (!accountDirectory.toFile().isDirectory) return
+        Files.list(accountDirectory).use { paths ->
+            paths.filter { path ->
+                path.fileName.toString().startsWith("$prefix-")
+                    && (keepMediaId == null || path.fileName.toString() != "$keepMediaId.bin")
+            }.forEach { it.deleteIfExists() }
+        }
+    }
+
     fun clear() {
         if (accountDirectory.toFile().exists()) {
             Files.walk(accountDirectory).use { paths ->
@@ -684,6 +747,9 @@ data class LocalConversation(
     val peerUserId: String,
     val peerAccountNo: String,
     val peerDisplayName: String,
+    val peerAvatarUrl: String? = null,
+    val peerAvatarVersion: Long = 0,
+    val peerAvatarFallback: String = "?",
     val status: String,
     val relationship: String,
     val blockedByMe: Boolean,

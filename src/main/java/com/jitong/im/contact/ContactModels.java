@@ -8,6 +8,8 @@ record ContactSearchResult(
         String accountNo,
         String displayName,
         String avatarUrl,
+        long avatarVersion,
+        String avatarFallback,
         String relationship,
         String pendingRequestId
 ) {
@@ -45,7 +47,10 @@ record ContactSummary(
         String accountNo,
         String displayName,
         UUID conversationId,
-        String relationship
+        String relationship,
+        String avatarUrl,
+        long avatarVersion,
+        String avatarFallback
 ) {
 }
 
@@ -59,6 +64,9 @@ record ConversationSummary(
         String relationship,
         boolean blockedByMe,
         long readSeq,
-        long peerReadSeq
+        long peerReadSeq,
+        String avatarUrl,
+        long avatarVersion,
+        String avatarFallback
 ) {
 }

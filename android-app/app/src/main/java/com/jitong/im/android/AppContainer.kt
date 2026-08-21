@@ -13,6 +13,7 @@ import com.jitong.im.android.contact.ContactApi
 import com.jitong.im.android.contact.ContactRepository
 import com.jitong.im.android.local.AccountLocalStore
 import com.jitong.im.android.media.MediaApi
+import com.jitong.im.android.media.AvatarRepository
 import com.jitong.im.android.message.MessageApi
 import com.jitong.im.android.message.PendingMessageScheduler
 import com.jitong.im.android.message.MessageRepository
@@ -71,6 +72,11 @@ internal class AppContainer(context: Context) {
     )
     val sessionState = sessionManager.state
     val contactRepository = ContactRepository(authenticatedContactApi)
+    val avatarRepository = AvatarRepository(
+        authenticatedMediaApi,
+        { sessionManager.snapshot()?.let { UUID.fromString(it.userId) } },
+        { localStore.activeMediaCache() },
+    )
     val pushTokenRepository = PushTokenRepository(authenticatedPushTokenApi)
     val messageRepository = MessageRepository(
         api = authenticatedMessageApi,
@@ -110,7 +116,8 @@ internal class AppContainer(context: Context) {
                                 val watermark = event.body?.highWatermark ?: return@collect
                                 messageRepository.synchronize(userId, watermark)
                             }
-                            "message.created", "message.ack", "conversation.read" ->
+                            "message.created", "message.ack", "conversation.read",
+                            "user.profile.updated", "group.profile.updated" ->
                                 messageRepository.apply(event, userId)
                         }
                     }

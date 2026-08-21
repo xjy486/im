@@ -68,6 +68,174 @@ paths:
         '204': { description: Searchability updated }
         '401':
           $ref: '#/components/responses/ApiError'
+  /api/v1/users/me/avatar:
+    put:
+      operationId: replaceUserAvatar
+      summary: Replace the authenticated user's cropped avatar
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - name: uploadId
+          in: query
+          required: true
+          schema: { type: string, format: uuid }
+        - { $ref: '#/components/parameters/CropX' }
+        - { $ref: '#/components/parameters/CropY' }
+        - { $ref: '#/components/parameters/CropWidth' }
+        - { $ref: '#/components/parameters/CropHeight' }
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required: [file]
+              properties:
+                file: { type: string, format: binary }
+      responses:
+        '200':
+          description: Versioned user avatar variants
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/AvatarUploadResponse' }
+        '400':
+          $ref: '#/components/responses/ApiError'
+        '401':
+          $ref: '#/components/responses/ApiError'
+        '413':
+          $ref: '#/components/responses/ApiError'
+    delete:
+      operationId: removeUserAvatar
+      security: [{ bearerAuth: [] }]
+      responses:
+        '204': { description: Avatar removed and version advanced }
+        '401':
+          $ref: '#/components/responses/ApiError'
+  /api/v1/users/{userId}/avatar:
+    get:
+      operationId: downloadUserAvatar
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { $ref: '#/components/parameters/UserId' }
+        - name: variant
+          in: query
+          schema: { type: string, enum: [full, thumb], default: full }
+        - name: avatarVersion
+          in: query
+          required: false
+          schema: { type: integer, format: int64, minimum: 1 }
+      responses:
+        '200':
+          description: Authorized private WebP avatar
+          content:
+            image/webp:
+              schema: { type: string, format: binary }
+        '403':
+          $ref: '#/components/responses/ApiError'
+        '404':
+          $ref: '#/components/responses/ApiError'
+        '410':
+          $ref: '#/components/responses/ApiError'
+  /api/v1/users/{userId}/profile:
+    get:
+      operationId: getVisibleUserProfile
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { $ref: '#/components/parameters/UserId' }
+      responses:
+        '200':
+          description: Authorized profile metadata with stable default-avatar fallback
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/UserProfile' }
+        '403':
+          $ref: '#/components/responses/ApiError'
+        '404':
+          $ref: '#/components/responses/ApiError'
+  /api/v1/groups/{conversationId}/avatar:
+    put:
+      operationId: replaceGroupAvatar
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - name: conversationId
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+        - name: uploadId
+          in: query
+          required: true
+          schema: { type: string, format: uuid }
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required: [file]
+              properties:
+                file: { type: string, format: binary }
+      responses:
+        '200':
+          description: Versioned group avatar variants
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/AvatarUploadResponse' }
+        '403':
+          $ref: '#/components/responses/ApiError'
+    delete:
+      operationId: removeGroupAvatar
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - name: conversationId
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        '204': { description: Group avatar removed and version advanced }
+        '403':
+          $ref: '#/components/responses/ApiError'
+    get:
+      operationId: downloadGroupAvatar
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - name: conversationId
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+        - name: variant
+          in: query
+          schema: { type: string, enum: [full, thumb], default: full }
+        - name: avatarVersion
+          in: query
+          schema: { type: integer, format: int64, minimum: 1 }
+      responses:
+        '200':
+          description: Authorized private group WebP avatar
+          content:
+            image/webp:
+              schema: { type: string, format: binary }
+        '403':
+          $ref: '#/components/responses/ApiError'
+        '404':
+          $ref: '#/components/responses/ApiError'
+        '410':
+          $ref: '#/components/responses/ApiError'
+  /api/v1/groups/{conversationId}/profile:
+    get:
+      operationId: getGroupAvatarProfile
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - name: conversationId
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        '200':
+          description: Group avatar metadata for a member
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/GroupProfile' }
+        '404':
+          $ref: '#/components/responses/ApiError'
   /api/v1/contact-requests:
     get:
       operationId: listContactRequests
@@ -440,6 +608,26 @@ components:
       in: path
       required: true
       schema: { type: string, format: uuid }
+    CropX:
+      name: cropX
+      in: query
+      required: false
+      schema: { type: integer, minimum: 0 }
+    CropY:
+      name: cropY
+      in: query
+      required: false
+      schema: { type: integer, minimum: 0 }
+    CropWidth:
+      name: cropWidth
+      in: query
+      required: false
+      schema: { type: integer, minimum: 1 }
+    CropHeight:
+      name: cropHeight
+      in: query
+      required: false
+      schema: { type: integer, minimum: 1 }
     ConversationId:
       name: conversationId
       in: path
@@ -449,12 +637,14 @@ components:
     ContactSearchResult:
       type: object
       additionalProperties: false
-      required: [version, accountNo, displayName, relationship]
+      required: [version, accountNo, displayName, avatarVersion, avatarFallback, relationship]
       properties:
         version: { const: 1 }
         accountNo: { type: string, pattern: '^[1-9][0-9]{10}$' }
         displayName: { type: string }
         avatarUrl: { type: [string, 'null'] }
+        avatarVersion: { type: integer, format: int64, minimum: 0 }
+        avatarFallback: { type: string, minLength: 1, maxLength: 2 }
         relationship:
           type: string
           enum: [NONE, PENDING_OUTGOING, PENDING_INCOMING, ACTIVE, REMOVED]
@@ -490,7 +680,7 @@ components:
             peerDisplayName: { type: string }
     ContactSummary:
       type: object
-      required: [version, userId, accountNo, displayName, conversationId, relationship]
+      required: [version, userId, accountNo, displayName, conversationId, relationship, avatarVersion]
       properties:
         version: { const: 1 }
         userId: { type: string, format: uuid }
@@ -498,9 +688,11 @@ components:
         displayName: { type: string }
         conversationId: { type: string, format: uuid }
         relationship: { const: ACTIVE }
+        avatarUrl: { type: [string, 'null'] }
+        avatarVersion: { type: integer, format: int64, minimum: 0 }
     ConversationSummary:
       type: object
-      required: [version, conversationId, peerUserId, peerAccountNo, peerDisplayName, status, relationship, blockedByMe, readSeq, peerReadSeq]
+      required: [version, conversationId, peerUserId, peerAccountNo, peerDisplayName, status, relationship, blockedByMe, readSeq, peerReadSeq, avatarVersion]
       properties:
         version: { const: 1 }
         conversationId: { type: string, format: uuid }
@@ -512,6 +704,41 @@ components:
         blockedByMe: { type: boolean }
         readSeq: { type: integer, format: int64, minimum: 0 }
         peerReadSeq: { type: integer, format: int64, minimum: 0 }
+        avatarUrl: { type: [string, 'null'] }
+        avatarVersion: { type: integer, format: int64, minimum: 0 }
+    AvatarUploadResponse:
+      type: object
+      additionalProperties: false
+      required: [version, mediaId, purpose, state, contentType, width, height, byteSize, avatarVersion, thumbnailUrl]
+      properties:
+        version: { const: 1 }
+        mediaId: { type: string, format: uuid }
+        purpose: { const: AVATAR }
+        state: { const: BOUND }
+        contentType: { const: image/webp }
+        width: { const: 512 }
+        height: { const: 512 }
+        byteSize: { type: integer, minimum: 1 }
+        avatarVersion: { type: integer, format: int64, minimum: 1 }
+        thumbnailUrl: { type: string }
+    UserProfile:
+      type: object
+      additionalProperties: false
+      required: [userId, displayName, avatarUrl, avatarVersion, avatarFallback]
+      properties:
+        userId: { type: string, format: uuid }
+        displayName: { type: string }
+        avatarUrl: { type: [string, 'null'] }
+        avatarVersion: { type: integer, format: int64, minimum: 0 }
+        avatarFallback: { type: string, minLength: 1, maxLength: 2 }
+    GroupProfile:
+      type: object
+      additionalProperties: false
+      required: [conversationId, avatarUrl, avatarVersion]
+      properties:
+        conversationId: { type: string, format: uuid }
+        avatarUrl: { type: [string, 'null'] }
+        avatarVersion: { type: integer, format: int64, minimum: 0 }
     ConversationReadState:
       type: object
       additionalProperties: false

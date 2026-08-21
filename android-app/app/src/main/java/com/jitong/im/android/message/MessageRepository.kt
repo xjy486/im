@@ -4,6 +4,9 @@ import androidx.room.withTransaction
 import com.jitong.im.android.local.AccountDatabase
 import com.jitong.im.android.local.EncryptedMediaCache
 import com.jitong.im.android.local.LocalConversationReadStateEntity
+import com.jitong.im.android.local.LocalConversationEntity
+import com.jitong.im.android.local.LocalGroupProfileEntity
+import com.jitong.im.android.local.LocalAccountEntity
 import com.jitong.im.android.local.LocalMessageEntity
 import com.jitong.im.android.local.PendingMessageCommandEntity
 import com.jitong.im.android.media.ImageNormalizer
@@ -109,6 +112,20 @@ internal class MessageRepository(
                 return
             }
             page.events
+                .filter { it.eventType == "USER_PROFILE_UPDATED" && it.conversationId == null }
+                .map { it.entityId }
+                .distinct()
+                .forEach { profileUserId ->
+                    applyUserProfile(syncApi.profile(profileUserId).syncBodyOrThrow())
+                }
+            page.events
+                .filter { it.eventType == "GROUP_PROFILE_UPDATED" && it.conversationId != null }
+                .map { it.entityId }
+                .distinct()
+                .forEach { conversationId ->
+                    applyGroupProfile(syncApi.groupProfile(conversationId).syncBodyOrThrow())
+                }
+            page.events
                 .filter { it.eventType == "MESSAGE_CREATED" && it.conversationId != null }
                 .mapNotNull { it.conversationId }
                 .distinct()
@@ -171,8 +188,10 @@ internal class MessageRepository(
                 )
             }
         }
+        applyUserProfile(syncApi.profile(currentUserId).syncBodyOrThrow())
         conversations
             .forEach { conversation ->
+                applyConversationSummary(conversation)
                 restoreConversation(conversation.conversationId, currentUserId, db)
                 applyReadStates(
                     syncApi.readStates(conversation.conversationId).readBodyOrThrow(),
@@ -190,6 +209,68 @@ internal class MessageRepository(
             }
         }
         syncApi.acknowledge(SyncAckRequest(highWatermark)).syncBodyOrThrow()
+    }
+
+    private suspend fun applyConversationSummary(conversation: SyncConversationResponse) {
+        val db = database() ?: return
+        withContext(Dispatchers.IO) {
+            db.conversationDao().upsert(
+                LocalConversationEntity(
+                    conversationId = conversation.conversationId.toString(),
+                    peerUserId = conversation.peerUserId.toString(),
+                    peerAccountNo = conversation.peerAccountNo,
+                    peerDisplayName = conversation.peerDisplayName,
+                    peerAvatarUrl = conversation.avatarUrl,
+                    peerAvatarVersion = conversation.avatarVersion,
+                    peerAvatarFallback = conversation.avatarFallback,
+                    status = conversation.status,
+                    relationship = conversation.relationship,
+                    lastSequence = 0,
+                    updatedAt = System.currentTimeMillis(),
+                ),
+            )
+        }
+    }
+
+    private suspend fun applyUserProfile(profile: UserProfileResponse) {
+        val db = database() ?: return
+        withContext(Dispatchers.IO) {
+            db.withTransaction {
+                db.accountDao().current()
+                    ?.takeIf { it.userId == profile.userId.toString() }
+                    ?.let { current ->
+                        db.accountDao().upsert(
+                            current.copy(
+                                displayName = profile.displayName,
+                                avatarUrl = profile.avatarUrl,
+                                avatarVersion = profile.avatarVersion,
+                                avatarFallback = profile.avatarFallback,
+                            ),
+                        )
+                    }
+                db.conversationDao().updatePeerProfile(
+                    profile.userId.toString(),
+                    profile.displayName,
+                    profile.avatarUrl,
+                    profile.avatarVersion,
+                    profile.avatarFallback,
+                    System.currentTimeMillis(),
+                )
+            }
+        }
+    }
+
+    private suspend fun applyGroupProfile(profile: GroupProfileResponse) {
+        val db = database() ?: return
+        withContext(Dispatchers.IO) {
+            db.groupProfileDao().upsert(
+                LocalGroupProfileEntity(
+                    conversationId = profile.conversationId.toString(),
+                    avatarUrl = profile.avatarUrl,
+                    avatarVersion = profile.avatarVersion,
+                ),
+            )
+        }
     }
 
     private suspend fun restoreConversation(
@@ -614,6 +695,68 @@ internal class MessageRepository(
     suspend fun apply(event: WireEvent, currentUserId: UUID) {
         val body = event.body ?: return
         val db = database() ?: return
+        if (event.operation == "user.profile.updated") {
+            val profileUserId = body.userId ?: return
+            val profileVersion = body.avatarVersion ?: return
+            val syncSeq = body.syncSeq ?: return
+            val lastSyncSeq = withContext(Dispatchers.IO) {
+                db.syncStateDao().current()?.lastSyncSeq ?: 0L
+            }
+            if (syncSeq <= lastSyncSeq) return
+            if (syncSeq != lastSyncSeq + 1) {
+                synchronize(currentUserId, syncSeq)
+                return
+            }
+            withContext(Dispatchers.IO) {
+                db.syncStateDao().upsert(
+                    SyncStateEntity(
+                        deviceId = deviceId()?.toString().orEmpty(),
+                        lastSyncSeq = syncSeq,
+                        lastFullRestoreAt = db.syncStateDao().current()?.lastFullRestoreAt,
+                    ),
+                )
+            }
+            applyUserProfile(
+                UserProfileResponse(
+                    profileUserId,
+                    body.displayName.orEmpty(),
+                    body.avatarUrl,
+                    profileVersion,
+                    body.avatarFallback ?: body.displayName?.firstOrNull()?.toString() ?: "?"))
+            syncApi.acknowledge(SyncAckRequest(syncSeq)).syncBodyOrThrow()
+            return
+        }
+        if (event.operation == "group.profile.updated") {
+            val conversationId = body.conversationId ?: return
+            val syncSeq = body.syncSeq ?: return
+            val lastSyncSeq = withContext(Dispatchers.IO) {
+                db.syncStateDao().current()?.lastSyncSeq ?: 0L
+            }
+            if (syncSeq <= lastSyncSeq) return
+            if (syncSeq != lastSyncSeq + 1) {
+                synchronize(currentUserId, syncSeq)
+                return
+            }
+            withContext(Dispatchers.IO) {
+                val profile = syncApi.groupProfile(conversationId).syncBodyOrThrow()
+                db.groupProfileDao().upsert(
+                    LocalGroupProfileEntity(
+                        conversationId = profile.conversationId.toString(),
+                        avatarUrl = profile.avatarUrl,
+                        avatarVersion = profile.avatarVersion,
+                    ),
+                )
+                db.syncStateDao().upsert(
+                    SyncStateEntity(
+                        deviceId = deviceId()?.toString().orEmpty(),
+                        lastSyncSeq = syncSeq,
+                        lastFullRestoreAt = db.syncStateDao().current()?.lastFullRestoreAt,
+                    ),
+                )
+            }
+            syncApi.acknowledge(SyncAckRequest(syncSeq)).syncBodyOrThrow()
+            return
+        }
         if (event.operation == "conversation.read") {
             val conversationId = body.conversationId ?: return
             val userId = body.userId ?: return

@@ -13,6 +13,12 @@
       "$ref": "#/$defs/conversationReadEnvelope"
     },
     {
+      "$ref": "#/$defs/userProfileEnvelope"
+    },
+    {
+      "$ref": "#/$defs/groupProfileEnvelope"
+    },
+    {
       "$ref": "#/$defs/errorEnvelope"
     }
   ],
@@ -104,6 +110,42 @@
             },
             "body": {
               "$ref": "#/$defs/conversationReadBody"
+            }
+          }
+        }
+      ]
+    },
+    "userProfileEnvelope": {
+      "allOf": [
+        {
+          "$ref": "#/$defs/baseEnvelope"
+        },
+        {
+          "type": "object",
+          "properties": {
+            "operation": {
+              "const": "user.profile.updated"
+            },
+            "body": {
+              "$ref": "#/$defs/userProfileBody"
+            }
+          }
+        }
+      ]
+    },
+    "groupProfileEnvelope": {
+      "allOf": [
+        {
+          "$ref": "#/$defs/baseEnvelope"
+        },
+        {
+          "type": "object",
+          "properties": {
+            "operation": {
+              "const": "group.profile.updated"
+            },
+            "body": {
+              "$ref": "#/$defs/groupProfileBody"
             }
           }
         }
@@ -208,6 +250,29 @@
           "type": ["integer", "null"],
           "minimum": 1
         }
+      }
+    },
+    "userProfileBody": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["userId", "displayName", "avatarUrl", "avatarVersion", "syncSeq"],
+      "properties": {
+        "userId": { "type": "string", "format": "uuid" },
+        "displayName": { "type": "string", "minLength": 1 },
+        "avatarUrl": { "type": ["string", "null"] },
+        "avatarVersion": { "type": "integer", "minimum": 0 },
+        "syncSeq": { "type": "integer", "minimum": 1 }
+      }
+    },
+    "groupProfileBody": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["conversationId", "avatarUrl", "avatarVersion", "syncSeq"],
+      "properties": {
+        "conversationId": { "type": "string", "format": "uuid" },
+        "avatarUrl": { "type": ["string", "null"] },
+        "avatarVersion": { "type": "integer", "minimum": 0 },
+        "syncSeq": { "type": "integer", "minimum": 1 }
       }
     },
     "errorBody": {

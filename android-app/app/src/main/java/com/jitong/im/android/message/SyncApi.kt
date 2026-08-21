@@ -21,6 +21,16 @@ internal interface SyncApi {
     @GET("api/v1/conversations")
     suspend fun conversations(): Response<List<SyncConversationResponse>>
 
+    @GET("api/v1/users/{userId}/profile")
+    suspend fun profile(
+        @retrofit2.http.Path("userId") userId: UUID,
+    ): Response<UserProfileResponse>
+
+    @GET("api/v1/groups/{conversationId}/profile")
+    suspend fun groupProfile(
+        @retrofit2.http.Path("conversationId") conversationId: UUID,
+    ): Response<GroupProfileResponse>
+
     @GET("api/v1/conversations/{conversationId}/read")
     suspend fun readStates(
         @retrofit2.http.Path("conversationId") conversationId: UUID,
@@ -70,6 +80,23 @@ internal data class SyncConversationResponse(
     val status: String,
     val relationship: String,
     val blockedByMe: Boolean,
+    val avatarUrl: String? = null,
+    val avatarVersion: Long = 0,
+    val avatarFallback: String = "?",
+)
+
+internal data class UserProfileResponse(
+    val userId: UUID,
+    val displayName: String,
+    val avatarUrl: String?,
+    val avatarVersion: Long,
+    val avatarFallback: String,
+)
+
+internal data class GroupProfileResponse(
+    val conversationId: UUID,
+    val avatarUrl: String?,
+    val avatarVersion: Long,
 )
 
 internal data class ReadStateRequest(

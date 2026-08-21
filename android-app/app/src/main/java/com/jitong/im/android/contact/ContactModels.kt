@@ -12,6 +12,8 @@ internal data class ContactSearchResult(
     val accountNo: String,
     val displayName: String,
     val avatarUrl: String?,
+    val avatarVersion: Long = 0,
+    val avatarFallback: String = "?",
     val relationship: String,
     val pendingRequestId: String?,
 )
@@ -47,6 +49,9 @@ internal data class ContactSummary(
     val displayName: String,
     val conversationId: UUID,
     val relationship: String,
+    val avatarUrl: String? = null,
+    val avatarVersion: Long = 0,
+    val avatarFallback: String = "?",
 )
 
 internal data class ConversationSummary(
@@ -60,4 +65,7 @@ internal data class ConversationSummary(
     val blockedByMe: Boolean,
     val readSeq: Long = 0,
     val peerReadSeq: Long = 0,
+    val avatarUrl: String? = null,
+    val avatarVersion: Long = 0,
+    val avatarFallback: String = "?",
 )

@@ -25,6 +25,8 @@ data class DesktopConversationSummary(
     val blockedByMe: Boolean,
     val readSeq: Long,
     val peerReadSeq: Long,
+    val avatarUrl: String? = null,
+    val avatarVersion: Long = 0,
 )
 
 @Serializable
@@ -33,6 +35,7 @@ data class DesktopContactSearchResult(
     val accountNo: String,
     val displayName: String,
     val avatarUrl: String?,
+    val avatarVersion: Long = 0,
     val relationship: String,
     val pendingRequestId: String?,
 )
@@ -77,6 +80,8 @@ data class DesktopContactSummary(
     val displayName: String,
     val conversationId: String,
     val relationship: String,
+    val avatarUrl: String? = null,
+    val avatarVersion: Long = 0,
 )
 
 @Serializable
@@ -166,10 +171,13 @@ data class DesktopRealtimeBody(
     val serverAcceptedAt: String? = null,
     val syncSeq: Long? = null,
     val userId: String? = null,
+    val displayName: String? = null,
     val readSeq: Long? = null,
     val highWatermark: Long? = null,
     val code: String? = null,
     val message: String? = null,
+    val avatarUrl: String? = null,
+    val avatarVersion: Long? = null,
 )
 
 class ConversationClient(
@@ -342,6 +350,8 @@ class ConversationClient(
                 peerUserId = conversation.peerUserId,
                 peerAccountNo = conversation.peerAccountNo,
                 peerDisplayName = conversation.peerDisplayName,
+                peerAvatarUrl = conversation.avatarUrl,
+                peerAvatarVersion = conversation.avatarVersion,
                 status = conversation.status,
                 relationship = conversation.relationship,
                 blockedByMe = conversation.blockedByMe,
@@ -387,6 +397,8 @@ class ConversationClient(
                     peerUserId = it.peerUserId,
                     peerAccountNo = it.peerAccountNo,
                     peerDisplayName = it.peerDisplayName,
+                    peerAvatarUrl = it.avatarUrl,
+                    peerAvatarVersion = it.avatarVersion,
                     status = it.status,
                     relationship = it.relationship,
                     blockedByMe = it.blockedByMe,
@@ -457,6 +469,20 @@ class ConversationClient(
             val userId = body.userId ?: return
             val readSeq = body.readSeq ?: return
             applyReadState(local, DesktopReadState(conversationId, userId, readSeq))
+            syncSeq?.let(local::saveLastSyncSeq)
+            return
+        }
+        if (envelope.operation == "user.profile.updated") {
+            val userId = body.userId ?: return
+            local.updatePeerProfile(
+                userId,
+                body.displayName.orEmpty(),
+                body.avatarUrl,
+                body.avatarVersion ?: 0)
+            syncSeq?.let(local::saveLastSyncSeq)
+            return
+        }
+        if (envelope.operation == "group.profile.updated") {
             syncSeq?.let(local::saveLastSyncSeq)
             return
         }

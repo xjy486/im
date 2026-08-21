@@ -43,7 +43,8 @@ class ContactContractTest extends ContractTestEnvironment {
         assertThat(exactSearch.getBody().fieldNames()).toIterable()
                 .containsExactlyInAnyOrder(
                         "version", "accountNo", "displayName",
-                        "avatarUrl", "relationship", "pendingRequestId");
+                        "avatarUrl", "avatarVersion", "avatarFallback",
+                        "relationship", "pendingRequestId");
         assertThat(exactSearch.getBody().get("accountNo").asText()).isEqualTo(bob.accountNo());
 
         ResponseEntity<JsonNode> prefixSearch = exchange(

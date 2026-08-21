@@ -74,9 +74,28 @@ public class ContactService {
                 1,
                 user.accountNo(),
                 user.displayName(),
-                null,
+                "ACTIVE".equals(relationship)
+                        ? avatarUrl(user.id(), user.avatarMediaId(), user.avatarVersion())
+                        : null,
+                "ACTIVE".equals(relationship) ? user.avatarVersion() : 0,
+                fallback(user.displayName()),
                 relationship,
                 pending == null ? null : pending.id().toString());
+    }
+
+    private String avatarUrl(UUID userId, UUID avatarMediaId, long avatarVersion) {
+        return avatarMediaId == null || avatarVersion == 0
+                ? null
+                : "/api/v1/users/" + userId
+                + "/avatar?variant=thumb&avatarVersion=" + avatarVersion;
+    }
+
+    private String fallback(String displayName) {
+        if (displayName == null || displayName.isBlank()) {
+            return "?";
+        }
+        int codePoint = displayName.codePointAt(0);
+        return new String(Character.toChars(codePoint));
     }
 
     @Transactional

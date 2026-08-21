@@ -93,4 +93,16 @@ public class SyncService {
                     deviceId);
         }
     }
+
+    public void recordEventForUsers(
+            List<UUID> userIds,
+            String eventType,
+            UUID entityId,
+            UUID conversationId
+    ) {
+        userIds.stream().sorted().forEach(userId -> {
+            long syncSeq = allocateSequence(userId);
+            recordEvent(userId, syncSeq, eventType, entityId, conversationId);
+        });
+    }
 }

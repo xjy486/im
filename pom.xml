@@ -20,6 +20,7 @@
     <properties>
         <java.version>21</java.version>
         <minio.version>8.6.0</minio.version>
+        <webp-imageio.version>0.10.0</webp-imageio.version>
     </properties>
 
     <dependencies>
@@ -65,6 +66,11 @@
             <groupId>io.minio</groupId>
             <artifactId>minio</artifactId>
             <version>${minio.version}</version>
+        </dependency>
+        <dependency>
+            <groupId>com.github.usefulness</groupId>
+            <artifactId>webp-imageio</artifactId>
+            <version>${webp-imageio.version}</version>
         </dependency>
         <dependency>
             <groupId>com.squareup.okhttp3</groupId>

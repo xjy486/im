@@ -37,6 +37,8 @@ class MediaCleanupJobTest {
                 now.minusSeconds(90_000),
                 null,
                 null,
+                null,
+                null,
                 null);
         when(repository.findCleanupCandidates(org.mockito.ArgumentMatchers.any()))
                 .thenReturn(List.of(candidate));

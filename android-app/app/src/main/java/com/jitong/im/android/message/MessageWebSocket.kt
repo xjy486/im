@@ -223,4 +223,8 @@ internal data class WireMessageBody(
     val highWatermark: Long?,
     val userId: UUID?,
     val readSeq: Long?,
+    val displayName: String?,
+    val avatarUrl: String?,
+    val avatarVersion: Long?,
+    val avatarFallback: String?,
 )

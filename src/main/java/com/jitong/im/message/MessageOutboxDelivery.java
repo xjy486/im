@@ -6,6 +6,8 @@ import com.jitong.im.sync.OutboxRecord;
 import com.jitong.im.push.FcmSender;
 import com.jitong.im.push.FcmDeliveryResult;
 import com.jitong.im.auth.DevicePushTokenService;
+import com.jitong.im.media.AvatarService;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Component;
 import org.springframework.web.socket.TextMessage;
 import org.springframework.web.socket.WebSocketSession;
@@ -23,8 +25,26 @@ class MessageOutboxDelivery implements OutboxDelivery {
     private final ReadStateRepository readStateRepository;
     private final DevicePushTokenService pushTokenService;
     private final FcmSender fcmSender;
+    private final AvatarService avatarService;
     private final ConcurrentHashMap<UUID, Set<WebSocketSession>> sessionsByDevice = new ConcurrentHashMap<>();
     private final Object sessionsLock = new Object();
+
+    @Autowired
+    MessageOutboxDelivery(
+            ObjectMapper objectMapper,
+            MessageRepository messageRepository,
+            ReadStateRepository readStateRepository,
+            DevicePushTokenService pushTokenService,
+            FcmSender fcmSender,
+            AvatarService avatarService
+    ) {
+        this.objectMapper = objectMapper;
+        this.messageRepository = messageRepository;
+        this.readStateRepository = readStateRepository;
+        this.pushTokenService = pushTokenService;
+        this.fcmSender = fcmSender;
+        this.avatarService = avatarService;
+    }
 
     MessageOutboxDelivery(
             ObjectMapper objectMapper,
@@ -33,11 +53,13 @@ class MessageOutboxDelivery implements OutboxDelivery {
             DevicePushTokenService pushTokenService,
             FcmSender fcmSender
     ) {
-        this.objectMapper = objectMapper;
-        this.messageRepository = messageRepository;
-        this.readStateRepository = readStateRepository;
-        this.pushTokenService = pushTokenService;
-        this.fcmSender = fcmSender;
+        this(
+                objectMapper,
+                messageRepository,
+                readStateRepository,
+                pushTokenService,
+                fcmSender,
+                null);
     }
 
     void register(UUID deviceId, WebSocketSession session) {
@@ -83,6 +105,34 @@ class MessageOutboxDelivery implements OutboxDelivery {
             case "CONVERSATION_READ" -> MessageWire.conversationRead(
                     readStateRepository.findState(record.conversationId(), record.entityId()),
                     record.syncSeq());
+            case "USER_PROFILE_UPDATED" -> {
+                if (avatarService == null) {
+                    yield null;
+                }
+                AvatarService.UserProfile profile = avatarService.profile(record.entityId());
+                yield profile == null
+                        ? null
+                        : MessageWire.userProfileUpdated(
+                                profile.userId(),
+                                profile.displayName(),
+                                profile.avatarUrl(),
+                                profile.avatarVersion(),
+                                record.syncSeq());
+            }
+            case "GROUP_PROFILE_UPDATED" -> {
+                if (avatarService == null) {
+                    yield null;
+                }
+                AvatarService.GroupProfile profile =
+                        avatarService.groupProfile(record.conversationId());
+                yield profile == null
+                        ? null
+                        : MessageWire.groupProfileUpdated(
+                                profile.conversationId(),
+                                profile.avatarUrl(),
+                                profile.avatarVersion(),
+                                record.syncSeq());
+            }
             default -> null;
         };
         if (envelope == null) {
