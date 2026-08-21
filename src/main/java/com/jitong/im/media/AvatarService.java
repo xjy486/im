@@ -260,7 +260,8 @@ public class AvatarService {
         if (!"full".equals(variant) && !"thumb".equals(variant)) {
             throw new MediaException(ApiErrorDefinition.INVALID_REQUEST);
         }
-        if (!avatarRepository.activeGroupMemberIds(conversationId).contains(requesterId)) {
+        if (!avatarRepository.activeGroupMemberIds(conversationId).contains(requesterId)
+                && !avatarRepository.isDiscoverableGroup(conversationId)) {
             throw new MediaException(ApiErrorDefinition.MEDIA_FORBIDDEN);
         }
         AvatarRepository.GroupProfile profile = avatarRepository.findGroupProfile(conversationId);

@@ -12,6 +12,7 @@ import com.jitong.im.auth.UserRetirementResult;
 import com.jitong.im.contact.ContactException;
 import com.jitong.im.message.MessageException;
 import com.jitong.im.media.MediaException;
+import com.jitong.im.group.GroupException;
 import com.jitong.im.sync.SyncException;
 import jakarta.servlet.http.HttpServletRequest;
 import org.slf4j.Logger;
@@ -124,6 +125,14 @@ class ApiExceptionHandler {
     @ExceptionHandler(MediaException.class)
     ResponseEntity<ApiErrorResponse> mediaFailure(
             MediaException exception,
+            HttpServletRequest request
+    ) {
+        return response(exception.definition(), request);
+    }
+
+    @ExceptionHandler(GroupException.class)
+    ResponseEntity<ApiErrorResponse> groupFailure(
+            GroupException exception,
             HttpServletRequest request
     ) {
         return response(exception.definition(), request);

@@ -12,6 +12,7 @@ import retrofit2.http.Part
 import retrofit2.http.Path
 import retrofit2.http.Query
 import retrofit2.http.Streaming
+import retrofit2.http.Url
 import java.util.UUID
 
 internal interface MediaApi {
@@ -69,6 +70,10 @@ internal interface MediaApi {
         @Query("variant") variant: String = "thumb",
         @Query("avatarVersion") avatarVersion: Long? = null,
     ): Response<ResponseBody>
+
+    @Streaming
+    @GET
+    suspend fun downloadAvatarUrl(@Url avatarUrl: String): Response<ResponseBody>
 
     @GET("api/v1/users/{userId}/profile")
     suspend fun profile(@Path("userId") userId: UUID): Response<AvatarProfileResponse>

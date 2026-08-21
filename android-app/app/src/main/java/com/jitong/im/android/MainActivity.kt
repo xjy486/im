@@ -11,6 +11,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.lightColorScheme
 import com.jitong.im.android.ui.AuthViewModel
 import com.jitong.im.android.ui.ContactViewModel
+import com.jitong.im.android.ui.GroupViewModel
 import com.jitong.im.android.ui.JitongApp
 import com.jitong.im.android.ui.MessageViewModel
 import com.jitong.im.android.ui.AvatarViewModel
@@ -32,6 +33,10 @@ class MainActivity : ComponentActivity() {
         val container = (application as JitongApplication).container
         AvatarViewModel.Factory(container.avatarRepository)
     }
+    private val groupViewModel: GroupViewModel by viewModels {
+        val container = (application as JitongApplication).container
+        GroupViewModel.Factory(container.groupRepository)
+    }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -42,7 +47,13 @@ class MainActivity : ComponentActivity() {
         }
         setContent {
             MaterialTheme(colorScheme = lightColorScheme()) {
-                JitongApp(viewModel, contactViewModel, messageViewModel, avatarViewModel)
+                JitongApp(
+                    viewModel,
+                    contactViewModel,
+                    messageViewModel,
+                    avatarViewModel,
+                    groupViewModel,
+                )
             }
         }
     }

@@ -238,6 +238,21 @@ class AvatarRepository {
                 .single();
     }
 
+    boolean isDiscoverableGroup(UUID conversationId) {
+        return jdbc.sql("""
+                        SELECT EXISTS (
+                            SELECT 1
+                            FROM groups
+                            WHERE conversation_id = :conversationId
+                              AND status = 'ACTIVE'
+                              AND visibility IN ('PUBLIC', 'UNLISTED')
+                        )
+                        """)
+                .param("conversationId", conversationId)
+                .query(Boolean.class)
+                .single();
+    }
+
     private String avatarSelect() {
         return """
                 SELECT m.id, m.state, m.original_object_key, m.thumbnail_object_key,
