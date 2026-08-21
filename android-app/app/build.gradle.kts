@@ -63,6 +63,10 @@ android.compileOptions {
 }
 
 kotlin {
+    sourceSets {
+        getByName("main").kotlin.srcDir("../../client-shared/src/main/kotlin")
+        getByName("test").kotlin.srcDir("../../client-shared/src/main/kotlin")
+    }
     compilerOptions {
         jvmTarget.set(org.jetbrains.kotlin.gradle.dsl.JvmTarget.JVM_1_8)
     }

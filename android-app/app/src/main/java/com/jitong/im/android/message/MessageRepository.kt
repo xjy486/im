@@ -11,6 +11,7 @@ import com.jitong.im.android.local.LocalMessageEntity
 import com.jitong.im.android.local.PendingMessageCommandEntity
 import com.jitong.im.android.media.ImageNormalizer
 import com.jitong.im.android.local.SyncStateEntity
+import com.jitong.im.search.LocalSearchText
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
@@ -39,6 +40,32 @@ internal class MessageRepository(
     private val pendingFlushMutex = Mutex()
     private var pendingSendScheduler: (() -> Unit)? = null
     private var automaticSendingEnabled = false
+
+    suspend fun search(
+        query: String,
+        conversationId: UUID? = null,
+        limit: Int = 100,
+    ): List<LocalMessageEntity> = withContext(Dispatchers.IO) {
+        require(limit in 1..1000) { "limit must be between 1 and 1000" }
+        val db = database() ?: return@withContext emptyList()
+        val plan = LocalSearchText.plan(query) ?: return@withContext emptyList()
+        val candidates = when (plan.mode) {
+            LocalSearchText.QueryMode.INDEXED ->
+                db.messageDao().searchIndexed(
+                    conversationId = conversationId?.toString(),
+                    match = plan.ftsMatch,
+                    query = plan.normalizedQuery,
+                    limit = limit,
+                )
+            LocalSearchText.QueryMode.SINGLE_CJK_CHARACTER ->
+                db.messageDao().searchSingleCjk(
+                    conversationId = conversationId?.toString(),
+                    query = plan.normalizedQuery,
+                    limit = limit,
+                )
+        }
+        candidates
+    }
 
     fun observe(conversationId: UUID): Flow<List<LocalMessageEntity>> =
         database()?.messageDao()?.observe(conversationId.toString())

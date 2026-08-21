@@ -16,6 +16,9 @@ internal data class MessageUiState(
     val conversationId: UUID? = null,
     val currentUserId: UUID? = null,
     val messages: List<LocalMessageEntity> = emptyList(),
+    val searchQuery: String = "",
+    val searchResults: List<LocalMessageEntity> = emptyList(),
+    val searchLoading: Boolean = false,
     val draft: String = "",
     val loading: Boolean = false,
     val message: String? = null,
@@ -55,6 +58,32 @@ internal class MessageViewModel(
 
     fun setDraft(value: String) {
         _state.value = _state.value.copy(draft = value.take(4000), message = null)
+    }
+
+    fun setSearchQuery(value: String) {
+        _state.value = _state.value.copy(searchQuery = value.take(200), message = null)
+    }
+
+    fun search() {
+        val query = _state.value.searchQuery
+        viewModelScope.launch {
+            _state.value = _state.value.copy(searchLoading = true, message = null)
+            runCatching { repository.search(query) }
+                .onSuccess { results ->
+                    _state.value = _state.value.copy(searchResults = results)
+                }
+                .onFailure {
+                    _state.value = _state.value.copy(
+                        searchResults = emptyList(),
+                        message = "本地搜索失败",
+                    )
+                }
+            _state.value = _state.value.copy(searchLoading = false)
+        }
+    }
+
+    fun clearSearch() {
+        _state.value = _state.value.copy(searchQuery = "", searchResults = emptyList())
     }
 
     fun markRead(readSeq: Long) {

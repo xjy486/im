@@ -13,6 +13,12 @@ kotlin {
     jvmToolchain(21)
 }
 
+sourceSets {
+    main {
+        kotlin.srcDir("../client-shared/src/main/kotlin")
+    }
+}
+
 compose.desktop {
     application {
         mainClass = "com.jitong.im.desktop.MainKt"

@@ -120,7 +120,7 @@ class AccountLocalStore(
     private fun open(accountNo: String): AccountDatabase {
         val passphrase = keyStore.databasePassphrase(accountNo)
         val factory = SupportFactory(SQLiteDatabase.getBytes(passphrase.toCharArray()))
-        return Room.databaseBuilder(
+        val database = Room.databaseBuilder(
             context,
             AccountDatabase::class.java,
             keyStore.databaseName(accountNo),
@@ -134,7 +134,21 @@ class AccountLocalStore(
             .addMigrations(AccountDatabase.MIGRATION_6_7)
             .addMigrations(AccountDatabase.MIGRATION_7_8)
             .addMigrations(AccountDatabase.MIGRATION_8_9)
+            .addMigrations(AccountDatabase.MIGRATION_9_10)
+            .addMigrations(AccountDatabase.MIGRATION_10_11)
+            .addMigrations(AccountDatabase.MIGRATION_11_12)
             .build()
+        if (database.searchStateDao().current()?.version != SEARCH_INDEX_VERSION) {
+            database.messageDao().rebuildSearchEntities()
+            database.searchStateDao().upsert(
+                LocalSearchStateEntity(version = SEARCH_INDEX_VERSION),
+            )
+        }
+        return database
+    }
+
+    private companion object {
+        const val SEARCH_INDEX_VERSION = 1
     }
 
     @Synchronized

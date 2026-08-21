@@ -1,6 +1,7 @@
 package com.jitong.im.desktop.local
 
 import com.jitong.im.desktop.auth.DeviceClass
+import com.jitong.im.search.LocalSearchText
 import org.h2.jdbcx.JdbcConnectionPool
 import java.nio.file.Files
 import java.nio.file.Path
@@ -102,6 +103,7 @@ class LocalDatabaseManager(
                             state VARCHAR(32) NOT NULL,
                             local_state VARCHAR(32) NOT NULL,
                             text_content CLOB NOT NULL,
+                            search_text CLOB NOT NULL DEFAULT '',
                             server_accepted_at VARCHAR(64),
                             created_at BIGINT NOT NULL,
                             UNIQUE (conversation_id, client_msg_id)
@@ -112,9 +114,26 @@ class LocalDatabaseManager(
                     statement.executeUpdate(
                         "ALTER TABLE local_messages ADD COLUMN IF NOT EXISTS recalled_at VARCHAR(64)")
                     statement.executeUpdate(
+                        "ALTER TABLE local_messages ADD COLUMN IF NOT EXISTS search_text CLOB NOT NULL DEFAULT ''")
+                    statement.executeUpdate(
                         """
                         CREATE INDEX IF NOT EXISTS local_messages_conversation_idx
                         ON local_messages (conversation_id, conversation_seq, created_at)
+                        """.trimIndent())
+                    statement.executeUpdate(
+                        """
+                        CREATE TABLE IF NOT EXISTS message_search_terms (
+                            term VARCHAR(4096) NOT NULL,
+                            message_id VARCHAR(64) NOT NULL,
+                            PRIMARY KEY (term, message_id)
+                        )
+                        """.trimIndent())
+                    statement.executeUpdate(
+                        "ALTER TABLE message_search_terms ALTER COLUMN term VARCHAR(4096)")
+                    statement.executeUpdate(
+                        """
+                        CREATE INDEX IF NOT EXISTS message_search_terms_message_idx
+                        ON message_search_terms (message_id)
                         """.trimIndent())
                     statement.executeUpdate(
                         """
@@ -234,6 +253,57 @@ class LocalDatabase internal constructor(
     private val pool: JdbcConnectionPool,
     private val mediaCache: EncryptedMediaCache,
 ) : AutoCloseable {
+    init {
+        pool.connection.use { connection ->
+            val hasMessages = connection.createStatement().use { statement ->
+                statement.executeQuery("SELECT COUNT(*) FROM local_messages").use { result ->
+                    result.next()
+                    result.getLong(1) > 0
+                }
+            }
+            val hasTerms = connection.createStatement().use { statement ->
+                statement.executeQuery("SELECT COUNT(*) FROM message_search_terms").use { result ->
+                    result.next()
+                    result.getLong(1) > 0
+                }
+            }
+            val searchableMessages = connection.createStatement().use { statement ->
+                statement.executeQuery(
+                    """
+                    SELECT COUNT(*)
+                    FROM local_messages
+                    WHERE type = 'TEXT'
+                      AND state = 'ACTIVE'
+                      AND local_state IN ('SENT', 'RECEIVED')
+                      AND text_content <> ''
+                    """.trimIndent(),
+                ).use { result ->
+                    result.next()
+                    result.getLong(1)
+                }
+            }
+            val indexedSearchTexts = connection.createStatement().use { statement ->
+                statement.executeQuery(
+                    """
+                    SELECT COUNT(*)
+                    FROM local_messages
+                    WHERE type = 'TEXT'
+                      AND state = 'ACTIVE'
+                      AND local_state IN ('SENT', 'RECEIVED')
+                      AND search_text <> ''
+                    """.trimIndent(),
+                ).use { result ->
+                    result.next()
+                    result.getLong(1)
+                }
+            }
+            if (hasMessages && (!hasTerms || searchableMessages != indexedSearchTexts)) {
+                connection.createStatement().use { it.executeUpdate("DELETE FROM message_search_terms") }
+                rebuildSearchTerms(connection)
+            }
+        }
+    }
+
     fun mediaCache(): EncryptedMediaCache = mediaCache
     fun lastSyncSeq(): Long {
         pool.connection.use { connection ->
@@ -447,32 +517,15 @@ class LocalDatabase internal constructor(
 
     fun upsertMessage(message: LocalMessage) {
         pool.connection.use { connection ->
-            connection.prepareStatement(
-                """
-                MERGE INTO local_messages (
-                    message_id, conversation_id, sender_id, client_msg_id, conversation_seq,
-                    type, state, local_state, text_content, media_id, server_accepted_at,
-                    recalled_at, created_at
-                ) KEY(message_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                """.trimIndent()).use { statement ->
-                statement.setString(1, message.messageId)
-                statement.setString(2, message.conversationId)
-                statement.setString(3, message.senderId)
-                statement.setString(4, message.clientMsgId)
-                if (message.conversationSeq == null) {
-                    statement.setObject(5, null)
-                } else {
-                    statement.setLong(5, message.conversationSeq)
-                }
-                statement.setString(6, message.type)
-                statement.setString(7, message.state)
-                statement.setString(8, message.localState)
-                statement.setString(9, message.text)
-                statement.setString(10, message.mediaId)
-                statement.setString(11, message.serverAcceptedAt)
-                statement.setString(12, message.recalledAt)
-                statement.setLong(13, message.createdAt)
-                statement.executeUpdate()
+            connection.autoCommit = false
+            try {
+                upsertMessage(connection, message)
+                connection.commit()
+            } catch (exception: RuntimeException) {
+                connection.rollback()
+                throw exception
+            } finally {
+                connection.autoCommit = true
             }
         }
     }
@@ -482,39 +535,28 @@ class LocalDatabase internal constructor(
             connection.autoCommit = false
             try {
                 connection.prepareStatement(
+                    """
+                    SELECT message_id
+                    FROM local_messages
+                    WHERE conversation_id = ? AND client_msg_id = ?
+                    """.trimIndent())
+                    .use { statement ->
+                        statement.setString(1, message.conversationId)
+                        statement.setString(2, message.clientMsgId)
+                        statement.executeQuery().use { result ->
+                            while (result.next()) {
+                                deleteSearchTerms(connection, result.getString("message_id"))
+                            }
+                        }
+                    }
+                connection.prepareStatement(
                     "DELETE FROM local_messages WHERE conversation_id = ? AND client_msg_id = ?")
                     .use { statement ->
                         statement.setString(1, message.conversationId)
                         statement.setString(2, message.clientMsgId)
                         statement.executeUpdate()
                     }
-                connection.prepareStatement(
-                    """
-                    MERGE INTO local_messages (
-                        message_id, conversation_id, sender_id, client_msg_id, conversation_seq,
-                        type, state, local_state, text_content, media_id, server_accepted_at,
-                        recalled_at, created_at
-                    ) KEY(message_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                    """.trimIndent()).use { statement ->
-                    statement.setString(1, message.messageId)
-                    statement.setString(2, message.conversationId)
-                    statement.setString(3, message.senderId)
-                    statement.setString(4, message.clientMsgId)
-                    if (message.conversationSeq == null) {
-                        statement.setObject(5, null)
-                    } else {
-                        statement.setLong(5, message.conversationSeq)
-                    }
-                    statement.setString(6, message.type)
-                    statement.setString(7, message.state)
-                    statement.setString(8, message.localState)
-                    statement.setString(9, message.text)
-                    statement.setString(10, message.mediaId)
-                    statement.setString(11, message.serverAcceptedAt)
-                    statement.setString(12, message.recalledAt)
-                    statement.setLong(13, message.createdAt)
-                    statement.executeUpdate()
-                }
+                upsertMessage(connection, message)
                 connection.commit()
             } catch (exception: RuntimeException) {
                 connection.rollback()
@@ -612,6 +654,32 @@ class LocalDatabase internal constructor(
         }
     }
 
+    /**
+     * Searches only accepted, active local history. The terms table is a
+     * candidate index; matching the original text below is required for CJK
+     * bigrams and prevents an index hit from becoming a false positive.
+     */
+    fun searchMessages(
+        query: String,
+        conversationId: String? = null,
+        limit: Int = 100,
+    ): List<LocalMessage> {
+        require(limit in 1..1000) { "limit must be between 1 and 1000" }
+        val plan = LocalSearchText.plan(query) ?: return emptyList()
+        pool.connection.use { connection ->
+            val candidates = if (plan.mode == LocalSearchText.QueryMode.SINGLE_CJK_CHARACTER) {
+                searchSingleCjk(connection, plan.normalizedQuery, conversationId, limit)
+            } else {
+                searchIndexed(connection, plan, conversationId, limit)
+            }
+            return candidates
+                .asSequence()
+                .filter { LocalSearchText.matches(it.text, plan.normalizedQuery) }
+                .take(limit)
+                .toList()
+        }
+    }
+
     @Synchronized
     fun deleteMessageMediaCache(mediaId: String?) {
         mediaId ?: return
@@ -674,10 +742,20 @@ class LocalDatabase internal constructor(
 
     fun clearMessageData() {
         pool.connection.use { connection ->
-            connection.createStatement().use { statement ->
-                statement.executeUpdate("DELETE FROM local_messages")
-                statement.executeUpdate("DELETE FROM local_conversations")
-                statement.executeUpdate("DELETE FROM local_read_states")
+            connection.autoCommit = false
+            try {
+                connection.createStatement().use { statement ->
+                    statement.executeUpdate("DELETE FROM local_messages")
+                    statement.executeUpdate("DELETE FROM message_search_terms")
+                    statement.executeUpdate("DELETE FROM local_conversations")
+                    statement.executeUpdate("DELETE FROM local_read_states")
+                }
+                connection.commit()
+            } catch (exception: RuntimeException) {
+                connection.rollback()
+                throw exception
+            } finally {
+                connection.autoCommit = true
             }
         }
         mediaCache.deleteMatching("message-media-")
@@ -733,6 +811,208 @@ class LocalDatabase internal constructor(
 
     override fun close() {
         pool.dispose()
+    }
+
+    private fun upsertMessage(
+        connection: java.sql.Connection,
+        message: LocalMessage,
+    ) {
+        connection.prepareStatement(
+            """
+            MERGE INTO local_messages (
+                message_id, conversation_id, sender_id, client_msg_id, conversation_seq,
+                type, state, local_state, text_content, search_text, media_id,
+                server_accepted_at, recalled_at, created_at
+            ) KEY(message_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """.trimIndent()).use { statement ->
+            statement.setString(1, message.messageId)
+            statement.setString(2, message.conversationId)
+            statement.setString(3, message.senderId)
+            statement.setString(4, message.clientMsgId)
+            if (message.conversationSeq == null) {
+                statement.setObject(5, null)
+            } else {
+                statement.setLong(5, message.conversationSeq)
+            }
+            statement.setString(6, message.type)
+            statement.setString(7, message.state)
+            statement.setString(8, message.localState)
+            statement.setString(9, message.text)
+            statement.setString(10, if (isSearchable(message)) LocalSearchText.normalize(message.text) else "")
+            statement.setString(11, message.mediaId)
+            statement.setString(12, message.serverAcceptedAt)
+            statement.setString(13, message.recalledAt)
+            statement.setLong(14, message.createdAt)
+            statement.executeUpdate()
+        }
+        deleteSearchTerms(connection, message.messageId)
+        if (isSearchable(message)) {
+            val terms = LocalSearchText.terms(message.text)
+            if (terms.isNotEmpty()) {
+                connection.prepareStatement(
+                    """
+                    INSERT INTO message_search_terms (term, message_id)
+                    VALUES (?, ?)
+                    """.trimIndent()).use { statement ->
+                    terms.forEach { term ->
+                        statement.setString(1, term)
+                        statement.setString(2, message.messageId)
+                        statement.addBatch()
+                    }
+                    statement.executeBatch()
+                }
+            }
+        }
+    }
+
+    private fun rebuildSearchTerms(connection: java.sql.Connection) {
+        val messages = connection.prepareStatement(
+            """
+            SELECT message_id, conversation_id, sender_id, client_msg_id, conversation_seq,
+                   type, state, local_state, text_content, search_text, media_id,
+                   server_accepted_at, recalled_at, created_at
+            FROM local_messages
+            """.trimIndent()).use { statement ->
+            statement.executeQuery().use { result ->
+                buildList {
+                    while (result.next()) add(result.toLocalMessage())
+                }
+            }
+        }
+        connection.autoCommit = false
+        try {
+            connection.createStatement().use { it.executeUpdate("DELETE FROM message_search_terms") }
+            messages.forEach { message ->
+                connection.prepareStatement(
+                    "UPDATE local_messages SET search_text = ? WHERE message_id = ?",
+                ).use { update ->
+                    update.setString(
+                        1,
+                        if (isSearchable(message)) LocalSearchText.normalize(message.text) else "",
+                    )
+                    update.setString(2, message.messageId)
+                    update.executeUpdate()
+                }
+                if (!isSearchable(message)) return@forEach
+                val terms = LocalSearchText.terms(message.text)
+                if (terms.isEmpty()) return@forEach
+                connection.prepareStatement(
+                    """
+                    INSERT INTO message_search_terms (term, message_id)
+                    VALUES (?, ?)
+                    """.trimIndent(),
+                ).use { insert ->
+                    terms.forEach { term ->
+                        insert.setString(1, term)
+                        insert.setString(2, message.messageId)
+                        insert.addBatch()
+                    }
+                    insert.executeBatch()
+                }
+            }
+            connection.commit()
+        } catch (exception: RuntimeException) {
+            connection.rollback()
+            throw exception
+        } finally {
+            connection.autoCommit = true
+        }
+    }
+
+    private fun isSearchable(message: LocalMessage): Boolean =
+        message.type == "TEXT" &&
+            message.state == "ACTIVE" &&
+            message.localState in setOf("SENT", "RECEIVED") &&
+            message.text.isNotBlank()
+
+    private fun deleteSearchTerms(
+        connection: java.sql.Connection,
+        messageId: String,
+    ) {
+        connection.prepareStatement(
+            "DELETE FROM message_search_terms WHERE message_id = ?")
+            .use { statement ->
+                statement.setString(1, messageId)
+                statement.executeUpdate()
+            }
+    }
+
+    private fun searchIndexed(
+        connection: java.sql.Connection,
+        plan: LocalSearchText.QueryPlan,
+        conversationId: String?,
+        limit: Int,
+    ): List<LocalMessage> {
+        val placeholders = plan.terms.joinToString(",") { "?" }
+        val conversationClause = if (conversationId == null) "" else "AND lm.conversation_id = ?"
+        val sql = """
+            SELECT lm.message_id, lm.conversation_id, lm.sender_id, lm.client_msg_id,
+                   lm.conversation_seq, lm.type, lm.state, lm.local_state,
+                   lm.text_content, lm.search_text, lm.media_id, lm.server_accepted_at,
+                   lm.recalled_at, lm.created_at
+            FROM local_messages lm
+            JOIN message_search_terms mst ON mst.message_id = lm.message_id
+            WHERE lm.state = 'ACTIVE'
+              AND lm.local_state IN ('SENT', 'RECEIVED')
+              AND mst.term IN ($placeholders)
+              AND LOCATE(?, lm.search_text) > 0
+              $conversationClause
+            GROUP BY lm.message_id, lm.conversation_id, lm.sender_id, lm.client_msg_id,
+                     lm.conversation_seq, lm.type, lm.state, lm.local_state,
+                     lm.text_content, lm.media_id, lm.server_accepted_at,
+                     lm.recalled_at, lm.created_at
+            HAVING COUNT(DISTINCT mst.term) = ?
+            ORDER BY lm.server_accepted_at DESC, lm.created_at DESC, lm.message_id DESC
+            LIMIT ?
+            """.trimIndent()
+        connection.prepareStatement(sql).use { statement ->
+            var index = 1
+            plan.terms.forEach {
+                statement.setString(index++, it)
+            }
+            statement.setString(index++, plan.normalizedQuery)
+            if (conversationId != null) statement.setString(index++, conversationId)
+            statement.setInt(index++, plan.terms.size)
+            statement.setInt(index, limit)
+            statement.executeQuery().use { result ->
+                return buildList {
+                    while (result.next()) add(result.toLocalMessage())
+                }
+            }
+        }
+    }
+
+    private fun searchSingleCjk(
+        connection: java.sql.Connection,
+        normalizedQuery: String,
+        conversationId: String?,
+        limit: Int,
+    ): List<LocalMessage> {
+        val conversationClause = if (conversationId == null) "" else "AND conversation_id = ?"
+        val sql = """
+            SELECT message_id, conversation_id, sender_id, client_msg_id, conversation_seq,
+                   type, state, local_state, text_content, media_id, server_accepted_at,
+                   recalled_at, created_at
+            FROM local_messages
+            WHERE state = 'ACTIVE'
+              AND local_state IN ('SENT', 'RECEIVED')
+              AND type = 'TEXT'
+              AND search_text LIKE ?
+              $conversationClause
+            ORDER BY server_accepted_at DESC, created_at DESC, message_id DESC
+            LIMIT ?
+            """.trimIndent()
+        connection.prepareStatement(sql).use { statement ->
+            var index = 1
+            statement.setString(index++, "%$normalizedQuery%")
+            if (conversationId != null) statement.setString(index++, conversationId)
+            statement.setInt(index, limit)
+            statement.executeQuery().use { result ->
+                return buildList {
+                    while (result.next()) add(result.toLocalMessage())
+                }
+            }
+        }
     }
 
     private fun ResultSet.toLocalConversation() = LocalConversation(

@@ -11,6 +11,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.Image
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material3.Button
@@ -105,6 +106,7 @@ private fun rememberDesktopAuthStore(): DesktopAuthStore = remember {
 private data class DesktopData(
     val conversations: List<LocalConversation> = emptyList(),
     val messages: List<LocalMessage> = emptyList(),
+    val searchResults: List<LocalMessage> = emptyList(),
     val requests: List<DesktopContactRequestSummary> = emptyList(),
 )
 
@@ -123,6 +125,7 @@ private fun DesktopApp(
     var selectedConversationId by remember { mutableStateOf<String?>(null) }
     var searchAccountNo by remember { mutableStateOf("") }
     var searchResult by remember { mutableStateOf<DesktopContactSearchResult?>(null) }
+    var localSearchQuery by remember { mutableStateOf("") }
     var draft by remember { mutableStateOf("") }
     var online by remember { mutableStateOf(false) }
     var avatarBytes by remember { mutableStateOf<Map<String, ByteArray>>(emptyMap()) }
@@ -205,6 +208,23 @@ private fun DesktopApp(
                 }
                 avatarBytes = avatarBytes + loadedAvatars
                 mediaBytes = mediaBytes + loadedMedia
+            }
+        }
+    }
+
+    fun searchLocalHistory() {
+        val local = authStore.localDatabase() ?: return
+        uiScope.launch(Dispatchers.IO) {
+            runCatching {
+                local.searchMessages(localSearchQuery)
+            }.onSuccess { results ->
+                withContext(Dispatchers.Main.immediate) {
+                    data = data.copy(searchResults = results)
+                }
+            }.onFailure {
+                withContext(Dispatchers.Main.immediate) {
+                    error = messageFor(it)
+                }
             }
         }
     }
@@ -492,6 +512,16 @@ private fun DesktopApp(
                     }.onSuccess { searchResult = it }
                         .onFailure { error = messageFor(it) }
                 }
+            },
+            localSearchQuery = localSearchQuery,
+            localSearchResults = data.searchResults,
+            onLocalSearchQueryChange = {
+                localSearchQuery = it.take(200)
+            },
+            onLocalSearch = ::searchLocalHistory,
+            onOpenSearchResult = { conversationId ->
+                selectedConversationId = conversationId
+                refreshLocal()
             },
             onAddContact = {
                 error = null
@@ -866,6 +896,8 @@ private fun MainScreen(
     selectedConversationId: String?,
     searchAccountNo: String,
     searchResult: DesktopContactSearchResult?,
+    localSearchQuery: String,
+    localSearchResults: List<LocalMessage>,
     avatarBytes: Map<String, ByteArray>,
     selfProfile: DesktopUserProfile?,
     selfAvatarBytes: ByteArray?,
@@ -875,6 +907,9 @@ private fun MainScreen(
     error: String?,
     onSearchAccountNoChange: (String) -> Unit,
     onSearch: () -> Unit,
+    onLocalSearchQueryChange: (String) -> Unit,
+    onLocalSearch: () -> Unit,
+    onOpenSearchResult: (String) -> Unit,
     onAddContact: () -> Unit,
     onAcceptRequest: (String) -> Unit,
     onRejectRequest: (String) -> Unit,
@@ -964,6 +999,33 @@ private fun MainScreen(
                             if (it.relationship == "NONE") {
                                 Button(onClick = onAddContact) { Text("Add contact") }
                             }
+                        }
+                    }
+                }
+                Spacer(Modifier.height(16.dp))
+                Text("Local history", style = MaterialTheme.typography.titleMedium)
+                OutlinedTextField(
+                    modifier = Modifier.fillMaxWidth(),
+                    value = localSearchQuery,
+                    onValueChange = onLocalSearchQueryChange,
+                    label = { Text("Search messages") },
+                    singleLine = true)
+                Spacer(Modifier.height(8.dp))
+                Button(
+                    modifier = Modifier.fillMaxWidth(),
+                    enabled = localSearchQuery.isNotBlank(),
+                    onClick = onLocalSearch) { Text("Search history") }
+                localSearchResults.forEach { result ->
+                    Card(
+                        Modifier
+                            .fillMaxWidth()
+                            .padding(top = 8.dp)
+                            .clickable { onOpenSearchResult(result.conversationId) }) {
+                        Column(Modifier.padding(10.dp)) {
+                            Text(result.text)
+                            Text(
+                                "${result.conversationId} · ${result.conversationSeq ?: "pending"}",
+                                style = MaterialTheme.typography.bodySmall)
                         }
                     }
                 }

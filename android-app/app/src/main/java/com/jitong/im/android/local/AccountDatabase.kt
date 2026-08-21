@@ -3,13 +3,16 @@ package com.jitong.im.android.local
 import androidx.room.Dao
 import androidx.room.Database
 import androidx.room.Entity
+import androidx.room.Fts4
 import androidx.room.Insert
 import androidx.room.OnConflictStrategy
 import androidx.room.PrimaryKey
 import androidx.room.RoomDatabase
 import androidx.room.Query
 import androidx.room.Index
+import androidx.room.Transaction
 import kotlinx.coroutines.flow.Flow
+import com.jitong.im.search.LocalSearchText
 
 @Entity(tableName = "local_account")
 data class LocalAccountEntity(
@@ -63,11 +66,28 @@ data class LocalMessageEntity(
     val state: String,
     val localState: String,
     val text: String,
+    val searchText: String = "",
     val mediaId: String? = null,
     val localMediaPath: String? = null,
     val serverAcceptedAt: String?,
     val recalledAt: String? = null,
     val createdAt: Long,
+)
+
+@Fts4(
+    tokenizer = "simple",
+    notIndexed = ["messageId"],
+)
+@Entity(tableName = "local_message_search")
+data class LocalMessageSearchEntity(
+    val messageId: String,
+    val terms: String,
+)
+
+@Entity(tableName = "local_search_state")
+data class LocalSearchStateEntity(
+    @PrimaryKey val id: Int = 1,
+    val version: Int,
 )
 
 @Entity(tableName = "sync_state")
@@ -173,7 +193,51 @@ interface LocalConversationReadStateDao {
 @Dao
 interface LocalMessageDao {
     @Insert(onConflict = OnConflictStrategy.REPLACE)
-    fun upsert(message: LocalMessageEntity)
+    fun upsertEntity(message: LocalMessageEntity)
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    fun insertSearchEntity(search: LocalMessageSearchEntity)
+
+    @Query("DELETE FROM local_message_search WHERE messageId = :messageId")
+    fun deleteSearchEntity(messageId: String)
+
+    @Query("DELETE FROM local_message_search")
+    fun clearSearchEntities()
+
+    @Query("DELETE FROM local_message WHERE clientMsgId = :clientMsgId")
+    fun deleteMessageEntityByClientMsgId(clientMsgId: String)
+
+    @Query("DELETE FROM local_message WHERE localState IN ('SENT', 'RECEIVED')")
+    fun clearAcceptedMessageEntities()
+
+    @Transaction
+    fun upsert(message: LocalMessageEntity) {
+        val indexedMessage = message.copy(
+            searchText = if (message.type == "TEXT") {
+                LocalSearchText.normalize(message.text)
+            } else {
+                ""
+            },
+        )
+        upsertEntity(indexedMessage)
+        deleteSearchEntity(message.messageId)
+        if (
+            indexedMessage.type == "TEXT" &&
+            indexedMessage.state == "ACTIVE" &&
+            indexedMessage.localState in setOf("SENT", "RECEIVED") &&
+            indexedMessage.text.isNotBlank()
+        ) {
+            val terms = LocalSearchText.terms(indexedMessage.text)
+            if (terms.isNotEmpty()) {
+                insertSearchEntity(
+                    LocalMessageSearchEntity(
+                        messageId = message.messageId,
+                        terms = terms.joinToString(" "),
+                    ),
+                )
+            }
+        }
+    }
 
     @Query(
         """
@@ -190,14 +254,77 @@ interface LocalMessageDao {
     @Query("SELECT * FROM local_message WHERE clientMsgId = :clientMsgId LIMIT 1")
     fun findByClientMsgId(clientMsgId: String): LocalMessageEntity?
 
-    @Query("DELETE FROM local_message WHERE clientMsgId = :clientMsgId")
-    fun deleteByClientMsgId(clientMsgId: String)
+    @Transaction
+    fun deleteByClientMsgId(clientMsgId: String) {
+        findByClientMsgId(clientMsgId)?.let { deleteSearchEntity(it.messageId) }
+        deleteMessageEntityByClientMsgId(clientMsgId)
+    }
+
+    @Transaction
+    fun clearAll() {
+        clearSearchEntities()
+        clearMessageEntities()
+    }
+
+    @Transaction
+    fun clearAccepted() {
+        clearSearchEntities()
+        clearAcceptedMessageEntities()
+        rebuildSearchEntities()
+    }
 
     @Query("DELETE FROM local_message")
-    fun clearAll()
+    fun clearMessageEntities()
 
-    @Query("DELETE FROM local_message WHERE localState IN ('SENT', 'RECEIVED')")
-    fun clearAccepted()
+    @Query(
+        """
+        SELECT m.*
+        FROM local_message AS m
+        JOIN local_message_search AS search ON search.messageId = m.messageId
+        WHERE (:conversationId IS NULL OR m.conversationId = :conversationId)
+          AND m.state = 'ACTIVE'
+          AND m.localState IN ('SENT', 'RECEIVED')
+          AND local_message_search MATCH :match
+          AND instr(m.searchText, :query) > 0
+        ORDER BY m.serverAcceptedAt DESC, m.createdAt DESC, m.messageId DESC
+        LIMIT :limit
+        """,
+    )
+    fun searchIndexed(
+        conversationId: String?,
+        match: String,
+        query: String,
+        limit: Int,
+    ): List<LocalMessageEntity>
+
+    @Query(
+        """
+        SELECT *
+        FROM local_message
+        WHERE (:conversationId IS NULL OR conversationId = :conversationId)
+          AND state = 'ACTIVE'
+          AND localState IN ('SENT', 'RECEIVED')
+          AND searchText LIKE '%' || :query || '%'
+        ORDER BY CASE WHEN conversationSeq IS NULL THEN 1 ELSE 0 END,
+                 conversationSeq DESC,
+                 createdAt DESC
+        LIMIT :limit
+        """,
+    )
+    fun searchSingleCjk(
+        conversationId: String?,
+        query: String,
+        limit: Int,
+    ): List<LocalMessageEntity>
+
+    @Transaction
+    fun rebuildSearchEntities() {
+        clearSearchEntities()
+        listAll().forEach { upsert(it) }
+    }
+
+    @Query("SELECT * FROM local_message")
+    fun listAll(): List<LocalMessageEntity>
 
     @Query(
         "SELECT mediaId FROM local_message " +
@@ -211,6 +338,16 @@ interface LocalMessageDao {
 
     @Query("UPDATE local_message SET localMediaPath = :localMediaPath WHERE messageId = :messageId")
     fun updateLocalMediaPath(messageId: String, localMediaPath: String)
+
+}
+
+@Dao
+interface LocalSearchStateDao {
+    @Query("SELECT * FROM local_search_state WHERE id = 1")
+    fun current(): LocalSearchStateEntity?
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    fun upsert(state: LocalSearchStateEntity)
 }
 
 @Dao
@@ -278,12 +415,14 @@ interface SyncStateDao {
         LocalAccountEntity::class,
         LocalConversationEntity::class,
         LocalMessageEntity::class,
+        LocalMessageSearchEntity::class,
+        LocalSearchStateEntity::class,
         SyncStateEntity::class,
         LocalConversationReadStateEntity::class,
         PendingMessageCommandEntity::class,
         LocalGroupProfileEntity::class,
     ],
-    version = 9,
+    version = 12,
     exportSchema = true,
 )
 abstract class AccountDatabase : RoomDatabase() {
@@ -291,6 +430,7 @@ abstract class AccountDatabase : RoomDatabase() {
     abstract fun conversationDao(): LocalConversationDao
     abstract fun conversationReadStateDao(): LocalConversationReadStateDao
     abstract fun messageDao(): LocalMessageDao
+    abstract fun searchStateDao(): LocalSearchStateDao
     abstract fun pendingCommandDao(): PendingCommandDao
     abstract fun syncStateDao(): SyncStateDao
     abstract fun groupProfileDao(): LocalGroupProfileDao
@@ -433,6 +573,38 @@ abstract class AccountDatabase : RoomDatabase() {
         val MIGRATION_8_9 = object : androidx.room.migration.Migration(8, 9) {
             override fun migrate(database: androidx.sqlite.db.SupportSQLiteDatabase) {
                 database.execSQL("ALTER TABLE local_message ADD COLUMN recalledAt TEXT")
+            }
+        }
+
+        val MIGRATION_9_10 = object : androidx.room.migration.Migration(9, 10) {
+            override fun migrate(database: androidx.sqlite.db.SupportSQLiteDatabase) {
+                database.execSQL(
+                    """
+                    CREATE VIRTUAL TABLE IF NOT EXISTS local_message_search
+                    USING FTS4(messageId TEXT NOT NULL, terms TEXT NOT NULL, notindexed=messageId)
+                    """.trimIndent(),
+                )
+            }
+        }
+
+        val MIGRATION_10_11 = object : androidx.room.migration.Migration(10, 11) {
+            override fun migrate(database: androidx.sqlite.db.SupportSQLiteDatabase) {
+                database.execSQL(
+                    "ALTER TABLE local_message ADD COLUMN searchText TEXT NOT NULL DEFAULT ''",
+                )
+            }
+        }
+
+        val MIGRATION_11_12 = object : androidx.room.migration.Migration(11, 12) {
+            override fun migrate(database: androidx.sqlite.db.SupportSQLiteDatabase) {
+                database.execSQL(
+                    """
+                    CREATE TABLE IF NOT EXISTS local_search_state (
+                        id INTEGER NOT NULL PRIMARY KEY,
+                        version INTEGER NOT NULL
+                    )
+                    """.trimIndent(),
+                )
             }
         }
 

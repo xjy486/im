@@ -1,6 +1,7 @@
 package com.jitong.im.android.ui
 
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
@@ -174,6 +175,7 @@ private fun HomeScreen(
 ) {
     val contactState by contactViewModel.state.collectAsStateWithLifecycle()
     val avatarState by avatarViewModel.state.collectAsStateWithLifecycle()
+    val messageState by messageViewModel.state.collectAsStateWithLifecycle()
     var selectedTab by rememberSaveable { mutableStateOf("contacts") }
     var selectedConversationId by rememberSaveable { mutableStateOf<String?>(null) }
     LaunchedEffect(state.session.userId) {
@@ -209,9 +211,19 @@ private fun HomeScreen(
                 onClick = { selectedTab = "search" },
                 modifier = Modifier.weight(1f),
             ) { Text("搜索") }
+            OutlinedButton(
+                onClick = { selectedTab = "history" },
+                modifier = Modifier.weight(1f),
+            ) { Text("查历史") }
         }
         when (selectedTab) {
             "search" -> ContactSearchPanel(contactState, contactViewModel)
+            "history" -> LocalSearchPanel(
+                state = messageState,
+                conversations = contactState.conversations,
+                viewModel = messageViewModel,
+                onOpenConversation = { selectedConversationId = it.toString() },
+            )
             "requests" -> ContactRequestsPanel(contactState, contactViewModel)
             else -> ContactListPanel(
                 state = contactState,
@@ -239,6 +251,59 @@ private fun HomeScreen(
             }
             Button(onClick = { viewModel.clearData() }, modifier = Modifier.weight(1f)) {
                 Text("清除本机数据")
+            }
+        }
+    }
+}
+
+@Composable
+private fun LocalSearchPanel(
+    state: MessageUiState,
+    conversations: List<ConversationSummary>,
+    viewModel: MessageViewModel,
+    onOpenConversation: (UUID) -> Unit,
+) {
+    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        OutlinedTextField(
+            value = state.searchQuery,
+            onValueChange = viewModel::setSearchQuery,
+            label = { Text("搜索本地历史") },
+            singleLine = true,
+            modifier = Modifier.fillMaxWidth(),
+        )
+        Button(
+            onClick = viewModel::search,
+            enabled = state.searchQuery.isNotBlank() && !state.searchLoading,
+            modifier = Modifier.fillMaxWidth(),
+        ) {
+            Text(if (state.searchLoading) "搜索中…" else "搜索")
+        }
+        if (state.searchResults.isEmpty() &&
+            state.searchQuery.isNotBlank() &&
+            !state.searchLoading
+        ) {
+            Text("没有匹配的授权历史")
+        }
+        state.searchResults.forEach { result ->
+            val conversation = conversations.firstOrNull {
+                it.conversationId.toString() == result.conversationId
+            }
+            Card(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clickable { onOpenConversation(UUID.fromString(result.conversationId)) },
+            ) {
+                Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                    Text(
+                        conversation?.peerDisplayName ?: result.conversationId,
+                        style = MaterialTheme.typography.titleMedium,
+                    )
+                    Text(result.text)
+                    Text(
+                        "序号 ${result.conversationSeq ?: "待确认"}",
+                        style = MaterialTheme.typography.bodySmall,
+                    )
+                }
             }
         }
     }
