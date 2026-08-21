@@ -67,6 +67,35 @@ internal class MessageRepository(
         candidates
     }
 
+    suspend fun updateConversationSearchVisibility(
+        conversationId: UUID,
+        visible: Boolean,
+        visibleAfterSeq: Long = 0,
+    ) = withContext(Dispatchers.IO) {
+        require(visibleAfterSeq >= 0) { "visibleAfterSeq must not be negative" }
+        val db = database() ?: return@withContext
+        if (!visible) {
+            val mediaIds = db.messageDao().acceptedImageMediaIds(conversationId.toString())
+            db.withTransaction {
+                db.messageDao().clearConversation(conversationId.toString())
+                db.conversationDao().updateSearchVisibility(
+                    conversationId.toString(),
+                    visible = false,
+                    visibleAfterSeq = visibleAfterSeq,
+                    updatedAt = System.currentTimeMillis(),
+                )
+            }
+            mediaIds.forEach { mediaCache()?.deleteMessageMedia(it) }
+        } else {
+            db.conversationDao().updateSearchVisibility(
+                conversationId.toString(),
+                visible = true,
+                visibleAfterSeq = visibleAfterSeq,
+                updatedAt = System.currentTimeMillis(),
+            )
+        }
+    }
+
     fun observe(conversationId: UUID): Flow<List<LocalMessageEntity>> =
         database()?.messageDao()?.observe(conversationId.toString())
             ?: kotlinx.coroutines.flow.flowOf(emptyList())
@@ -180,7 +209,10 @@ internal class MessageRepository(
                         }
                     }
                 }
-            if (page.events.any { it.eventType == "MESSAGE_RECALLED" }) {
+            if (page.events.any {
+                    it.eventType == "MESSAGE_RECALLED" ||
+                        it.eventType == "MESSAGE_MODERATED"
+                }) {
                 fullRestore(currentUserId, requestedUntil)
                 return
             }
@@ -270,6 +302,8 @@ internal class MessageRepository(
                     relationship = conversation.relationship,
                     lastSequence = 0,
                     updatedAt = System.currentTimeMillis(),
+                    searchVisible = conversation.searchVisible,
+                    searchVisibleAfterSeq = conversation.searchVisibleAfterSeq,
                 ),
             )
         }
@@ -842,7 +876,7 @@ internal class MessageRepository(
             }
             return
         }
-        if (event.operation == "message.recalled") {
+        if (event.operation == "message.recalled" || event.operation == "message.moderated") {
             val messageId = body.messageId ?: return
             val conversationId = body.conversationId ?: return
             val senderId = body.senderId ?: return
@@ -875,7 +909,11 @@ internal class MessageRepository(
                             clientMsgId = clientMsgId.toString(),
                             conversationSeq = body.conversationSeq,
                             type = body.type ?: existing?.type ?: "TEXT",
-                            state = "RECALLED",
+                            state = body.state ?: if (event.operation == "message.moderated") {
+                                "MODERATED"
+                            } else {
+                                "RECALLED"
+                            },
                             localState = if (senderId == currentUserId) "SENT" else "RECEIVED",
                             text = "",
                             mediaId = null,

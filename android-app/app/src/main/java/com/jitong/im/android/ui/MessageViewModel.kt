@@ -61,7 +61,11 @@ internal class MessageViewModel(
     }
 
     fun setSearchQuery(value: String) {
-        _state.value = _state.value.copy(searchQuery = value.take(200), message = null)
+        _state.value = _state.value.copy(
+            searchQuery = value.take(200),
+            searchResults = emptyList(),
+            message = null,
+        )
     }
 
     fun search() {
@@ -84,6 +88,11 @@ internal class MessageViewModel(
 
     fun clearSearch() {
         _state.value = _state.value.copy(searchQuery = "", searchResults = emptyList())
+    }
+
+    fun clearForLogout() {
+        observeJob?.cancel()
+        _state.value = MessageUiState()
     }
 
     fun markRead(readSeq: Long) {

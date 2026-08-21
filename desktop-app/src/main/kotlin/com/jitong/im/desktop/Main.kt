@@ -7,6 +7,7 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -14,6 +15,7 @@ import androidx.compose.foundation.Image
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.MaterialTheme
@@ -123,6 +125,7 @@ private fun DesktopApp(
     var restoring by remember { mutableStateOf(true) }
     var data by remember { mutableStateOf(DesktopData()) }
     var selectedConversationId by remember { mutableStateOf<String?>(null) }
+    var selectedSearchMessageId by remember { mutableStateOf<String?>(null) }
     var searchAccountNo by remember { mutableStateOf("") }
     var searchResult by remember { mutableStateOf<DesktopContactSearchResult?>(null) }
     var localSearchQuery by remember { mutableStateOf("") }
@@ -490,6 +493,7 @@ private fun DesktopApp(
             online = online,
             data = data,
             selectedConversationId = selectedConversationId,
+            selectedSearchMessageId = selectedSearchMessageId,
             searchAccountNo = searchAccountNo,
             searchResult = searchResult,
             avatarBytes = avatarBytes,
@@ -517,10 +521,14 @@ private fun DesktopApp(
             localSearchResults = data.searchResults,
             onLocalSearchQueryChange = {
                 localSearchQuery = it.take(200)
+                data = data.copy(searchResults = emptyList())
             },
             onLocalSearch = ::searchLocalHistory,
             onOpenSearchResult = { conversationId ->
                 selectedConversationId = conversationId
+                selectedSearchMessageId = data.searchResults
+                    .firstOrNull { it.conversationId == conversationId }
+                    ?.messageId
                 refreshLocal()
             },
             onAddContact = {
@@ -894,6 +902,7 @@ private fun MainScreen(
     online: Boolean,
     data: DesktopData,
     selectedConversationId: String?,
+    selectedSearchMessageId: String?,
     searchAccountNo: String,
     searchResult: DesktopContactSearchResult?,
     localSearchQuery: String,
@@ -1015,11 +1024,14 @@ private fun MainScreen(
                     modifier = Modifier.fillMaxWidth(),
                     enabled = localSearchQuery.isNotBlank(),
                     onClick = onLocalSearch) { Text("Search history") }
-                localSearchResults.forEach { result ->
+                LazyColumn(
+                    modifier = Modifier.heightIn(max = 360.dp),
+                    verticalArrangement = Arrangement.spacedBy(8.dp),
+                ) {
+                    items(localSearchResults, key = { it.messageId }) { result ->
                     Card(
                         Modifier
                             .fillMaxWidth()
-                            .padding(top = 8.dp)
                             .clickable { onOpenSearchResult(result.conversationId) }) {
                         Column(Modifier.padding(10.dp)) {
                             Text(result.text)
@@ -1027,6 +1039,7 @@ private fun MainScreen(
                                 "${result.conversationId} · ${result.conversationSeq ?: "pending"}",
                                 style = MaterialTheme.typography.bodySmall)
                         }
+                    }
                     }
                 }
                 Spacer(Modifier.height(16.dp))
@@ -1097,6 +1110,7 @@ private fun MainScreen(
                     it.conversationId == selectedConversationId
                 },
                 messages = data.messages,
+                initialMessageId = selectedSearchMessageId,
                 avatarBytes = avatarBytes,
                 mediaBytes = mediaBytes,
                 draft = draft,
@@ -1116,6 +1130,7 @@ private fun ConversationPane(
     modifier: Modifier,
     selectedConversation: LocalConversation?,
     messages: List<LocalMessage>,
+    initialMessageId: String?,
     avatarBytes: Map<String, ByteArray>,
     mediaBytes: Map<String, ByteArray>,
     draft: String,
@@ -1133,6 +1148,12 @@ private fun ConversationPane(
         }
         return
     }
+    val listState = rememberLazyListState()
+    LaunchedEffect(messages, initialMessageId) {
+        val messageId = initialMessageId ?: return@LaunchedEffect
+        val index = messages.indexOfFirst { it.messageId == messageId }
+        if (index >= 0) listState.animateScrollToItem(index)
+    }
     Column(modifier) {
         DesktopAvatar(
             bytes = avatarBytes[
@@ -1144,7 +1165,10 @@ private fun ConversationPane(
             style = MaterialTheme.typography.titleLarge)
         Text("${selectedConversation.status} · ${selectedConversation.relationship}")
         Spacer(Modifier.height(8.dp))
-        LazyColumn(modifier = Modifier.weight(1f).fillMaxWidth()) {
+        LazyColumn(
+            state = listState,
+            modifier = Modifier.weight(1f).fillMaxWidth(),
+        ) {
             items(messages, key = { it.messageId }) { message ->
                 Card(Modifier.fillMaxWidth().padding(vertical = 4.dp)) {
                     Column(Modifier.padding(12.dp)) {
@@ -1270,7 +1294,10 @@ private suspend fun synchronize(
         page.events
             .also { client.applySyncProfileEvents(current.accessToken, local, it) }
             .also { events ->
-                if (events.any { it.eventType == "MESSAGE_RECALLED" }) {
+                if (events.any {
+                        it.eventType == "MESSAGE_RECALLED" ||
+                            it.eventType == "MESSAGE_MODERATED"
+                    }) {
                     client.fullRestore(
                         current.accessToken,
                         local,

@@ -47,6 +47,8 @@ data class LocalConversationEntity(
     val relationship: String,
     val lastSequence: Long,
     val updatedAt: Long,
+    val searchVisible: Boolean = true,
+    val searchVisibleAfterSeq: Long = 0,
 )
 
 @Entity(
@@ -138,6 +140,9 @@ interface LocalConversationDao {
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     fun upsert(conversation: LocalConversationEntity)
 
+    @Query("SELECT * FROM local_conversation WHERE conversationId = :conversationId LIMIT 1")
+    fun find(conversationId: String): LocalConversationEntity?
+
     @Query(
         """
         UPDATE local_conversation
@@ -155,6 +160,22 @@ interface LocalConversationDao {
         avatarUrl: String?,
         avatarVersion: Long,
         avatarFallback: String,
+        updatedAt: Long,
+    )
+
+    @Query(
+        """
+        UPDATE local_conversation
+        SET searchVisible = :visible,
+            searchVisibleAfterSeq = :visibleAfterSeq,
+            updatedAt = :updatedAt
+        WHERE conversationId = :conversationId
+        """,
+    )
+    fun updateSearchVisibility(
+        conversationId: String,
+        visible: Boolean,
+        visibleAfterSeq: Long,
         updatedAt: Long,
     )
 }
@@ -278,10 +299,45 @@ interface LocalMessageDao {
 
     @Query(
         """
+        SELECT mediaId FROM local_message
+        WHERE conversationId = :conversationId
+          AND localState IN ('SENT', 'RECEIVED')
+          AND type = 'IMAGE'
+          AND mediaId IS NOT NULL
+        """,
+    )
+    fun acceptedImageMediaIds(conversationId: String): List<String>
+
+    @Query("DELETE FROM local_message_search WHERE messageId IN (SELECT messageId FROM local_message WHERE conversationId = :conversationId)")
+    fun deleteSearchForConversation(conversationId: String)
+
+    @Query("DELETE FROM local_message WHERE conversationId = :conversationId")
+    fun deleteConversationMessages(conversationId: String)
+
+    @Query(
+        """
+        SELECT COALESCE(MAX(conversationSeq), 0)
+        FROM local_message
+        WHERE conversationId = :conversationId
+        """,
+    )
+    fun lastConversationSeq(conversationId: String): Long
+
+    @Transaction
+    fun clearConversation(conversationId: String) {
+        deleteSearchForConversation(conversationId)
+        deleteConversationMessages(conversationId)
+    }
+
+    @Query(
+        """
         SELECT m.*
         FROM local_message AS m
         JOIN local_message_search AS search ON search.messageId = m.messageId
+        JOIN local_conversation AS conversation ON conversation.conversationId = m.conversationId
         WHERE (:conversationId IS NULL OR m.conversationId = :conversationId)
+          AND conversation.searchVisible = 1
+          AND (m.conversationSeq IS NULL OR m.conversationSeq > conversation.searchVisibleAfterSeq)
           AND m.state = 'ACTIVE'
           AND m.localState IN ('SENT', 'RECEIVED')
           AND local_message_search MATCH :match
@@ -299,9 +355,12 @@ interface LocalMessageDao {
 
     @Query(
         """
-        SELECT *
+        SELECT local_message.*
         FROM local_message
-        WHERE (:conversationId IS NULL OR conversationId = :conversationId)
+        JOIN local_conversation AS conversation ON conversation.conversationId = local_message.conversationId
+        WHERE (:conversationId IS NULL OR local_message.conversationId = :conversationId)
+          AND conversation.searchVisible = 1
+          AND (conversationSeq IS NULL OR conversationSeq > conversation.searchVisibleAfterSeq)
           AND state = 'ACTIVE'
           AND localState IN ('SENT', 'RECEIVED')
           AND searchText LIKE '%' || :query || '%'
@@ -422,7 +481,7 @@ interface SyncStateDao {
         PendingMessageCommandEntity::class,
         LocalGroupProfileEntity::class,
     ],
-    version = 12,
+    version = 13,
     exportSchema = true,
 )
 abstract class AccountDatabase : RoomDatabase() {
@@ -604,6 +663,17 @@ abstract class AccountDatabase : RoomDatabase() {
                         version INTEGER NOT NULL
                     )
                     """.trimIndent(),
+                )
+            }
+        }
+
+        val MIGRATION_12_13 = object : androidx.room.migration.Migration(12, 13) {
+            override fun migrate(database: androidx.sqlite.db.SupportSQLiteDatabase) {
+                database.execSQL(
+                    "ALTER TABLE local_conversation ADD COLUMN searchVisible INTEGER NOT NULL DEFAULT 1",
+                )
+                database.execSQL(
+                    "ALTER TABLE local_conversation ADD COLUMN searchVisibleAfterSeq INTEGER NOT NULL DEFAULT 0",
                 )
             }
         }

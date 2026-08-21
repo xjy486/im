@@ -73,7 +73,7 @@
           "type": "object",
           "properties": {
             "operation": {
-              "enum": ["message.ack", "message.created", "message.recalled"]
+              "enum": ["message.ack", "message.created", "message.recalled", "message.moderated"]
             },
             "body": {
               "$ref": "#/$defs/messageBody"

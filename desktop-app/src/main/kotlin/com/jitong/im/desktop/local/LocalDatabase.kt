@@ -88,6 +88,8 @@ class LocalDatabaseManager(
                             blocked_by_me BOOLEAN NOT NULL,
                             read_seq BIGINT NOT NULL,
                             peer_read_seq BIGINT NOT NULL,
+                            search_visible BOOLEAN NOT NULL DEFAULT TRUE,
+                            search_visible_after_seq BIGINT NOT NULL DEFAULT 0,
                             updated_at BIGINT NOT NULL
                         )
                         """.trimIndent())
@@ -122,11 +124,24 @@ class LocalDatabaseManager(
                         """.trimIndent())
                     statement.executeUpdate(
                         """
+                        CREATE INDEX IF NOT EXISTS local_messages_search_order_idx
+                        ON local_messages (server_accepted_at, created_at, message_id)
+                        """.trimIndent())
+                    statement.executeUpdate(
+                        """
                         CREATE TABLE IF NOT EXISTS message_search_terms (
                             term VARCHAR(4096) NOT NULL,
                             message_id VARCHAR(64) NOT NULL,
+                            created_at BIGINT NOT NULL DEFAULT 0,
                             PRIMARY KEY (term, message_id)
                         )
+                        """.trimIndent())
+                    statement.executeUpdate(
+                        "ALTER TABLE message_search_terms ADD COLUMN IF NOT EXISTS created_at BIGINT NOT NULL DEFAULT 0")
+                    statement.executeUpdate(
+                        """
+                        CREATE INDEX IF NOT EXISTS message_search_terms_order_idx
+                        ON message_search_terms (term, created_at DESC, message_id)
                         """.trimIndent())
                     statement.executeUpdate(
                         "ALTER TABLE message_search_terms ALTER COLUMN term VARCHAR(4096)")
@@ -158,6 +173,10 @@ class LocalDatabaseManager(
                         "ALTER TABLE local_conversations ADD COLUMN IF NOT EXISTS peer_avatar_version BIGINT NOT NULL DEFAULT 0")
                     statement.executeUpdate(
                         "ALTER TABLE local_conversations ADD COLUMN IF NOT EXISTS peer_avatar_fallback VARCHAR(8) NOT NULL DEFAULT '?'")
+                    statement.executeUpdate(
+                        "ALTER TABLE local_conversations ADD COLUMN IF NOT EXISTS search_visible BOOLEAN NOT NULL DEFAULT TRUE")
+                    statement.executeUpdate(
+                        "ALTER TABLE local_conversations ADD COLUMN IF NOT EXISTS search_visible_after_seq BIGINT NOT NULL DEFAULT 0")
                 }
             }
         } catch (exception: RuntimeException) {
@@ -340,8 +359,9 @@ class LocalDatabase internal constructor(
                 MERGE INTO local_conversations (
                     conversation_id, peer_user_id, peer_account_no, peer_display_name,
                     peer_avatar_url, peer_avatar_version, peer_avatar_fallback,
-                    status, relationship, blocked_by_me, read_seq, peer_read_seq, updated_at
-                ) KEY(conversation_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    status, relationship, blocked_by_me, read_seq, peer_read_seq,
+                    search_visible, search_visible_after_seq, updated_at
+                ) KEY(conversation_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """.trimIndent()).use { statement ->
                 statement.setString(1, conversation.conversationId)
                 statement.setString(2, conversation.peerUserId)
@@ -355,7 +375,9 @@ class LocalDatabase internal constructor(
                 statement.setBoolean(10, conversation.blockedByMe)
                 statement.setLong(11, conversation.readSeq)
                 statement.setLong(12, conversation.peerReadSeq)
-                statement.setLong(13, conversation.updatedAt)
+                statement.setBoolean(13, conversation.searchVisible)
+                statement.setLong(14, conversation.searchVisibleAfterSeq)
+                statement.setLong(15, conversation.updatedAt)
                 statement.executeUpdate()
             }
         }
@@ -373,8 +395,9 @@ class LocalDatabase internal constructor(
                     INSERT INTO local_conversations (
                         conversation_id, peer_user_id, peer_account_no, peer_display_name,
                         peer_avatar_url, peer_avatar_version, peer_avatar_fallback,
-                        status, relationship, blocked_by_me, read_seq, peer_read_seq, updated_at
-                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                        status, relationship, blocked_by_me, read_seq, peer_read_seq,
+                        search_visible, search_visible_after_seq, updated_at
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     """.trimIndent()).use { statement ->
                     conversations.forEach { conversation ->
                         statement.setString(1, conversation.conversationId)
@@ -386,10 +409,12 @@ class LocalDatabase internal constructor(
                         statement.setString(7, conversation.peerAvatarFallback)
                         statement.setString(8, conversation.status)
                         statement.setString(9, conversation.relationship)
-                        statement.setBoolean(10, conversation.blockedByMe)
-                        statement.setLong(11, conversation.readSeq)
-                        statement.setLong(12, conversation.peerReadSeq)
-                        statement.setLong(13, conversation.updatedAt)
+                    statement.setBoolean(10, conversation.blockedByMe)
+                    statement.setLong(11, conversation.readSeq)
+                    statement.setLong(12, conversation.peerReadSeq)
+                    statement.setBoolean(13, conversation.searchVisible)
+                    statement.setLong(14, conversation.searchVisibleAfterSeq)
+                    statement.setLong(15, conversation.updatedAt)
                         statement.addBatch()
                     }
                     statement.executeBatch()
@@ -458,6 +483,58 @@ class LocalDatabase internal constructor(
         }
     }
 
+    fun updateSearchVisibility(
+        conversationId: String,
+        visible: Boolean,
+        visibleAfterSeq: Long,
+    ) {
+        require(visibleAfterSeq >= 0) { "visibleAfterSeq must not be negative" }
+        pool.connection.use { connection ->
+            connection.prepareStatement(
+                """
+                UPDATE local_conversations
+                SET search_visible = ?,
+                    search_visible_after_seq = ?,
+                    updated_at = ?
+                WHERE conversation_id = ?
+                """.trimIndent(),
+            ).use { statement ->
+                statement.setBoolean(1, visible)
+                statement.setLong(2, visibleAfterSeq)
+                statement.setLong(3, System.currentTimeMillis())
+                statement.setString(4, conversationId)
+                statement.executeUpdate()
+            }
+        }
+    }
+
+    fun clearConversationMessages(conversationId: String) {
+        pool.connection.use { connection ->
+            connection.autoCommit = false
+            try {
+                connection.prepareStatement(
+                    "DELETE FROM message_search_terms WHERE message_id IN (SELECT message_id FROM local_messages WHERE conversation_id = ?)",
+                ).use { statement ->
+                    statement.setString(1, conversationId)
+                    statement.executeUpdate()
+                }
+                connection.prepareStatement(
+                    "DELETE FROM local_messages WHERE conversation_id = ?",
+                ).use { statement ->
+                    statement.setString(1, conversationId)
+                    statement.executeUpdate()
+                }
+                connection.commit()
+            } catch (exception: RuntimeException) {
+                connection.rollback()
+                throw exception
+            } finally {
+                connection.autoCommit = true
+            }
+        }
+        mediaCache.deleteMatching("message-media-")
+    }
+
     fun upsertGroupProfile(profile: LocalGroupProfile) {
         pool.connection.use { connection ->
             connection.prepareStatement(
@@ -500,9 +577,10 @@ class LocalDatabase internal constructor(
                 """
                 SELECT conversation_id, peer_user_id, peer_account_no, peer_display_name,
                        peer_avatar_url, peer_avatar_version, peer_avatar_fallback,
-                       status, relationship, blocked_by_me, read_seq, peer_read_seq, updated_at
+                       status, relationship, blocked_by_me, read_seq, peer_read_seq,
+                       search_visible, search_visible_after_seq, updated_at
                 FROM local_conversations
-                ORDER BY updated_at DESC, peer_display_name, peer_account_no
+            ORDER BY updated_at DESC, peer_display_name, peer_account_no
                 """.trimIndent()).use { statement ->
                 statement.executeQuery().use { result ->
                     return buildList {
@@ -520,6 +598,21 @@ class LocalDatabase internal constructor(
             connection.autoCommit = false
             try {
                 upsertMessage(connection, message)
+                connection.commit()
+            } catch (exception: RuntimeException) {
+                connection.rollback()
+                throw exception
+            } finally {
+                connection.autoCommit = true
+            }
+        }
+    }
+
+    fun upsertMessages(messages: List<LocalMessage>) {
+        pool.connection.use { connection ->
+            connection.autoCommit = false
+            try {
+                messages.forEach { upsertMessage(connection, it) }
                 connection.commit()
             } catch (exception: RuntimeException) {
                 connection.rollback()
@@ -669,6 +762,14 @@ class LocalDatabase internal constructor(
         pool.connection.use { connection ->
             val candidates = if (plan.mode == LocalSearchText.QueryMode.SINGLE_CJK_CHARACTER) {
                 searchSingleCjk(connection, plan.normalizedQuery, conversationId, limit)
+            } else if (plan.terms.size == 1) {
+                searchSingleIndexedTerm(
+                    connection,
+                    plan.terms.single(),
+                    plan.normalizedQuery,
+                    conversationId,
+                    limit,
+                )
             } else {
                 searchIndexed(connection, plan, conversationId, limit)
             }
@@ -851,12 +952,13 @@ class LocalDatabase internal constructor(
             if (terms.isNotEmpty()) {
                 connection.prepareStatement(
                     """
-                    INSERT INTO message_search_terms (term, message_id)
-                    VALUES (?, ?)
+                    INSERT INTO message_search_terms (term, message_id, created_at)
+                    VALUES (?, ?, ?)
                     """.trimIndent()).use { statement ->
                     terms.forEach { term ->
                         statement.setString(1, term)
                         statement.setString(2, message.messageId)
+                        statement.setLong(3, message.createdAt)
                         statement.addBatch()
                     }
                     statement.executeBatch()
@@ -898,13 +1000,14 @@ class LocalDatabase internal constructor(
                 if (terms.isEmpty()) return@forEach
                 connection.prepareStatement(
                     """
-                    INSERT INTO message_search_terms (term, message_id)
-                    VALUES (?, ?)
+                            INSERT INTO message_search_terms (term, message_id, created_at)
+                            VALUES (?, ?, ?)
                     """.trimIndent(),
                 ).use { insert ->
                     terms.forEach { term ->
-                        insert.setString(1, term)
-                        insert.setString(2, message.messageId)
+                                insert.setString(1, term)
+                                insert.setString(2, message.messageId)
+                                insert.setLong(3, message.createdAt)
                         insert.addBatch()
                     }
                     insert.executeBatch()
@@ -952,17 +1055,20 @@ class LocalDatabase internal constructor(
                    lm.recalled_at, lm.created_at
             FROM local_messages lm
             JOIN message_search_terms mst ON mst.message_id = lm.message_id
+            JOIN local_conversations conversation
+              ON conversation.conversation_id = lm.conversation_id
             WHERE lm.state = 'ACTIVE'
               AND lm.local_state IN ('SENT', 'RECEIVED')
+              AND conversation.search_visible = TRUE
+              AND (lm.conversation_seq IS NULL OR lm.conversation_seq > conversation.search_visible_after_seq)
               AND mst.term IN ($placeholders)
-              AND LOCATE(?, lm.search_text) > 0
               $conversationClause
             GROUP BY lm.message_id, lm.conversation_id, lm.sender_id, lm.client_msg_id,
                      lm.conversation_seq, lm.type, lm.state, lm.local_state,
-                     lm.text_content, lm.media_id, lm.server_accepted_at,
+                     lm.text_content, lm.search_text, lm.media_id, lm.server_accepted_at,
                      lm.recalled_at, lm.created_at
             HAVING COUNT(DISTINCT mst.term) = ?
-            ORDER BY lm.server_accepted_at DESC, lm.created_at DESC, lm.message_id DESC
+            ORDER BY MAX(mst.created_at) DESC, lm.message_id DESC
             LIMIT ?
             """.trimIndent()
         connection.prepareStatement(sql).use { statement ->
@@ -970,9 +1076,55 @@ class LocalDatabase internal constructor(
             plan.terms.forEach {
                 statement.setString(index++, it)
             }
-            statement.setString(index++, plan.normalizedQuery)
             if (conversationId != null) statement.setString(index++, conversationId)
             statement.setInt(index++, plan.terms.size)
+            statement.setInt(index, limit)
+            statement.executeQuery().use { result ->
+                return buildList {
+                    while (result.next()) add(result.toLocalMessage())
+                }
+            }
+        }
+    }
+
+    private fun searchSingleIndexedTerm(
+        connection: java.sql.Connection,
+        term: String,
+        query: String,
+        conversationId: String?,
+        limit: Int,
+    ): List<LocalMessage> {
+        val conversationClause = if (conversationId == null) "" else "AND lm.conversation_id = ?"
+        val candidateLimit = (limit * 10).coerceAtMost(10_000)
+        val sql = """
+            SELECT lm.message_id, lm.conversation_id, lm.sender_id, lm.client_msg_id, lm.conversation_seq,
+                   lm.type, lm.state, lm.local_state, lm.text_content, lm.media_id, lm.server_accepted_at,
+                   lm.recalled_at, lm.created_at
+            FROM (
+                SELECT message_id, created_at
+                FROM message_search_terms
+                WHERE term = ?
+                ORDER BY created_at DESC, message_id DESC
+                LIMIT ?
+            ) mst
+            JOIN local_messages lm ON lm.message_id = mst.message_id
+            JOIN local_conversations conversation
+              ON conversation.conversation_id = lm.conversation_id
+            WHERE LOCATE(?, lm.search_text) > 0
+              AND lm.state = 'ACTIVE'
+              AND lm.local_state IN ('SENT', 'RECEIVED')
+              AND conversation.search_visible = TRUE
+              AND (lm.conversation_seq IS NULL OR lm.conversation_seq > conversation.search_visible_after_seq)
+              $conversationClause
+            ORDER BY mst.created_at DESC, mst.message_id DESC
+            LIMIT ?
+            """.trimIndent()
+        connection.prepareStatement(sql).use { statement ->
+            var index = 1
+            statement.setString(index++, term)
+            statement.setInt(index++, candidateLimit)
+            statement.setString(index++, query)
+            if (conversationId != null) statement.setString(index++, conversationId)
             statement.setInt(index, limit)
             statement.executeQuery().use { result ->
                 return buildList {
@@ -988,18 +1140,22 @@ class LocalDatabase internal constructor(
         conversationId: String?,
         limit: Int,
     ): List<LocalMessage> {
-        val conversationClause = if (conversationId == null) "" else "AND conversation_id = ?"
+        val conversationClause = if (conversationId == null) "" else "AND lm.conversation_id = ?"
         val sql = """
-            SELECT message_id, conversation_id, sender_id, client_msg_id, conversation_seq,
-                   type, state, local_state, text_content, media_id, server_accepted_at,
-                   recalled_at, created_at
-            FROM local_messages
-            WHERE state = 'ACTIVE'
-              AND local_state IN ('SENT', 'RECEIVED')
-              AND type = 'TEXT'
-              AND search_text LIKE ?
+            SELECT lm.message_id, lm.conversation_id, lm.sender_id, lm.client_msg_id, lm.conversation_seq,
+                   lm.type, lm.state, lm.local_state, lm.text_content, lm.media_id, lm.server_accepted_at,
+                   lm.recalled_at, lm.created_at
+            FROM local_messages lm
+            JOIN local_conversations conversation
+              ON conversation.conversation_id = lm.conversation_id
+            WHERE lm.state = 'ACTIVE'
+              AND lm.local_state IN ('SENT', 'RECEIVED')
+              AND lm.type = 'TEXT'
+              AND conversation.search_visible = TRUE
+              AND (lm.conversation_seq IS NULL OR lm.conversation_seq > conversation.search_visible_after_seq)
+              AND lm.search_text LIKE ?
               $conversationClause
-            ORDER BY server_accepted_at DESC, created_at DESC, message_id DESC
+            ORDER BY lm.server_accepted_at DESC, lm.created_at DESC, lm.message_id DESC
             LIMIT ?
             """.trimIndent()
         connection.prepareStatement(sql).use { statement ->
@@ -1028,6 +1184,8 @@ class LocalDatabase internal constructor(
         blockedByMe = getBoolean("blocked_by_me"),
         readSeq = getLong("read_seq"),
         peerReadSeq = getLong("peer_read_seq"),
+        searchVisible = getBoolean("search_visible"),
+        searchVisibleAfterSeq = getLong("search_visible_after_seq"),
         updatedAt = getLong("updated_at"))
 
     private fun ResultSet.toLocalMessage() = LocalMessage(
@@ -1158,6 +1316,8 @@ data class LocalConversation(
     val blockedByMe: Boolean,
     val readSeq: Long,
     val peerReadSeq: Long,
+    val searchVisible: Boolean = true,
+    val searchVisibleAfterSeq: Long = 0,
     val updatedAt: Long,
 )
 

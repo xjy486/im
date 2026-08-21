@@ -32,6 +32,8 @@ data class DesktopConversationSummary(
     val avatarUrl: String? = null,
     val avatarVersion: Long = 0,
     val avatarFallback: String = "?",
+    val searchVisible: Boolean = true,
+    val searchVisibleAfterSeq: Long = 0,
 )
 
 @Serializable
@@ -571,6 +573,8 @@ class ConversationClient(
                 blockedByMe = conversation.blockedByMe,
                 readSeq = conversation.readSeq,
                 peerReadSeq = conversation.peerReadSeq,
+                searchVisible = conversation.searchVisible,
+                searchVisibleAfterSeq = conversation.searchVisibleAfterSeq,
                 updatedAt = System.currentTimeMillis()))
     }
 
@@ -677,6 +681,8 @@ class ConversationClient(
                     blockedByMe = it.blockedByMe,
                     readSeq = it.readSeq,
                     peerReadSeq = it.peerReadSeq,
+                    searchVisible = it.searchVisible,
+                    searchVisibleAfterSeq = it.searchVisibleAfterSeq,
                     updatedAt = System.currentTimeMillis())
             })
     }
@@ -686,7 +692,7 @@ class ConversationClient(
         message: DesktopMessage,
         currentUserId: String,
     ) {
-        if (message.state == "RECALLED") {
+        if (message.state == "RECALLED" || message.state == "MODERATED") {
             applyRecalledMessage(local, message, currentUserId)
             return
         }
@@ -724,7 +730,7 @@ class ConversationClient(
                 clientMsgId = message.clientMsgId,
                 conversationSeq = message.conversationSeq,
                 type = message.type,
-                state = "RECALLED",
+                state = message.state,
                 localState = if (message.senderId == currentUserId) "SENT" else "RECEIVED",
                 text = "",
                 mediaId = null,
@@ -826,7 +832,7 @@ class ConversationClient(
             syncSeq?.let(local::saveLastSyncSeq)
             return
         }
-        if (envelope.operation == "message.recalled") {
+        if (envelope.operation == "message.recalled" || envelope.operation == "message.moderated") {
             val message = body.toMessage() ?: return
             applyRecalledMessage(local, message, currentUserId)
             syncSeq?.let(local::saveLastSyncSeq)

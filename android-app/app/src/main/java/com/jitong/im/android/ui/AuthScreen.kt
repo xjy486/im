@@ -56,7 +56,12 @@ internal fun JitongApp(
     val state by viewModel.sessionState.collectAsStateWithLifecycle()
     Surface(modifier = Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) {
         when (val current = state) {
-            SessionState.SignedOut -> LoginScreen(viewModel)
+            SessionState.SignedOut -> {
+                LaunchedEffect(Unit) {
+                    messageViewModel.clearForLogout()
+                }
+                LoginScreen(viewModel)
+            }
             SessionState.Restoring -> RestoringScreen()
             is SessionState.ReplacementRequired -> ReplacementScreen(current, viewModel)
             is SessionState.SignedIn -> HomeScreen(
@@ -183,7 +188,9 @@ private fun HomeScreen(
     val groupState by groupViewModel.state.collectAsStateWithLifecycle()
     var selectedTab by rememberSaveable { mutableStateOf("contacts") }
     var selectedConversationId by rememberSaveable { mutableStateOf<String?>(null) }
+    var selectedMessageId by rememberSaveable { mutableStateOf<String?>(null) }
     LaunchedEffect(state.session.userId) {
+        messageViewModel.clearForLogout()
         contactViewModel.refresh()
         avatarViewModel.refresh()
         groupViewModel.refresh()
@@ -195,7 +202,11 @@ private fun HomeScreen(
             conversation = selectedConversation,
             viewModel = messageViewModel,
             loadAvatar = avatarViewModel::loadUserAvatar,
-            onBack = { selectedConversationId = null },
+            initialMessageId = selectedMessageId,
+            onBack = {
+                selectedConversationId = null
+                selectedMessageId = null
+            },
         )
         return
     }
@@ -232,7 +243,10 @@ private fun HomeScreen(
                 state = messageState,
                 conversations = contactState.conversations,
                 viewModel = messageViewModel,
-                onOpenConversation = { selectedConversationId = it.toString() },
+                onOpenConversation = { conversationId, messageId ->
+                    selectedConversationId = conversationId.toString()
+                    selectedMessageId = messageId
+                },
             )
             "groups" -> GroupPanel(
                 state = groupState,
@@ -245,7 +259,10 @@ private fun HomeScreen(
                 state = contactState,
                 viewModel = contactViewModel,
                 loadAvatar = avatarViewModel::loadUserAvatar,
-                onOpenConversation = { selectedConversationId = it.toString() },
+                onOpenConversation = {
+                    selectedConversationId = it.toString()
+                    selectedMessageId = null
+                },
             )
         }
         contactState.message?.let {
@@ -277,37 +294,44 @@ private fun LocalSearchPanel(
     state: MessageUiState,
     conversations: List<ConversationSummary>,
     viewModel: MessageViewModel,
-    onOpenConversation: (UUID) -> Unit,
+    onOpenConversation: (UUID, String) -> Unit,
 ) {
-    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-        OutlinedTextField(
-            value = state.searchQuery,
-            onValueChange = viewModel::setSearchQuery,
-            label = { Text("搜索本地历史") },
-            singleLine = true,
-            modifier = Modifier.fillMaxWidth(),
-        )
-        Button(
-            onClick = viewModel::search,
-            enabled = state.searchQuery.isNotBlank() && !state.searchLoading,
-            modifier = Modifier.fillMaxWidth(),
-        ) {
-            Text(if (state.searchLoading) "搜索中…" else "搜索")
+    LazyColumn(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        item {
+            OutlinedTextField(
+                value = state.searchQuery,
+                onValueChange = viewModel::setSearchQuery,
+                label = { Text("搜索本地历史") },
+                singleLine = true,
+                modifier = Modifier.fillMaxWidth(),
+            )
+            Button(
+                onClick = viewModel::search,
+                enabled = state.searchQuery.isNotBlank() && !state.searchLoading,
+                modifier = Modifier.fillMaxWidth(),
+            ) {
+                Text(if (state.searchLoading) "搜索中…" else "搜索")
+            }
         }
         if (state.searchResults.isEmpty() &&
             state.searchQuery.isNotBlank() &&
             !state.searchLoading
         ) {
-            Text("没有匹配的授权历史")
+            item { Text("没有匹配的授权历史") }
         }
-        state.searchResults.forEach { result ->
+        items(state.searchResults, key = { it.messageId }) { result ->
             val conversation = conversations.firstOrNull {
                 it.conversationId.toString() == result.conversationId
             }
             Card(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .clickable { onOpenConversation(UUID.fromString(result.conversationId)) },
+                    .clickable {
+                        onOpenConversation(
+                            UUID.fromString(result.conversationId),
+                            result.messageId,
+                        )
+                    },
             ) {
                 Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
                     Text(
@@ -542,6 +566,7 @@ private fun ConversationScreen(
     conversation: ConversationSummary,
     viewModel: MessageViewModel,
     loadAvatar: suspend (UUID, Long) -> ByteArray?,
+    initialMessageId: String?,
     onBack: () -> Unit,
 ) {
     val state by viewModel.state.collectAsStateWithLifecycle()
@@ -558,6 +583,13 @@ private fun ConversationScreen(
     }
     LaunchedEffect(conversation.conversationId) {
         viewModel.open(conversation.conversationId)
+    }
+    LaunchedEffect(state.messages, initialMessageId) {
+        val messageId = initialMessageId ?: return@LaunchedEffect
+        val index = state.messages.indexOfFirst { it.messageId == messageId }
+        if (index >= 0) {
+            listState.animateScrollToItem(index)
+        }
     }
     LaunchedEffect(state.messages.size) {
         snapshotFlow { listState.layoutInfo.visibleItemsInfo.lastOrNull()?.index }

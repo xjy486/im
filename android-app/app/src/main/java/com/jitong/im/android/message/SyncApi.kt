@@ -83,6 +83,8 @@ internal data class SyncConversationResponse(
     val avatarUrl: String? = null,
     val avatarVersion: Long = 0,
     val avatarFallback: String = "?",
+    val searchVisible: Boolean = true,
+    val searchVisibleAfterSeq: Long = 0,
 )
 
 internal data class UserProfileResponse(
