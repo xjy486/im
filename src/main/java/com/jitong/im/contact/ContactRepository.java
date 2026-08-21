@@ -455,9 +455,7 @@ class ContactRepository {
                                 row.getObject("avatar_media_id", UUID.class),
                                 row.getLong("avatar_version")),
                         row.getLong("avatar_version"),
-                        "ACTIVE".equals(row.getString("status"))
-                                ? fallback(row.getString("display_name"))
-                                : "?"))
+                        fallback(row.getString("display_name"))))
                 .list();
     }
 

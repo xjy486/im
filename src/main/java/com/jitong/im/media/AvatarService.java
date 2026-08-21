@@ -264,12 +264,15 @@ public class AvatarService {
             throw new MediaException(ApiErrorDefinition.MEDIA_FORBIDDEN);
         }
         AvatarRepository.GroupProfile profile = avatarRepository.findGroupProfile(conversationId);
-        if (profile == null || profile.avatarMediaId() == null) {
+        if (profile == null) {
             throw new MediaException(ApiErrorDefinition.MEDIA_NOT_FOUND);
         }
         if (requestedAvatarVersion != null
                 && requestedAvatarVersion.longValue() != profile.avatarVersion()) {
             throw new MediaException(ApiErrorDefinition.MEDIA_EXPIRED);
+        }
+        if (profile.avatarMediaId() == null) {
+            throw new MediaException(ApiErrorDefinition.MEDIA_NOT_FOUND);
         }
         MediaRecord avatar = mediaRepository.findById(profile.avatarMediaId());
         if (avatar == null || !"BOUND".equals(avatar.state())) {
