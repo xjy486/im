@@ -81,6 +81,7 @@ final class MessageWire {
             String displayName,
             String avatarUrl,
             long avatarVersion,
+            String avatarFallback,
             long syncSeq
     ) {
         return new WireEnvelope(
@@ -92,6 +93,7 @@ final class MessageWire {
                         displayName,
                         avatarUrl,
                         avatarVersion,
+                        avatarFallback,
                         syncSeq));
     }
 
@@ -161,6 +163,7 @@ final class MessageWire {
             String displayName,
             String avatarUrl,
             long avatarVersion,
+            String avatarFallback,
             long syncSeq
     ) {
     }

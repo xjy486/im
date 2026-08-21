@@ -12,4 +12,10 @@ final class FcmPayload {
                 "version", "1",
                 "type", "NEW_MESSAGE");
     }
+
+    static Map<String, String> profileChangedData() {
+        return Map.of(
+                "version", "1",
+                "type", "PROFILE_CHANGED");
+    }
 }

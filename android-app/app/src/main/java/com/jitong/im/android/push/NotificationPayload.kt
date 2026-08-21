@@ -12,7 +12,7 @@ internal data class NotificationPayload(
         fun from(data: Map<String, String>): NotificationPayload? {
             val type = data["type"] ?: return null
             if (data["version"] != "1") return null
-            if (type != "NEW_MESSAGE") return null
+            if (type != "NEW_MESSAGE" && type != "PROFILE_CHANGED") return null
             if (data.keys != allowedKeys) return null
             return NotificationPayload(
                 version = 1,

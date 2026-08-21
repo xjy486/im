@@ -6,6 +6,8 @@ import com.jitong.im.sync.SyncService;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.support.TransactionSynchronization;
+import org.springframework.transaction.support.TransactionSynchronizationManager;
 import org.springframework.web.multipart.MultipartFile;
 
 import java.io.IOException;
@@ -107,6 +109,7 @@ public class AvatarService {
                 null,
                 null,
                 now);
+        registerRollbackCleanup(media);
         try {
             mediaStorage.put(
                     media.originalObjectKey(),
@@ -198,6 +201,7 @@ public class AvatarService {
                 AvatarImageNormalizer.FULL_SIZE, AvatarImageNormalizer.FULL_SIZE,
                 avatar.full().bytes().length, sha256(avatar.full().bytes()),
                 null, null, now);
+        registerRollbackCleanup(media);
         try {
             mediaStorage.put(media.originalObjectKey(), avatar.full().bytes(), "image/webp");
             mediaStorage.put(media.thumbnailObjectKey(), avatar.thumbnail().bytes(), "image/webp");
@@ -409,6 +413,21 @@ public class AvatarService {
         } catch (RuntimeException ignored) {
             // Cleanup retries EXPIRED rows.
         }
+    }
+
+    private void registerRollbackCleanup(MediaRecord media) {
+        if (!TransactionSynchronizationManager.isSynchronizationActive()) {
+            return;
+        }
+        TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
+            @Override
+            public void afterCompletion(int status) {
+                if (status == STATUS_ROLLED_BACK) {
+                    safeDelete(media.originalObjectKey());
+                    safeDelete(media.thumbnailObjectKey());
+                }
+            }
+        });
     }
 
     private String avatarUrl(UUID userId, long version) {

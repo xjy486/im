@@ -8,7 +8,9 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material3.Button
@@ -25,6 +27,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.toPainter
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Window
@@ -53,6 +56,8 @@ import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import java.nio.file.Path
 import java.util.UUID
+import java.io.ByteArrayInputStream
+import javax.imageio.ImageIO
 
 fun main() = application {
     val authStore = rememberDesktopAuthStore()
@@ -117,14 +122,31 @@ private fun DesktopApp(
     var searchResult by remember { mutableStateOf<DesktopContactSearchResult?>(null) }
     var draft by remember { mutableStateOf("") }
     var online by remember { mutableStateOf(false) }
+    var avatarBytes by remember { mutableStateOf<Map<String, ByteArray>>(emptyMap()) }
     val uiScope = androidx.compose.runtime.rememberCoroutineScope()
     val syncMutex = remember { Mutex() }
 
     fun refreshLocal() {
         val local = authStore.localDatabase() ?: return
+        val conversations = local.listConversations()
         data = data.copy(
-            conversations = local.listConversations(),
+            conversations = conversations,
             messages = selectedConversationId?.let(local::listMessages).orEmpty())
+        val token = authStore.session?.accessToken ?: session?.accessToken
+        if (token != null) {
+            conversations
+                .filter { it.peerAvatarVersion > 0 }
+                .forEach { conversation ->
+                    conversationClient.loadUserAvatar(
+                        token,
+                        local,
+                        conversation.peerUserId,
+                        conversation.peerAvatarVersion)
+                        ?.let { bytes ->
+                            avatarBytes = avatarBytes + (conversation.peerUserId to bytes)
+                        }
+                }
+        }
     }
 
     fun refreshRequests() {
@@ -330,6 +352,7 @@ private fun DesktopApp(
             selectedConversationId = selectedConversationId,
             searchAccountNo = searchAccountNo,
             searchResult = searchResult,
+            avatarBytes = avatarBytes,
             draft = draft,
             error = error,
             onSearchAccountNoChange = { searchAccountNo = it.filter(Char::isDigit).take(11) },
@@ -638,6 +661,7 @@ private fun MainScreen(
     selectedConversationId: String?,
     searchAccountNo: String,
     searchResult: DesktopContactSearchResult?,
+    avatarBytes: Map<String, ByteArray>,
     draft: String,
     error: String?,
     onSearchAccountNoChange: (String) -> Unit,
@@ -691,6 +715,7 @@ private fun MainScreen(
                 searchResult?.let {
                     Card(Modifier.fillMaxWidth().padding(top = 8.dp)) {
                         Column(Modifier.padding(12.dp)) {
+                            DefaultAvatar(it.avatarFallback)
                             Text("${it.displayName} · ${it.accountNo}")
                             Text(it.relationship)
                             if (it.relationship == "NONE") {
@@ -729,6 +754,9 @@ private fun MainScreen(
                 data.conversations.forEach { conversation ->
                     Card(Modifier.fillMaxWidth().padding(top = 8.dp)) {
                         Column(Modifier.padding(8.dp)) {
+                            DesktopAvatar(
+                                bytes = avatarBytes[conversation.peerUserId],
+                                fallback = conversation.peerAvatarFallback)
                             OutlinedButton(
                                 modifier = Modifier.fillMaxWidth(),
                                 onClick = { onSelectConversation(conversation.conversationId) }) {
@@ -763,6 +791,7 @@ private fun MainScreen(
                     it.conversationId == selectedConversationId
                 },
                 messages = data.messages,
+                avatarBytes = avatarBytes,
                 draft = draft,
                 online = online,
                 error = error,
@@ -778,6 +807,7 @@ private fun ConversationPane(
     modifier: Modifier,
     selectedConversation: LocalConversation?,
     messages: List<LocalMessage>,
+    avatarBytes: Map<String, ByteArray>,
     draft: String,
     online: Boolean,
     error: String?,
@@ -792,6 +822,10 @@ private fun ConversationPane(
         return
     }
     Column(modifier) {
+        DesktopAvatar(
+            bytes = avatarBytes[selectedConversation.peerUserId],
+            fallback = selectedConversation.peerAvatarFallback,
+            size = 64.dp)
         Text(
             "${selectedConversation.peerDisplayName} · ${selectedConversation.peerAccountNo}",
             style = MaterialTheme.typography.titleLarge)
@@ -843,6 +877,35 @@ private fun ConversationPane(
     }
 }
 
+@Composable
+private fun DefaultAvatar(fallback: String) {
+    Card {
+        Text(
+            fallback.take(2),
+            modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp),
+            style = MaterialTheme.typography.titleMedium)
+    }
+}
+
+@Composable
+private fun DesktopAvatar(
+    bytes: ByteArray?,
+    fallback: String,
+    size: androidx.compose.ui.unit.Dp = 48.dp,
+) {
+    val painter = remember(bytes) {
+        bytes?.let { ImageIO.read(ByteArrayInputStream(it))?.toPainter() }
+    }
+    if (painter == null) {
+        DefaultAvatar(fallback)
+    } else {
+        Image(
+            painter = painter,
+            contentDescription = "Avatar",
+            modifier = Modifier.size(size))
+    }
+}
+
 private suspend fun synchronize(
     client: ConversationClient,
     local: com.jitong.im.desktop.local.LocalDatabase,
@@ -857,6 +920,7 @@ private suspend fun synchronize(
         highWatermark = page.highWatermark
         untilSeq = page.untilSeq
         page.events
+            .also { client.applySyncProfileEvents(current.accessToken, local, it) }
             .mapNotNull { it.conversationId }
             .distinct()
             .forEach { conversationId ->

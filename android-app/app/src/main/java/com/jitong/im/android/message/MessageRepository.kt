@@ -234,6 +234,7 @@ internal class MessageRepository(
 
     private suspend fun applyUserProfile(profile: UserProfileResponse) {
         val db = database() ?: return
+        mediaCache()?.deleteMatching("avatar-${profile.userId}-v")
         withContext(Dispatchers.IO) {
             db.withTransaction {
                 db.accountDao().current()
@@ -262,6 +263,7 @@ internal class MessageRepository(
 
     private suspend fun applyGroupProfile(profile: GroupProfileResponse) {
         val db = database() ?: return
+        mediaCache()?.deleteMatching("group-avatar-${profile.conversationId}-v")
         withContext(Dispatchers.IO) {
             db.groupProfileDao().upsert(
                 LocalGroupProfileEntity(
@@ -707,6 +709,13 @@ internal class MessageRepository(
                 synchronize(currentUserId, syncSeq)
                 return
             }
+            applyUserProfile(
+                UserProfileResponse(
+                    profileUserId,
+                    body.displayName.orEmpty(),
+                    body.avatarUrl,
+                    profileVersion,
+                    body.avatarFallback ?: body.displayName?.firstOrNull()?.toString() ?: "?"))
             withContext(Dispatchers.IO) {
                 db.syncStateDao().upsert(
                     SyncStateEntity(
@@ -716,13 +725,6 @@ internal class MessageRepository(
                     ),
                 )
             }
-            applyUserProfile(
-                UserProfileResponse(
-                    profileUserId,
-                    body.displayName.orEmpty(),
-                    body.avatarUrl,
-                    profileVersion,
-                    body.avatarFallback ?: body.displayName?.firstOrNull()?.toString() ?: "?"))
             syncApi.acknowledge(SyncAckRequest(syncSeq)).syncBodyOrThrow()
             return
         }

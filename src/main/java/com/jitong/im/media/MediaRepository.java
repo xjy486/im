@@ -175,7 +175,10 @@ class MediaRepository {
         return jdbc.sql("""
                         UPDATE media
                         SET state = 'EXPIRED',
-                            expired_at = COALESCE(expired_at, :expiredAt)
+                            expired_at = COALESCE(expired_at, :expiredAt),
+                            attached_entity_id = NULL,
+                            attached_entity_type = NULL,
+                            bound_at = NULL
                         WHERE id = :mediaId
                           AND purpose = 'AVATAR'
                           AND attached_entity_id = :entityId
@@ -193,7 +196,9 @@ class MediaRepository {
         jdbc.sql("""
                         UPDATE media
                         SET state = 'EXPIRED',
-                            expired_at = COALESCE(expired_at, :expiredAt)
+                            expired_at = COALESCE(expired_at, :expiredAt),
+                            attached_message_id = NULL,
+                            bound_at = NULL
                         WHERE attached_message_id = :messageId
                           AND state = 'BOUND'
                         """)

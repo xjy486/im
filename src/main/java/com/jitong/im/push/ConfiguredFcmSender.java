@@ -31,6 +31,15 @@ class ConfiguredFcmSender implements FcmSender {
 
     @Override
     public FcmDeliveryResult sendNewMessage(String token) {
+        return send(token, FcmPayload.newMessageData());
+    }
+
+    @Override
+    public FcmDeliveryResult sendProfileChanged(String token) {
+        return send(token, FcmPayload.profileChangedData());
+    }
+
+    private FcmDeliveryResult send(String token, java.util.Map<String, String> payload) {
         if (!properties.enabled()) {
             return FcmDeliveryResult.NOT_CONFIGURED;
         }
@@ -44,7 +53,7 @@ class ConfiguredFcmSender implements FcmSender {
                             .setAndroidConfig(AndroidConfig.builder()
                                     .setPriority(AndroidConfig.Priority.HIGH)
                                     .build())
-                            .putAllData(FcmPayload.newMessageData())
+                            .putAllData(payload)
                             .build());
             return FcmDeliveryResult.SENT;
         } catch (FirebaseMessagingException | RuntimeException exception) {

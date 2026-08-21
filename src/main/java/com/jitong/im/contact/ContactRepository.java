@@ -305,6 +305,7 @@ class ContactRepository {
 
     void removeContact(UUID firstUserId, UUID secondUserId, Instant now) {
         UserPair pair = UserPair.of(firstUserId, secondUserId);
+        snapshotReadonlyProfile(pair);
         jdbc.sql("""
                         UPDATE contacts
                         SET status = 'REMOVED', removed_at = :removedAt
@@ -316,6 +317,30 @@ class ContactRepository {
                 .param("removedAt", utc(now), Types.TIMESTAMP_WITH_TIMEZONE)
                 .update();
         markConversationReadOnly(firstUserId, secondUserId);
+    }
+
+    private void snapshotReadonlyProfile(UserPair pair) {
+        jdbc.sql("""
+                        UPDATE c2c_conversations conversation
+                        SET readonly_low_display_name = low.display_name,
+                            readonly_low_avatar_fallback = CASE
+                                WHEN low.display_name IS NULL OR BTRIM(low.display_name) = '' THEN '?'
+                                ELSE SUBSTRING(low.display_name FROM 1 FOR 1)
+                            END,
+                            readonly_high_display_name = high.display_name,
+                            readonly_high_avatar_fallback = CASE
+                                WHEN high.display_name IS NULL OR BTRIM(high.display_name) = '' THEN '?'
+                                ELSE SUBSTRING(high.display_name FROM 1 FOR 1)
+                            END
+                        FROM users low
+                        JOIN users high ON high.id = :highId
+                        WHERE conversation.user_low_id = :lowId
+                          AND conversation.user_high_id = :highId
+                          AND low.id = :lowId
+                        """)
+                .param("lowId", pair.low())
+                .param("highId", pair.high())
+                .update();
     }
 
     void insertBlock(UUID blockerId, UUID blockedId) {
@@ -440,7 +465,14 @@ class ContactRepository {
         return jdbc.sql("""
                         SELECT cc.conversation_id,
                                CASE WHEN cc.user_low_id = :userId THEN cc.user_high_id ELSE cc.user_low_id END AS peer_id,
-                               u.account_no, u.display_name, u.avatar_media_id,
+                               u.account_no,
+                               CASE WHEN c.status = 'ACTIVE' THEN u.display_name
+                                    WHEN cc.user_low_id = :userId THEN cc.readonly_high_display_name
+                                    ELSE cc.readonly_low_display_name END AS display_name,
+                               CASE WHEN c.status = 'ACTIVE' THEN NULL
+                                    WHEN cc.user_low_id = :userId THEN cc.readonly_high_avatar_fallback
+                                    ELSE cc.readonly_low_avatar_fallback END AS avatar_fallback,
+                               u.avatar_media_id,
                                u.avatar_version, c.status,
                                COALESCE(my_read.read_seq, 0) AS read_seq,
                                COALESCE(peer_read.read_seq, 0) AS peer_read_seq,
@@ -490,7 +522,11 @@ class ContactRepository {
                         "ACTIVE".equals(row.getString("status"))
                                 ? row.getLong("avatar_version")
                                 : 0,
-                        fallback(row.getString("display_name"))))
+                        "ACTIVE".equals(row.getString("status"))
+                                ? fallback(row.getString("display_name"))
+                                : java.util.Objects.requireNonNullElse(
+                                        row.getString("avatar_fallback"),
+                                        fallback(row.getString("display_name")))))
                 .list();
     }
 

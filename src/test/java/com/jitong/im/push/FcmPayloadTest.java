@@ -11,6 +11,14 @@ class FcmPayloadTest {
         assertThat(FcmPayload.newMessageData())
                 .containsExactlyInAnyOrderEntriesOf(java.util.Map.of(
                         "version", "1",
-                        "type", "NEW_MESSAGE"));
+                "type", "NEW_MESSAGE"));
+    }
+
+    @Test
+    void profile_changed_payload_contains_only_version_and_event_type() {
+        assertThat(FcmPayload.profileChangedData())
+                .containsExactlyInAnyOrderEntriesOf(java.util.Map.of(
+                        "version", "1",
+                        "type", "PROFILE_CHANGED"));
     }
 }

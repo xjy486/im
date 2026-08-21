@@ -90,9 +90,6 @@ class MessageOutboxDelivery implements OutboxDelivery {
         }
         Set<WebSocketSession> sessions = sessionsByDevice.get(record.targetDeviceId());
         if (sessions == null || sessions.isEmpty()) {
-            if (!"MESSAGE_CREATED".equals(record.eventType())) {
-                return true;
-            }
             if (!pushTokenService.isMobile(record.targetDeviceId())) {
                 return true;
             }
@@ -117,6 +114,7 @@ class MessageOutboxDelivery implements OutboxDelivery {
                                 profile.displayName(),
                                 profile.avatarUrl(),
                                 profile.avatarVersion(),
+                                profile.avatarFallback(),
                                 record.syncSeq());
             }
             case "GROUP_PROFILE_UPDATED" -> {
@@ -163,7 +161,7 @@ class MessageOutboxDelivery implements OutboxDelivery {
                 sessionsByDevice.remove(record.targetDeviceId(), sessions);
             }
         }
-        if (delivered || !"MESSAGE_CREATED".equals(record.eventType())) {
+        if (delivered) {
             return delivered;
         }
         return deliverViaFcm(record);
@@ -174,7 +172,12 @@ class MessageOutboxDelivery implements OutboxDelivery {
             return true;
         }
         String token = pushTokenService.find(record.targetDeviceId());
-        FcmDeliveryResult result = fcmSender.sendNewMessage(token);
+        FcmDeliveryResult result = switch (record.eventType()) {
+            case "MESSAGE_CREATED" -> fcmSender.sendNewMessage(token);
+            case "USER_PROFILE_UPDATED", "GROUP_PROFILE_UPDATED" ->
+                    fcmSender.sendProfileChanged(token);
+            default -> FcmDeliveryResult.SENT;
+        };
         if (result == FcmDeliveryResult.PERMANENT_TOKEN_FAILURE) {
             if (token != null) {
                 pushTokenService.clearIfCurrent(record.targetDeviceId(), token);

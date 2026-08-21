@@ -352,6 +352,7 @@ class LocalDatabase internal constructor(
         displayName: String,
         avatarUrl: String?,
         avatarVersion: Long,
+        avatarFallback: String,
     ) {
         pool.connection.use { connection ->
             connection.prepareStatement(
@@ -360,14 +361,16 @@ class LocalDatabase internal constructor(
                 SET peer_display_name = ?,
                     peer_avatar_url = ?,
                     peer_avatar_version = ?,
+                    peer_avatar_fallback = ?,
                     updated_at = ?
                 WHERE peer_user_id = ?
                 """.trimIndent()).use { statement ->
                 statement.setString(1, displayName)
                 statement.setString(2, avatarUrl)
                 statement.setLong(3, avatarVersion)
-                statement.setLong(4, System.currentTimeMillis())
-                statement.setString(5, userId)
+                statement.setString(4, avatarFallback)
+                statement.setLong(5, System.currentTimeMillis())
+                statement.setString(6, userId)
                 statement.executeUpdate()
             }
         }
@@ -705,7 +708,7 @@ class EncryptedMediaCache internal constructor(
         if (!accountDirectory.toFile().isDirectory) return
         Files.list(accountDirectory).use { paths ->
             paths.filter { path ->
-                path.fileName.toString().startsWith("$prefix-")
+                path.fileName.toString().startsWith(prefix)
                     && (keepMediaId == null || path.fileName.toString() != "$keepMediaId.bin")
             }.forEach { it.deleteIfExists() }
         }

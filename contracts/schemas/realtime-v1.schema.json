@@ -255,12 +255,13 @@
     "userProfileBody": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["userId", "displayName", "avatarUrl", "avatarVersion", "syncSeq"],
+      "required": ["userId", "displayName", "avatarUrl", "avatarVersion", "avatarFallback", "syncSeq"],
       "properties": {
         "userId": { "type": "string", "format": "uuid" },
         "displayName": { "type": "string", "minLength": 1 },
         "avatarUrl": { "type": ["string", "null"] },
         "avatarVersion": { "type": "integer", "minimum": 0 },
+        "avatarFallback": { "type": "string", "minLength": 1, "maxLength": 2 },
         "syncSeq": { "type": "integer", "minimum": 1 }
       }
     },

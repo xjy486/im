@@ -102,6 +102,19 @@ class MessageOutboxDeliveryTest {
     }
 
     @Test
+    void sends_a_profile_changed_fcm_fallback_for_offline_avatar_updates() {
+        OutboxRecord record = record("USER_PROFILE_UPDATED");
+        when(messageRepository.findUserIdForDevice(record.targetDeviceId())).thenReturn(UUID.randomUUID());
+        when(pushTokenService.isMobile(record.targetDeviceId())).thenReturn(true);
+        when(pushTokenService.find(record.targetDeviceId())).thenReturn("fcm-token");
+        when(fcmSender.sendProfileChanged("fcm-token")).thenReturn(FcmDeliveryResult.SENT);
+
+        assertThat(delivery.deliver(record)).isTrue();
+
+        verify(fcmSender).sendProfileChanged("fcm-token");
+    }
+
+    @Test
     void clears_a_permanently_invalid_token_without_revoking_the_device() {
         OutboxRecord record = record("MESSAGE_CREATED");
         when(messageRepository.findUserIdForDevice(record.targetDeviceId())).thenReturn(UUID.randomUUID());

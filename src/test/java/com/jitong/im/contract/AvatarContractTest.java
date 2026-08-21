@@ -5,6 +5,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import org.junit.jupiter.api.Test;
 import org.springframework.boot.test.web.client.TestRestTemplate;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.jdbc.core.simple.JdbcClient;
 import org.springframework.core.io.ByteArrayResource;
 import org.springframework.http.HttpEntity;
 import org.springframework.http.HttpHeaders;
@@ -30,6 +31,9 @@ class AvatarContractTest extends ContractTestEnvironment {
 
     @Autowired
     private ObjectMapper objectMapper;
+
+    @Autowired
+    private JdbcClient jdbc;
 
     @Test
     void uploads_replaces_removes_and_enforces_c2c_visibility_with_versioned_cache_invalidation()
@@ -96,6 +100,100 @@ class AvatarContractTest extends ContractTestEnvironment {
         assertThat(removed.getStatusCode()).isEqualTo(HttpStatus.NO_CONTENT);
         assertThat(downloadAvatar(aliceToken, alice.userId(), 2).getStatusCode())
                 .isEqualTo(HttpStatus.GONE);
+    }
+
+    @Test
+    void group_avatar_is_independent_and_visible_only_to_active_members() throws Exception {
+        TestUser owner = createUser("Group owner");
+        TestUser member = createUser("Group member");
+        TestUser outsider = createUser("Group outsider");
+        String ownerToken = login(owner.accountNo(), "group-owner");
+        String memberToken = login(member.accountNo(), "group-member");
+        String outsiderToken = login(outsider.accountNo(), "group-outsider");
+        UUID conversationId = UUID.randomUUID();
+
+        jdbc.sql("INSERT INTO conversations (id, type, status) VALUES (:id, 'GROUP', 'ACTIVE')")
+                .param("id", conversationId)
+                .update();
+        jdbc.sql("""
+                        INSERT INTO groups (
+                            conversation_id, group_no, name, owner_user_id, visibility)
+                        VALUES (:conversationId, :groupNo, 'Avatar group', :ownerId, 'PRIVATE')
+                        """)
+                .param("conversationId", conversationId)
+                .param("groupNo", "9" + String.format("%010d", conversationId.getLeastSignificantBits()
+                        & 0x7fffffffffffffffL).substring(0, 10))
+                .param("ownerId", owner.userId())
+                .update();
+        insertGroupMember(conversationId, owner.userId(), "OWNER");
+        insertGroupMember(conversationId, member.userId(), "MEMBER");
+
+        ResponseEntity<JsonNode> upload = replaceGroupAvatar(
+                ownerToken, conversationId, UUID.randomUUID(), png(320, 180));
+        assertThat(upload.getStatusCode()).isEqualTo(HttpStatus.OK);
+        assertThat(upload.getBody().get("avatarVersion").asLong()).isEqualTo(1);
+
+        assertThat(downloadGroupAvatar(memberToken, conversationId, 1).getStatusCode())
+                .isEqualTo(HttpStatus.OK);
+        assertThat(downloadGroupAvatar(outsiderToken, conversationId, 1).getStatusCode())
+                .isEqualTo(HttpStatus.FORBIDDEN);
+
+        ResponseEntity<JsonNode> replacement = replaceGroupAvatar(
+                ownerToken, conversationId, UUID.randomUUID(), png(180, 180));
+        assertThat(replacement.getBody().get("avatarVersion").asLong()).isEqualTo(2);
+        assertThat(downloadGroupAvatar(memberToken, conversationId, 1).getStatusCode())
+                .isEqualTo(HttpStatus.GONE);
+
+        assertThat(exchangeVoid(
+                HttpMethod.DELETE,
+                "/api/v1/groups/" + conversationId + "/avatar",
+                ownerToken).getStatusCode()).isEqualTo(HttpStatus.NO_CONTENT);
+        assertThat(downloadGroupAvatar(memberToken, conversationId, 2).getStatusCode())
+                .isEqualTo(HttpStatus.GONE);
+    }
+
+    private void insertGroupMember(UUID conversationId, UUID userId, String role) {
+        jdbc.sql("""
+                        INSERT INTO conversation_members (conversation_id, user_id, role)
+                        VALUES (:conversationId, :userId, :role)
+                        """)
+                .param("conversationId", conversationId)
+                .param("userId", userId)
+                .param("role", role)
+                .update();
+    }
+
+    private ResponseEntity<JsonNode> replaceGroupAvatar(
+            String token,
+            UUID conversationId,
+            UUID uploadId,
+            byte[] content
+    ) {
+        MultiValueMap<String, Object> parts = new LinkedMultiValueMap<>();
+        parts.add("file", new NamedByteArrayResource(content, "group-avatar.png"));
+        HttpHeaders headers = new HttpHeaders();
+        headers.setBearerAuth(token);
+        headers.setContentType(MediaType.MULTIPART_FORM_DATA);
+        return http.exchange(
+                "/api/v1/groups/" + conversationId + "/avatar?uploadId=" + uploadId,
+                HttpMethod.PUT,
+                new HttpEntity<>(parts, headers),
+                JsonNode.class);
+    }
+
+    private ResponseEntity<byte[]> downloadGroupAvatar(
+            String token,
+            UUID conversationId,
+            long version
+    ) {
+        HttpHeaders headers = new HttpHeaders();
+        headers.setBearerAuth(token);
+        return http.exchange(
+                "/api/v1/groups/" + conversationId
+                        + "/avatar?variant=thumb&avatarVersion=" + version,
+                HttpMethod.GET,
+                new HttpEntity<>(headers),
+                byte[].class);
     }
 
     private ResponseEntity<JsonNode> replaceAvatar(

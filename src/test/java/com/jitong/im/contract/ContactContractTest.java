@@ -4,6 +4,7 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.jdbc.core.simple.JdbcClient;
 import org.springframework.boot.test.web.client.TestRestTemplate;
 import org.springframework.http.HttpEntity;
 import org.springframework.http.HttpHeaders;
@@ -26,6 +27,9 @@ class ContactContractTest extends ContractTestEnvironment {
 
     @Autowired
     private ObjectMapper objectMapper;
+
+    @Autowired
+    private JdbcClient jdbc;
 
     @Test
     void exact_search_and_cross_requests_create_one_reusable_c2c_conversation() throws Exception {
@@ -140,6 +144,16 @@ class ContactContractTest extends ContractTestEnvironment {
         JsonNode readonly = exchange(HttpMethod.GET, "/api/v1/conversations", aliceToken, null).getBody().get(0);
         assertThat(readonly.get("conversationId").asText()).isEqualTo(conversationId);
         assertThat(readonly.get("status").asText()).isEqualTo("READ_ONLY");
+
+        jdbc.sql("UPDATE users SET display_name = 'Bob changed after removal' WHERE id = :userId")
+                .param("userId", bob.userId())
+                .update();
+        JsonNode readonlyAfterProfileChange =
+                exchange(HttpMethod.GET, "/api/v1/conversations", aliceToken, null).getBody().get(0);
+        assertThat(readonlyAfterProfileChange.get("peerDisplayName").asText())
+                .isEqualTo(readonly.get("peerDisplayName").asText());
+        assertThat(readonlyAfterProfileChange.get("avatarUrl").isNull()).isTrue();
+        assertThat(readonlyAfterProfileChange.get("avatarVersion").asLong()).isZero();
 
         JsonNode readded = createRequest(bobToken, alice.accountNo());
         UUID readdRequestId = UUID.fromString(readded.get("requestId").asText());

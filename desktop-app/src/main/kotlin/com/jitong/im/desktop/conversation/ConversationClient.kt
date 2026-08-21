@@ -27,6 +27,7 @@ data class DesktopConversationSummary(
     val peerReadSeq: Long,
     val avatarUrl: String? = null,
     val avatarVersion: Long = 0,
+    val avatarFallback: String = "?",
 )
 
 @Serializable
@@ -36,6 +37,7 @@ data class DesktopContactSearchResult(
     val displayName: String,
     val avatarUrl: String?,
     val avatarVersion: Long = 0,
+    val avatarFallback: String = "?",
     val relationship: String,
     val pendingRequestId: String?,
 )
@@ -82,6 +84,16 @@ data class DesktopContactSummary(
     val relationship: String,
     val avatarUrl: String? = null,
     val avatarVersion: Long = 0,
+    val avatarFallback: String = "?",
+)
+
+@Serializable
+data class DesktopUserProfile(
+    val userId: String,
+    val displayName: String,
+    val avatarUrl: String? = null,
+    val avatarVersion: Long = 0,
+    val avatarFallback: String = "?",
 )
 
 @Serializable
@@ -178,6 +190,7 @@ data class DesktopRealtimeBody(
     val message: String? = null,
     val avatarUrl: String? = null,
     val avatarVersion: Long? = null,
+    val avatarFallback: String? = null,
 )
 
 class ConversationClient(
@@ -298,6 +311,28 @@ class ConversationClient(
         return requestJson(get("/api/v1/sync$query", accessToken))
     }
 
+    fun applySyncProfileEvents(
+        accessToken: String,
+        local: LocalDatabase,
+        events: List<DesktopSyncEvent>,
+    ) {
+        events
+            .filter { it.eventType == "USER_PROFILE_UPDATED" }
+            .map { it.entityId }
+            .distinct()
+            .forEach { userId ->
+                val profile = requestJson<DesktopUserProfile>(
+                    get("/api/v1/users/$userId/profile", accessToken))
+                local.updatePeerProfile(
+                    userId = profile.userId,
+                    displayName = profile.displayName,
+                    avatarUrl = profile.avatarUrl,
+                    avatarVersion = profile.avatarVersion,
+                    avatarFallback = profile.avatarFallback)
+                local.mediaCache().deleteMatching("avatar-$userId-v")
+            }
+    }
+
     fun acknowledge(accessToken: String, syncSeq: Long) {
         execute(
             post(
@@ -352,6 +387,7 @@ class ConversationClient(
                 peerDisplayName = conversation.peerDisplayName,
                 peerAvatarUrl = conversation.avatarUrl,
                 peerAvatarVersion = conversation.avatarVersion,
+                peerAvatarFallback = conversation.avatarFallback,
                 status = conversation.status,
                 relationship = conversation.relationship,
                 blockedByMe = conversation.blockedByMe,
@@ -386,6 +422,30 @@ class ConversationClient(
         }
     }
 
+    fun loadUserAvatar(
+        accessToken: String,
+        local: LocalDatabase,
+        userId: String,
+        avatarVersion: Long,
+    ): ByteArray? {
+        if (avatarVersion <= 0) return null
+        val cacheName = "avatar-$userId-v$avatarVersion"
+        local.mediaCache().getOrNull(cacheName)?.let { return it }
+        local.mediaCache().deleteMatching("avatar-$userId-v", cacheName)
+        httpClient.newCall(
+            get(
+                "/api/v1/users/$userId/avatar?variant=thumb&avatarVersion=$avatarVersion",
+                accessToken)).execute().use { response ->
+            if (response.code == 404 || response.code == 410) return null
+            if (!response.isSuccessful) {
+                throw ConversationApiException(response.code, response.body?.string().orEmpty())
+            }
+            val bytes = response.body?.bytes() ?: return null
+            local.mediaCache().put(cacheName, bytes)
+            return bytes
+        }
+    }
+
     fun replaceConversations(
         local: LocalDatabase,
         conversations: List<DesktopConversationSummary>,
@@ -399,6 +459,7 @@ class ConversationClient(
                     peerDisplayName = it.peerDisplayName,
                     peerAvatarUrl = it.avatarUrl,
                     peerAvatarVersion = it.avatarVersion,
+                    peerAvatarFallback = it.avatarFallback,
                     status = it.status,
                     relationship = it.relationship,
                     blockedByMe = it.blockedByMe,
@@ -478,7 +539,8 @@ class ConversationClient(
                 userId,
                 body.displayName.orEmpty(),
                 body.avatarUrl,
-                body.avatarVersion ?: 0)
+                body.avatarVersion ?: 0,
+                body.avatarFallback ?: body.displayName?.firstOrNull()?.toString() ?: "?")
             syncSeq?.let(local::saveLastSyncSeq)
             return
         }

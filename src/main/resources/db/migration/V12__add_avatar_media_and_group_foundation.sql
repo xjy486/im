@@ -10,6 +10,13 @@ ALTER TABLE media
     DROP CONSTRAINT IF EXISTS media_check,
     DROP CONSTRAINT IF EXISTS media_state_check;
 
+UPDATE media
+SET attached_message_id = NULL,
+    attached_entity_id = NULL,
+    attached_entity_type = NULL,
+    bound_at = NULL
+WHERE state = 'EXPIRED';
+
 ALTER TABLE media
     ADD CONSTRAINT media_state_check CHECK (
         (state = 'TEMP' AND attached_message_id IS NULL AND attached_entity_id IS NULL
@@ -20,7 +27,11 @@ ALTER TABLE media
             OR (purpose = 'AVATAR' AND attached_message_id IS NULL AND attached_entity_id IS NOT NULL
                 AND attached_entity_type IN ('USER', 'GROUP') AND bound_at IS NOT NULL)
         ))
-        OR (state = 'EXPIRED' AND expired_at IS NOT NULL)
+        OR (state = 'EXPIRED' AND expired_at IS NOT NULL
+            AND attached_message_id IS NULL
+            AND attached_entity_id IS NULL
+            AND attached_entity_type IS NULL
+            AND bound_at IS NULL)
     );
 
 CREATE INDEX media_attached_entity_idx
