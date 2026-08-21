@@ -408,6 +408,10 @@ internal class MessageRepository(
         message: LocalMessageEntity,
         thumbnail: Boolean,
     ): ByteArray? {
+        if (message.state == "RECALLED") {
+            deleteMessageMedia(message.mediaId, message.localMediaPath)
+            return null
+        }
         val cache = mediaCache() ?: return null
         val mediaId = message.mediaId?.let(UUID::fromString)
         if (mediaId == null) return cache.getByPath(message.localMediaPath)
@@ -794,6 +798,64 @@ internal class MessageRepository(
             }
             return
         }
+        if (event.operation == "message.recalled") {
+            val messageId = body.messageId ?: return
+            val conversationId = body.conversationId ?: return
+            val senderId = body.senderId ?: return
+            val clientMsgId = body.clientMsgId ?: return
+            val syncSeq = body.syncSeq
+            if (syncSeq != null) {
+                val lastSyncSeq = withContext(Dispatchers.IO) {
+                    db.syncStateDao().current()?.lastSyncSeq ?: 0L
+                }
+                if (syncSeq <= lastSyncSeq) return
+                if (syncSeq > lastSyncSeq + 1) {
+                    synchronize(currentUserId, syncSeq)
+                    return
+                }
+            }
+            var localMediaPath: String? = null
+            withContext(Dispatchers.IO) {
+                db.withTransaction {
+                    val existing = db.messageDao().findByClientMsgId(clientMsgId.toString())
+                    localMediaPath = existing?.localMediaPath
+                    db.pendingCommandDao().delete(clientMsgId.toString())
+                    db.messageDao().deleteByClientMsgId(clientMsgId.toString())
+                    db.messageDao().upsert(
+                        LocalMessageEntity(
+                            messageId = messageId.toString(),
+                            conversationId = conversationId.toString(),
+                            senderId = senderId.toString(),
+                            clientMsgId = clientMsgId.toString(),
+                            conversationSeq = body.conversationSeq,
+                            type = body.type ?: existing?.type ?: "TEXT",
+                            state = "RECALLED",
+                            localState = if (senderId == currentUserId) "SENT" else "RECEIVED",
+                            text = "",
+                            mediaId = null,
+                            localMediaPath = null,
+                            serverAcceptedAt = body.serverAcceptedAt ?: existing?.serverAcceptedAt,
+                            recalledAt = body.recalledAt,
+                            createdAt = existing?.createdAt ?: System.currentTimeMillis(),
+                        ),
+                    )
+                    if (syncSeq != null) {
+                        db.syncStateDao().upsert(
+                            SyncStateEntity(
+                                deviceId = deviceId()?.toString().orEmpty(),
+                                lastSyncSeq = syncSeq,
+                                lastFullRestoreAt = db.syncStateDao().current()?.lastFullRestoreAt,
+                            ),
+                        )
+                    }
+                }
+            }
+            deleteMessageMedia(body.mediaId?.toString(), localMediaPath)
+            if (syncSeq != null) {
+                syncApi.acknowledge(SyncAckRequest(syncSeq)).syncBodyOrThrow()
+            }
+            return
+        }
         val messageId = body.messageId ?: return
         val conversationId = body.conversationId ?: return
         val senderId = body.senderId ?: return
@@ -832,6 +894,7 @@ internal class MessageRepository(
                             mediaId = body.mediaId?.toString(),
                             localMediaPath = null,
                             serverAcceptedAt = body.serverAcceptedAt,
+                            recalledAt = body.recalledAt,
                             createdAt = existing?.createdAt ?: System.currentTimeMillis(),
                         ),
                     )
@@ -867,6 +930,7 @@ internal class MessageRepository(
                         mediaId = body.mediaId?.toString(),
                         localMediaPath = existing?.localMediaPath,
                         serverAcceptedAt = body.serverAcceptedAt,
+                        recalledAt = body.recalledAt,
                         createdAt = existing?.createdAt ?: System.currentTimeMillis(),
                     ),
                 )
@@ -884,7 +948,47 @@ internal class MessageRepository(
                 text = body.text.orEmpty(),
                 mediaId = body.mediaId,
                 serverAcceptedAt = body.serverAcceptedAt.orEmpty(),
+                recalledAt = body.recalledAt,
             ),
+        )
+    }
+
+    suspend fun recall(message: LocalMessageEntity) {
+        val response = api.recall(UUID.fromString(message.messageId))
+        if (!response.isSuccessful || response.body() == null) {
+            throw IOException("Message recall failed with HTTP ${response.code()}")
+        }
+        val recalled = response.body()!!
+        apply(
+            WireEvent(
+                version = 1,
+                operation = "message.recalled",
+                requestId = null,
+                body = WireMessageBody(
+                    messageId = recalled.messageId,
+                    conversationId = recalled.conversationId,
+                    senderId = recalled.senderId,
+                    clientMsgId = recalled.clientMsgId,
+                    conversationSeq = recalled.conversationSeq,
+                    type = recalled.type,
+                    state = recalled.state,
+                    text = recalled.text,
+                    mediaId = recalled.mediaId,
+                    serverAcceptedAt = recalled.serverAcceptedAt,
+                    recalledAt = recalled.recalledAt,
+                    syncSeq = null,
+                    deviceId = null,
+                    deviceClass = null,
+                    highWatermark = null,
+                    userId = null,
+                    readSeq = null,
+                    displayName = null,
+                    avatarUrl = null,
+                    avatarVersion = null,
+                    avatarFallback = null,
+                ),
+            ),
+            message.senderId.let { UUID.fromString(it) },
         )
     }
 
@@ -942,6 +1046,18 @@ internal class MessageRepository(
         }
     }
 
+    private fun deleteMessageMedia(
+        mediaId: String?,
+        localMediaPath: String?,
+    ) {
+        val cache = mediaCache() ?: return
+        mediaId?.let {
+            cache.delete(it)
+            cache.delete("$it-thumb")
+        }
+        cache.delete(localMediaPath)
+    }
+
     private fun MessageResponse.toEntity(
         localState: String = "SENT",
         localMediaPath: String? = null,
@@ -958,6 +1074,7 @@ internal class MessageRepository(
         mediaId = mediaId?.toString(),
         localMediaPath = localMediaPath,
         serverAcceptedAt = serverAcceptedAt,
+        recalledAt = recalledAt,
         createdAt = System.currentTimeMillis(),
     )
 

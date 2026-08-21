@@ -95,6 +95,65 @@ class MessageRepositoryMediaTest {
         assertEquals(listOf("thumb", "full"), requestedVariants)
     }
 
+    @Test
+    fun recalled_image_deletes_full_thumb_and_pending_local_media() = runTest {
+        val mediaId = UUID.randomUUID()
+        cache.put(mediaId.toString(), "full".toByteArray())
+        cache.put("$mediaId-thumb", "thumb".toByteArray())
+        val localMediaPath = cache.put("pending-local-message", "pending".toByteArray())
+        val requestedVariants = mutableListOf<String>()
+        val mediaApi = object : MediaApi {
+            override suspend fun uploadImage(
+                uploadId: UUID,
+                file: okhttp3.MultipartBody.Part,
+            ): Response<com.jitong.im.android.media.MediaUploadResponse> = error("not used")
+
+            override suspend fun download(
+                mediaId: UUID,
+                variant: String,
+            ): Response<okhttp3.ResponseBody> {
+                requestedVariants += variant
+                return Response.success("unexpected".toResponseBody("image/jpeg".toMediaType()))
+            }
+        }
+        val repository = MessageRepository(
+            api = unusedMessageApi(),
+            syncApi = unusedSyncApi(),
+            database = { null },
+            webSocket = MessageWebSocket(
+                OkHttpClient(),
+                "http://127.0.0.1/",
+                { null },
+                Gson(),
+            ),
+            mediaApi = mediaApi,
+            mediaCache = { cache },
+        )
+        val message = com.jitong.im.android.local.LocalMessageEntity(
+            messageId = "message",
+            conversationId = "conversation",
+            senderId = "sender",
+            clientMsgId = UUID.randomUUID().toString(),
+            conversationSeq = 1,
+            type = "IMAGE",
+            state = "RECALLED",
+            localState = "RECEIVED",
+            text = "",
+            mediaId = mediaId.toString(),
+            localMediaPath = localMediaPath,
+            serverAcceptedAt = "2026-08-21T00:00:00Z",
+            recalledAt = "2026-08-21T00:00:30Z",
+            createdAt = 1,
+        )
+
+        assertEquals(null, repository.loadMedia(message, true))
+        assertEquals(null, repository.loadMedia(message, false))
+        assertEquals(emptyList<String>(), requestedVariants)
+        assertEquals(null, cache.get(mediaId.toString()))
+        assertEquals(null, cache.get("$mediaId-thumb"))
+        assertEquals(null, cache.getByPath(localMediaPath))
+    }
+
     private fun unusedMessageApi() = object : MessageApi {
         override suspend fun send(
             conversationId: UUID,
@@ -106,6 +165,10 @@ class MessageRepositoryMediaTest {
             afterSeq: Long,
             limit: Int,
         ): Response<MessagePageResponse> = error("not used")
+
+        override suspend fun recall(
+            messageId: UUID,
+        ): Response<MessageResponse> = error("not used")
     }
 
     private fun unusedSyncApi() = object : SyncApi {
