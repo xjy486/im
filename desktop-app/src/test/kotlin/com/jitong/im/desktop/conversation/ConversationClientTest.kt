@@ -196,7 +196,7 @@ class ConversationClientTest {
                     peerReadSeq = 0,
                     updatedAt = 1))
             local.mediaCache().put("avatar-user-2-v1", byteArrayOf(1))
-            server.enqueue(MockResponse().setBody(byteArrayOf(2, 3, 4)))
+            server.enqueue(MockResponse().setBody(byteArrayOf(2, 3, 4).toString(Charsets.ISO_8859_1)))
 
             client.applyRealtime(
                 local,
@@ -217,7 +217,7 @@ class ConversationClientTest {
             assertEquals("Robert", local.listConversations().single().peerDisplayName)
             assertNull(local.mediaCache().getOrNull("avatar-user-2-v1"))
             assertEquals(
-                listOf(2, 3, 4),
+                listOf<Byte>(2, 3, 4),
                 client.loadUserAvatar("access", local, "user-2", 2)?.toList())
             local.close()
         } finally {

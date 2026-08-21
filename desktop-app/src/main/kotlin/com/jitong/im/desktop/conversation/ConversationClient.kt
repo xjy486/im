@@ -893,7 +893,11 @@ class ConversationClient(
                     throw ConversationApiException(response.code, response.body?.string().orEmpty())
                 }
                 val bytes = response.body?.bytes() ?: return null
-                if (!local.putMessageMediaIfActive(message.clientMsgId, cacheName, bytes)) {
+                if (!local.putMessageMediaIfActive(
+                        message.conversationId,
+                        message.clientMsgId,
+                        cacheName,
+                        bytes)) {
                     return null
                 }
                 return bytes

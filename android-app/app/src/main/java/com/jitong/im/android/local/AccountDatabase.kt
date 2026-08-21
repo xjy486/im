@@ -199,6 +199,13 @@ interface LocalMessageDao {
     @Query("DELETE FROM local_message WHERE localState IN ('SENT', 'RECEIVED')")
     fun clearAccepted()
 
+    @Query(
+        "SELECT mediaId FROM local_message " +
+            "WHERE localState IN ('SENT', 'RECEIVED') " +
+            "AND type = 'IMAGE' AND mediaId IS NOT NULL",
+    )
+    fun acceptedImageMediaIds(): List<String>
+
     @Query("UPDATE local_message SET localState = :localState WHERE clientMsgId = :clientMsgId")
     fun updateLocalState(clientMsgId: String, localState: String)
 

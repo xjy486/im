@@ -540,6 +540,15 @@ class LocalDatabase internal constructor(
         }
     }
 
+    fun markMessageFailedAndDeleteMedia(
+        conversationId: String,
+        clientMsgId: String,
+    ) {
+        val message = findMessageByClientId(conversationId, clientMsgId)
+        markMessageFailed(conversationId, clientMsgId)
+        deleteMessageMediaCache(message?.mediaId)
+    }
+
     fun listMessages(conversationId: String): List<LocalMessage> {
         pool.connection.use { connection ->
             connection.prepareStatement(
@@ -611,13 +620,24 @@ class LocalDatabase internal constructor(
 
     @Synchronized
     fun putMessageMediaIfActive(
+        conversationId: String,
         clientMsgId: String,
         cacheName: String,
         content: ByteArray,
     ): Boolean {
-        if (findMessageByClientId(null, clientMsgId)?.state != "ACTIVE") return false
+        if (findMessageByClientId(conversationId, clientMsgId)?.state != "ACTIVE") return false
         mediaCache.put(cacheName, content)
         return true
+    }
+
+    @Synchronized
+    fun markMessageFailedAndDeleteCache(
+        conversationId: String,
+        clientMsgId: String,
+        cacheName: String?,
+    ) {
+        markMessageFailed(conversationId, clientMsgId)
+        cacheName?.let { mediaCache.deleteMatching(it) }
     }
 
     fun upsertReadState(state: LocalReadState) {

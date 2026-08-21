@@ -11,7 +11,9 @@ import java.io.IOException
 import java.security.MessageDigest
 import java.util.HexFormat
 import javax.imageio.ImageIO
+import javax.imageio.ImageReader
 import javax.imageio.ImageWriteParam
+import javax.imageio.stream.ImageInputStream
 
 internal object ImageNormalizer {
     const val MAX_INPUT_BYTES = 10 * 1024 * 1024
@@ -23,20 +25,47 @@ internal object ImageNormalizer {
         require(source.isNotEmpty() && source.size <= MAX_INPUT_BYTES) {
             "Image input is too large"
         }
-        val decoded = ImageIO.read(ByteArrayInputStream(source))
-            ?: throw IllegalArgumentException("Image cannot be decoded")
-        require(
-            decoded.width > 0
-                && decoded.height > 0
-                && decoded.width.toLong() * decoded.height <= MAX_DECODE_PIXELS) {
-            "Image dimensions are too large"
-        }
+        val decoded = decodeSafely(source)
         val normalized = scale(decoded)
         return try {
             encodeJpeg(normalized)
         } finally {
             normalized.flush()
             decoded.flush()
+        }
+    }
+
+    private fun decodeSafely(source: ByteArray): BufferedImage {
+        try {
+            ImageIO.createImageInputStream(ByteArrayInputStream(source)).use { input ->
+                requireNotNull(input) { "Image cannot be decoded" }
+                val readers = ImageIO.getImageReaders(input)
+                require(readers.hasNext()) { "Image cannot be decoded" }
+                val reader = readers.next()
+                try {
+                    reader.setInput(input, true, true)
+                    val format = reader.formatName.lowercase()
+                    require(format in setOf("jpeg", "jpg", "png", "gif")) {
+                        "Unsupported image format"
+                    }
+                    val width = reader.getWidth(0)
+                    val height = reader.getHeight(0)
+                    require(
+                        width > 0
+                            && height > 0
+                            && width.toLong() * height <= MAX_DECODE_PIXELS) {
+                        "Image dimensions are too large"
+                    }
+                    return reader.read(0)
+                        ?: throw IllegalArgumentException("Image cannot be decoded")
+                } finally {
+                    reader.dispose()
+                }
+            }
+        } catch (exception: IllegalArgumentException) {
+            throw exception
+        } catch (exception: Exception) {
+            throw IllegalArgumentException("Image cannot be decoded", exception)
         }
     }
 
@@ -69,12 +98,14 @@ internal object ImageNormalizer {
             val writer = ImageIO.getImageWritersByFormatName("jpg").asSequence().firstOrNull()
                 ?: throw IllegalStateException("JPEG writer is unavailable")
             try {
-                writer.output = ImageIO.createImageOutputStream(output)
-                val params = writer.defaultWriteParam.apply {
-                    compressionMode = ImageWriteParam.MODE_EXPLICIT
-                    compressionQuality = quality
+                ImageIO.createImageOutputStream(output).use { imageOutput ->
+                    writer.output = imageOutput
+                    val params = writer.defaultWriteParam.apply {
+                        compressionMode = ImageWriteParam.MODE_EXPLICIT
+                        compressionQuality = quality
+                    }
+                    writer.write(null, javax.imageio.IIOImage(image, null, null), params)
                 }
-                writer.write(null, javax.imageio.IIOImage(image, null, null), params)
             } catch (exception: IOException) {
                 throw IllegalArgumentException("Image cannot be encoded", exception)
             } finally {

@@ -182,6 +182,10 @@ internal class MessageRepository(
 
     private suspend fun fullRestore(currentUserId: UUID, highWatermark: Long) {
         val db = database() ?: return
+        val acceptedMediaIds = withContext(Dispatchers.IO) {
+            db.messageDao().acceptedImageMediaIds()
+        }
+        acceptedMediaIds.forEach { mediaCache()?.deleteMessageMedia(it) }
         val conversations = syncApi.conversations().syncBodyOrThrow()
         withContext(Dispatchers.IO) {
             db.withTransaction {
@@ -1001,6 +1005,8 @@ internal class MessageRepository(
                     avatarUrl = null,
                     avatarVersion = null,
                     avatarFallback = null,
+                    code = null,
+                    message = null,
                 ),
             ),
             message.senderId.let { UUID.fromString(it) },

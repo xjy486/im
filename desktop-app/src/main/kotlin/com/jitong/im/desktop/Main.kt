@@ -130,11 +130,13 @@ private fun DesktopApp(
     var selfAvatarBytes by remember { mutableStateOf<ByteArray?>(null) }
     var selfAvatarLoading by remember { mutableStateOf(false) }
     var mediaBytes by remember { mutableStateOf<Map<String, ByteArray>>(emptyMap()) }
+    var mediaLoadGeneration by remember { mutableStateOf(0L) }
     val uiScope = androidx.compose.runtime.rememberCoroutineScope()
     val syncMutex = remember { Mutex() }
 
     fun refreshLocal() {
         val local = authStore.localDatabase() ?: return
+        val generation = ++mediaLoadGeneration
         val conversations = local.listConversations()
         val messages = selectedConversationId?.let(local::listMessages).orEmpty()
         data = data.copy(
@@ -174,7 +176,12 @@ private fun DesktopApp(
                         conversationClient.currentGroupAvatar(token, local, conversationId)
                     }
                 messages
-                    .filter { it.type == "IMAGE" && it.state == "ACTIVE" }
+                    .filter {
+                        it.type == "IMAGE"
+                            && it.state == "ACTIVE"
+                            && it.mediaId != null
+                            && !it.mediaId.startsWith("pending-image-")
+                    }
                     .forEach { message ->
                         conversationClient.loadMedia(
                             token,
@@ -189,6 +196,7 @@ private fun DesktopApp(
                     }
             }
             withContext(Dispatchers.Main.immediate) {
+                if (generation != mediaLoadGeneration) return@withContext
                 val loadedAvatars = loaded.filterKeys { key ->
                     key in activeAvatarKeys || key.startsWith("group-avatar-")
                 }
@@ -704,31 +712,57 @@ private fun DesktopApp(
                 val chooser = JFileChooser()
                 if (chooser.showOpenDialog(null) != JFileChooser.APPROVE_OPTION) return@MainScreen
                 val file = chooser.selectedFile ?: return@MainScreen
+                if (file.length() > com.jitong.im.desktop.media.ImageNormalizer.MAX_INPUT_BYTES) {
+                    error = "Image is too large."
+                    return@MainScreen
+                }
+                val clientMsgId = UUID.randomUUID().toString()
+                val pendingCacheName = "pending-image-$clientMsgId"
                 uiScope.launch {
                     runCatching {
                         val bytes = withContext(Dispatchers.IO) { file.readBytes() }
-                        val upload = withContext(Dispatchers.IO) {
-                            conversationClient.uploadImage(current.accessToken, file.name, bytes)
+                        val normalized = withContext(Dispatchers.IO) {
+                            com.jitong.im.desktop.media.ImageNormalizer.normalize(bytes)
                         }
-                        val clientMsgId = UUID.randomUUID().toString()
+                        val local = authStore.localDatabase()
+                            ?: error("PC local database is not open")
                         withContext(Dispatchers.IO) {
-                            val local = authStore.localDatabase()
-                                ?: error("PC local database is not open")
+                            local.mediaCache().put(pendingCacheName, normalized)
                             conversationClient.newPendingImage(
                                 local,
                                 conversationId,
                                 current.userId,
                                 clientMsgId,
-                                upload.mediaId)
+                                pendingCacheName)
+                        }
+                        val upload = withContext(Dispatchers.IO) {
+                            conversationClient.uploadImage(
+                                current.accessToken,
+                                file.name,
+                                normalized)
+                        }
+                        withContext(Dispatchers.IO) {
+                            local.replaceMessageByClientId(
+                                local.findMessageByClientId(conversationId, clientMsgId)!!
+                                    .copy(mediaId = upload.mediaId))
                             val sent = conversationClient.sendImage(
                                 current.accessToken,
                                 conversationId,
                                 clientMsgId,
                                 upload.mediaId)
                             conversationClient.applyMessage(local, sent, current.userId)
+                            local.mediaCache().deleteMatching(pendingCacheName)
                         }
                         refreshLocal()
-                    }.onFailure { error = messageFor(it) }
+                    }.onFailure {
+                        withContext(Dispatchers.IO) {
+                            authStore.localDatabase()?.markMessageFailedAndDeleteCache(
+                                conversationId,
+                                clientMsgId,
+                                pendingCacheName)
+                        }
+                        error = messageFor(it)
+                    }
                 }
             },
             onRecall = { message ->

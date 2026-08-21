@@ -63,6 +63,12 @@ class EncryptedMediaCache(
     }
 
     @Synchronized
+    fun deleteMessageMedia(mediaId: String) {
+        deleteMatching(mediaId)
+        deleteMatching("$mediaId-thumb")
+    }
+
+    @Synchronized
     fun clear() {
         directory.deleteRecursively()
     }
