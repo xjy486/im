@@ -75,6 +75,12 @@ internal class AvatarViewModel(
     suspend fun loadUserAvatar(userId: java.util.UUID, avatarVersion: Long): ByteArray? =
         repository.loadUserAvatar(userId, avatarVersion)
 
+    suspend fun loadGroupAvatar(conversationId: java.util.UUID, avatarVersion: Long): ByteArray? =
+        repository.loadGroupAvatar(conversationId, avatarVersion)
+
+    suspend fun loadGroupAvatarUrl(avatarUrl: String): ByteArray? =
+        repository.loadAvatarUrl(avatarUrl)
+
     class Factory(private val repository: AvatarRepository) : ViewModelProvider.Factory {
         @Suppress("UNCHECKED_CAST")
         override fun <T : ViewModel> create(modelClass: Class<T>): T =

@@ -66,3 +66,34 @@ internal fun RemoteAvatar(
     }
     AvatarView(bytes, fallback, modifier, size)
 }
+
+@Composable
+internal fun RemoteGroupAvatar(
+    conversationId: UUID,
+    avatarVersion: Long,
+    fallback: String,
+    load: suspend (UUID, Long) -> ByteArray?,
+    modifier: Modifier = Modifier,
+    size: Dp = 48.dp,
+) {
+    var bytes by remember(conversationId, avatarVersion) { mutableStateOf<ByteArray?>(null) }
+    LaunchedEffect(conversationId, avatarVersion) {
+        bytes = load(conversationId, avatarVersion)
+    }
+    AvatarView(bytes, fallback, modifier, size)
+}
+
+@Composable
+internal fun RemoteSearchGroupAvatar(
+    avatarUrl: String,
+    fallback: String,
+    load: suspend (String) -> ByteArray?,
+    modifier: Modifier = Modifier,
+    size: Dp = 48.dp,
+) {
+    var bytes by remember(avatarUrl) { mutableStateOf<ByteArray?>(null) }
+    LaunchedEffect(avatarUrl) {
+        bytes = load(avatarUrl)
+    }
+    AvatarView(bytes, fallback, modifier, size)
+}

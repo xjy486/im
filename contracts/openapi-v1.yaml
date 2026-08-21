@@ -219,6 +219,93 @@ paths:
           $ref: '#/components/responses/ApiError'
         '410':
           $ref: '#/components/responses/ApiError'
+  /api/v1/groups:
+    get:
+      operationId: listMyGroups
+      summary: List active groups the authenticated user belongs to
+      security: [{ bearerAuth: [] }]
+      responses:
+        '200':
+          description: Active group memberships
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: '#/components/schemas/GroupSummary' }
+        '401':
+          $ref: '#/components/responses/ApiError'
+    post:
+      operationId: createGroup
+      summary: Create a governed group with the authenticated user as OWNER
+      security: [{ bearerAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/CreateGroupRequest' }
+      responses:
+        '200':
+          description: Created group and owner membership
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/GroupCreateResponse' }
+        '400':
+          $ref: '#/components/responses/ApiError'
+        '401':
+          $ref: '#/components/responses/ApiError'
+  /api/v1/groups/search:
+    get:
+      operationId: searchGroups
+      summary: Search discoverable groups by exact group number or PUBLIC name/description
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - name: query
+          in: query
+          required: true
+          schema: { type: string, minLength: 1, maxLength: 128 }
+      responses:
+        '200':
+          description: Minimal discoverable group results
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/GroupSearchPage' }
+        '401':
+          $ref: '#/components/responses/ApiError'
+        '404':
+          $ref: '#/components/responses/ApiError'
+  /api/v1/groups/{conversationId}/members:
+    post:
+      operationId: addGroupMember
+      summary: Directly invite an active user as a MEMBER
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { $ref: '#/components/parameters/ConversationId' }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [accountNo]
+              properties:
+                accountNo: { type: string, pattern: '^[1-9][0-9]{10}$' }
+      responses:
+        '200':
+          description: Member added
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/GroupMemberAddResponse' }
+        '400':
+          $ref: '#/components/responses/ApiError'
+        '401':
+          $ref: '#/components/responses/ApiError'
+        '403':
+          $ref: '#/components/responses/ApiError'
+        '404':
+          $ref: '#/components/responses/ApiError'
+        '409':
+          $ref: '#/components/responses/ApiError'
   /api/v1/groups/{conversationId}/profile:
     get:
       operationId: getGroupAvatarProfile
@@ -762,6 +849,77 @@ components:
         conversationId: { type: string, format: uuid }
         avatarUrl: { type: [string, 'null'] }
         avatarVersion: { type: integer, format: int64, minimum: 0 }
+    CreateGroupRequest:
+      type: object
+      additionalProperties: false
+      required: [name, visibility]
+      properties:
+        name: { type: string, minLength: 1, maxLength: 128 }
+        description: { type: string, maxLength: 1000 }
+        visibility: { type: string, enum: [PUBLIC, UNLISTED, PRIVATE] }
+    GroupCreateResponse:
+      type: object
+      additionalProperties: false
+      required:
+        [version, conversationId, groupNo, name, description, visibility,
+         ownerUserId, role, avatarUrl, avatarVersion, memberCount]
+      properties:
+        version: { const: 1 }
+        conversationId: { type: string, format: uuid }
+        groupNo: { type: string, pattern: '^[1-9][0-9]{10}$' }
+        name: { type: string }
+        description: { type: string }
+        visibility: { type: string, enum: [PUBLIC, UNLISTED, PRIVATE] }
+        ownerUserId: { type: string, format: uuid }
+        role: { const: OWNER }
+        avatarUrl: { type: [string, 'null'] }
+        avatarVersion: { type: integer, format: int64, minimum: 0 }
+        memberCount: { type: integer, minimum: 1, maximum: 100 }
+    GroupSummary:
+      type: object
+      additionalProperties: false
+      required:
+        [version, conversationId, groupNo, name, description, visibility,
+         role, avatarUrl, avatarVersion, memberCount]
+      properties:
+        version: { const: 1 }
+        conversationId: { type: string, format: uuid }
+        groupNo: { type: string, pattern: '^[1-9][0-9]{10}$' }
+        name: { type: string }
+        description: { type: string }
+        visibility: { type: string, enum: [PUBLIC, UNLISTED, PRIVATE] }
+        role: { type: string, enum: [OWNER, ADMIN, MEMBER] }
+        avatarUrl: { type: [string, 'null'] }
+        avatarVersion: { type: integer, format: int64, minimum: 0 }
+        memberCount: { type: integer, minimum: 1, maximum: 100 }
+    GroupSearchResult:
+      type: object
+      additionalProperties: false
+      required: [name, avatarUrl, description, memberCount]
+      properties:
+        name: { type: string }
+        avatarUrl: { type: [string, 'null'] }
+        description: { type: string }
+        memberCount: { type: integer, minimum: 1, maximum: 100 }
+    GroupSearchPage:
+      type: object
+      additionalProperties: false
+      required: [version, groups]
+      properties:
+        version: { const: 1 }
+        groups:
+          type: array
+          items: { $ref: '#/components/schemas/GroupSearchResult' }
+    GroupMemberAddResponse:
+      type: object
+      additionalProperties: false
+      required: [version, conversationId, userId, role, memberCount]
+      properties:
+        version: { const: 1 }
+        conversationId: { type: string, format: uuid }
+        userId: { type: string, format: uuid }
+        role: { const: MEMBER }
+        memberCount: { type: integer, minimum: 1, maximum: 100 }
     ConversationReadState:
       type: object
       additionalProperties: false
