@@ -7,7 +7,9 @@ import java.sql.Types;
 import java.time.Instant;
 import java.time.OffsetDateTime;
 import java.time.ZoneOffset;
+import java.util.HashSet;
 import java.util.List;
+import java.util.Set;
 import java.util.UUID;
 
 @Repository
@@ -266,6 +268,18 @@ class MediaRepository {
                 .param("cutoff", utc(cutoff), Types.TIMESTAMP_WITH_TIMEZONE)
                 .query(this::map)
                 .list();
+    }
+
+    Set<String> findReferencedObjectKeys() {
+        return new HashSet<>(jdbc.sql("""
+                        SELECT original_object_key AS object_key
+                        FROM media
+                        UNION
+                        SELECT thumbnail_object_key AS object_key
+                        FROM media
+                        """)
+                .query((row, rowNum) -> row.getString("object_key"))
+                .list());
     }
 
     void markExpired(UUID mediaId, Instant expiredAt) {

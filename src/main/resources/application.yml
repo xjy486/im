@@ -42,6 +42,7 @@ jitong:
     access-key: ${MINIO_ACCESS_KEY:jitong-local}
     secret-key: ${MINIO_SECRET_KEY:}
     bucket: ${MINIO_BUCKET:jitong-media}
+    orphan-cleanup-grace: ${MINIO_ORPHAN_CLEANUP_GRACE:24h}
   push:
     enabled: ${FCM_ENABLED:false}
     project-id: ${FCM_PROJECT_ID:}

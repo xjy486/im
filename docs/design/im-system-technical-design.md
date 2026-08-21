@@ -771,7 +771,8 @@ EXTRACTION：
 - GROUP_JOIN_REQUEST；
 - GROUP_INVITE；
 - AI_JOB_COMPLETED；
-- SECURITY_ALERT。
+- SECURITY_ALERT；
+- PROFILE_CHANGED（用户或群资料，包括头像，发生变化后提示客户端通过认证同步补拉）。
 
 FCM 只携带事件类型和不敏感同步提示。存在可用前台 WSS 时只发 WSS；没有连接或写入失败时才发送 FCM。FCM Token 轮换通过认证接口更新，永久无效只清除推送 Token，不撤销设备。
 
