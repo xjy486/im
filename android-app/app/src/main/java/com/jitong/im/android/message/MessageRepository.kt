@@ -815,10 +815,12 @@ internal class MessageRepository(
                 }
             }
             var localMediaPath: String? = null
+            var localMediaId: String? = null
             withContext(Dispatchers.IO) {
                 db.withTransaction {
                     val existing = db.messageDao().findByClientMsgId(clientMsgId.toString())
                     localMediaPath = existing?.localMediaPath
+                    localMediaId = existing?.mediaId
                     db.pendingCommandDao().delete(clientMsgId.toString())
                     db.messageDao().deleteByClientMsgId(clientMsgId.toString())
                     db.messageDao().upsert(
@@ -850,7 +852,7 @@ internal class MessageRepository(
                     }
                 }
             }
-            deleteMessageMedia(body.mediaId?.toString(), localMediaPath)
+            deleteMessageMedia(body.mediaId?.toString() ?: localMediaId, localMediaPath)
             if (syncSeq != null) {
                 syncApi.acknowledge(SyncAckRequest(syncSeq)).syncBodyOrThrow()
             }
