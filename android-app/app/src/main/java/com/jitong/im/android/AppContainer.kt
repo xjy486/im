@@ -11,6 +11,8 @@ import com.jitong.im.android.auth.SessionInterceptor
 import com.jitong.im.android.auth.SessionManager
 import com.jitong.im.android.contact.ContactApi
 import com.jitong.im.android.contact.ContactRepository
+import com.jitong.im.android.group.GroupApi
+import com.jitong.im.android.group.GroupRepository
 import com.jitong.im.android.local.AccountLocalStore
 import com.jitong.im.android.media.MediaApi
 import com.jitong.im.android.media.AvatarRepository
@@ -52,6 +54,7 @@ internal class AppContainer(context: Context) {
     private val authenticatedRetrofit = retrofit(authenticatedClient)
     private val authenticatedApi = authenticatedRetrofit.create(AuthApi::class.java)
     private val authenticatedContactApi = authenticatedRetrofit.create(ContactApi::class.java)
+    private val authenticatedGroupApi = authenticatedRetrofit.create(GroupApi::class.java)
     private val authenticatedMessageApi = authenticatedRetrofit.create(MessageApi::class.java)
     private val authenticatedMediaApi = authenticatedRetrofit.create(MediaApi::class.java)
     private val authenticatedSyncApi = authenticatedRetrofit.create(com.jitong.im.android.message.SyncApi::class.java)
@@ -77,6 +80,7 @@ internal class AppContainer(context: Context) {
         { sessionManager.snapshot()?.let { UUID.fromString(it.userId) } },
         { localStore.activeMediaCache() },
     )
+    val groupRepository = GroupRepository(authenticatedGroupApi, avatarRepository)
     val pushTokenRepository = PushTokenRepository(authenticatedPushTokenApi)
     val messageRepository = MessageRepository(
         api = authenticatedMessageApi,

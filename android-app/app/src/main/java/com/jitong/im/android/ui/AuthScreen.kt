@@ -39,6 +39,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
+import java.io.ByteArrayOutputStream
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.jitong.im.android.auth.SessionState
 import com.jitong.im.android.contact.ConversationSummary
@@ -50,6 +51,7 @@ internal fun JitongApp(
     contactViewModel: ContactViewModel,
     messageViewModel: MessageViewModel,
     avatarViewModel: AvatarViewModel,
+    groupViewModel: GroupViewModel,
 ) {
     val state by viewModel.sessionState.collectAsStateWithLifecycle()
     Surface(modifier = Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) {
@@ -63,6 +65,7 @@ internal fun JitongApp(
                 contactViewModel,
                 messageViewModel,
                 avatarViewModel,
+                groupViewModel,
             )
             is SessionState.Error -> LoginScreen(viewModel, current.message)
         }
@@ -172,15 +175,18 @@ private fun HomeScreen(
     contactViewModel: ContactViewModel,
     messageViewModel: MessageViewModel,
     avatarViewModel: AvatarViewModel,
+    groupViewModel: GroupViewModel,
 ) {
     val contactState by contactViewModel.state.collectAsStateWithLifecycle()
     val avatarState by avatarViewModel.state.collectAsStateWithLifecycle()
     val messageState by messageViewModel.state.collectAsStateWithLifecycle()
+    val groupState by groupViewModel.state.collectAsStateWithLifecycle()
     var selectedTab by rememberSaveable { mutableStateOf("contacts") }
     var selectedConversationId by rememberSaveable { mutableStateOf<String?>(null) }
     LaunchedEffect(state.session.userId) {
         contactViewModel.refresh()
         avatarViewModel.refresh()
+        groupViewModel.refresh()
     }
     val selectedConversation = contactState.conversations
         .firstOrNull { it.conversationId.toString() == selectedConversationId }
@@ -215,6 +221,10 @@ private fun HomeScreen(
                 onClick = { selectedTab = "history" },
                 modifier = Modifier.weight(1f),
             ) { Text("查历史") }
+            OutlinedButton(
+                onClick = { selectedTab = "groups" },
+                modifier = Modifier.weight(1f),
+            ) { Text("群聊") }
         }
         when (selectedTab) {
             "search" -> ContactSearchPanel(contactState, contactViewModel)
@@ -223,6 +233,12 @@ private fun HomeScreen(
                 conversations = contactState.conversations,
                 viewModel = messageViewModel,
                 onOpenConversation = { selectedConversationId = it.toString() },
+            )
+            "groups" -> GroupPanel(
+                state = groupState,
+                viewModel = groupViewModel,
+                loadGroupAvatar = avatarViewModel::loadGroupAvatar,
+                loadSearchAvatar = avatarViewModel::loadGroupAvatarUrl,
             )
             "requests" -> ContactRequestsPanel(contactState, contactViewModel)
             else -> ContactListPanel(
@@ -307,6 +323,106 @@ private fun LocalSearchPanel(
             }
         }
     }
+}
+
+@Composable
+private fun GroupPanel(
+    state: GroupUiState,
+    viewModel: GroupViewModel,
+    loadGroupAvatar: suspend (UUID, Long) -> ByteArray?,
+    loadSearchAvatar: suspend (String) -> ByteArray?,
+) {
+    var selectedSection by rememberSaveable { mutableStateOf("owned") }
+    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            OutlinedButton(onClick = { selectedSection = "owned" }, modifier = Modifier.weight(1f)) { Text("我的群") }
+            OutlinedButton(onClick = { selectedSection = "search" }, modifier = Modifier.weight(1f)) { Text("找群") }
+            OutlinedButton(onClick = { selectedSection = "create" }, modifier = Modifier.weight(1f)) { Text("建群") }
+        }
+        when (selectedSection) {
+            "search" -> GroupSearchPanel(state, viewModel, loadSearchAvatar)
+            "create" -> GroupCreatePanel(state, viewModel)
+            else -> GroupListPanel(state, loadGroupAvatar)
+        }
+    }
+}
+
+@Composable
+private fun GroupListPanel(state: GroupUiState, load: suspend (UUID, Long) -> ByteArray?) {
+    if (state.groups.isEmpty()) { Text("还没有加入群聊。"); return }
+    state.groups.forEach { group ->
+        Card(Modifier.fillMaxWidth()) {
+            Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                RemoteGroupAvatar(
+                    conversationId = group.conversationId,
+                    avatarVersion = group.avatarVersion,
+                    fallback = group.name.take(2),
+                    load = load,
+                    size = 56.dp,
+                )
+                Text(group.name, style = MaterialTheme.typography.titleMedium)
+                Text("群号 ${group.groupNo}")
+                Text(group.description.ifBlank { "暂无简介" })
+                Text("${group.visibility} · ${group.role} · ${group.memberCount} 人")
+            }
+        }
+    }
+}
+
+@Composable
+private fun GroupSearchPanel(state: GroupUiState, viewModel: GroupViewModel, load: suspend (String) -> ByteArray?) {
+    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        OutlinedTextField(value = state.searchQuery, onValueChange = viewModel::setSearchQuery, label = { Text("群号或 PUBLIC 群名称") }, singleLine = true, modifier = Modifier.fillMaxWidth())
+        Button(onClick = viewModel::search, enabled = state.searchQuery.isNotBlank() && !state.loading, modifier = Modifier.fillMaxWidth()) { Text("搜索群") }
+        state.searchResults.forEach { group ->
+            Card(Modifier.fillMaxWidth()) { Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                group.avatarUrl?.let {
+                    RemoteSearchGroupAvatar(
+                        avatarUrl = it,
+                        fallback = group.name.take(2),
+                        load = load,
+                        size = 56.dp,
+                    )
+                } ?: AvatarView(
+                    bytes = null,
+                    fallback = group.name.take(2),
+                    size = 56.dp,
+                )
+                Text(group.name, style = MaterialTheme.typography.titleMedium)
+                Text(group.description.ifBlank { "暂无简介" })
+                Text("${group.memberCount} 人")
+            }}
+        }
+    }
+}
+
+@Composable
+private fun GroupCreatePanel(state: GroupUiState, viewModel: GroupViewModel) {
+    val context = LocalContext.current
+    val picker = rememberLauncherForActivityResult(ActivityResultContracts.GetContent()) { uri ->
+        if (uri == null) return@rememberLauncherForActivityResult
+        val bytes = context.contentResolver.openInputStream(uri)?.use { readCappedBytes(it, 11 * 1024 * 1024) }
+        viewModel.setAvatar(bytes)
+    }
+    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        OutlinedTextField(state.name, viewModel::setName, label = { Text("群名称") }, singleLine = true, modifier = Modifier.fillMaxWidth())
+        OutlinedTextField(state.description, viewModel::setDescription, label = { Text("群简介") }, modifier = Modifier.fillMaxWidth())
+        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
+            AvatarView(
+                bytes = state.avatar,
+                fallback = state.name.firstOrNull()?.toString() ?: "?",
+                size = 56.dp,
+            )
+            OutlinedButton(onClick = { picker.launch("image/*") }) { Text(if (state.avatar == null) "选择群头像" else "更换群头像") }
+        }
+        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) { listOf("PUBLIC", "UNLISTED", "PRIVATE").forEach { visibility -> OutlinedButton(onClick = { viewModel.setVisibility(visibility) }, modifier = Modifier.weight(1f)) { Text(visibility) } } }
+        Button(onClick = viewModel::create, enabled = !state.loading && state.name.isNotBlank(), modifier = Modifier.fillMaxWidth()) { Text("创建群") }
+    }
+}
+
+private fun readCappedBytes(input: java.io.InputStream, maximumBytes: Int): ByteArray? {
+    val output = ByteArrayOutputStream(); val buffer = ByteArray(DEFAULT_BUFFER_SIZE); var total = 0
+    while (true) { val read = input.read(buffer); if (read < 0) return output.toByteArray(); total += read; if (total > maximumBytes) return null; output.write(buffer, 0, read) }
 }
 
 @Composable
