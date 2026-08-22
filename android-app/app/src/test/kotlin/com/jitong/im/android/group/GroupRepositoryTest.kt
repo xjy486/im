@@ -54,6 +54,49 @@ class GroupRepositoryTest {
                 override suspend fun list() = error("not used")
 
                 override suspend fun search(query: String) = error("not used")
+
+                override suspend fun createInvite(
+                    conversationId: UUID,
+                    request: GroupInviteCreateRequest?,
+                ) = error("not used")
+
+                override suspend fun resolveInvite(token: String) = error("not used")
+
+                override suspend fun revokeInvite(conversationId: UUID, inviteId: UUID) =
+                    error("not used")
+
+                override suspend fun createJoinRequest(
+                    conversationId: UUID,
+                    request: GroupJoinRequestCreateRequest?,
+                ) = error("not used")
+
+                override suspend fun listJoinRequests(conversationId: UUID) = error("not used")
+
+                override suspend fun approveJoinRequest(conversationId: UUID, requestId: UUID) =
+                    error("not used")
+
+                override suspend fun rejectJoinRequest(conversationId: UUID, requestId: UUID) =
+                    error("not used")
+
+                override suspend fun cancelJoinRequest(conversationId: UUID, requestId: UUID) =
+                    error("not used")
+
+                override suspend fun removeMember(conversationId: UUID, userId: UUID) =
+                    error("not used")
+
+                override suspend fun addMember(
+                    conversationId: UUID,
+                    request: GroupMemberAddRequest,
+                ) = error("not used")
+
+                override suspend fun banUser(
+                    conversationId: UUID,
+                    userId: UUID,
+                    request: GroupBanRequest?,
+                ) = error("not used")
+
+                override suspend fun unbanUser(conversationId: UUID, userId: UUID) =
+                    error("not used")
             },
             avatarUploader = avatarUploader,
         )

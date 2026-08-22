@@ -14,6 +14,12 @@ import org.springframework.http.ResponseEntity;
 
 import java.util.Map;
 import java.util.UUID;
+import java.util.List;
+import java.util.concurrent.Callable;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
+import java.net.URI;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
@@ -41,8 +47,8 @@ class GroupContractTest extends ContractTestEnvironment {
         JsonNode unlistedGroup = createGroup(token, "Hidden Lounge", "Share by number", "UNLISTED");
         JsonNode privateGroup = createGroup(token, "Secret Lounge", "Invite only", "PRIVATE");
 
-        assertThat(search(token, "lounge").getStatusCode()).isEqualTo(HttpStatus.OK);
-        JsonNode nameSearch = search(token, "lounge").getBody().get("groups");
+        assertThat(search(token, "Jitong Lounge").getStatusCode()).isEqualTo(HttpStatus.OK);
+        JsonNode nameSearch = search(token, "Jitong Lounge").getBody().get("groups");
         assertThat(nameSearch).hasSize(1);
         assertThat(nameSearch.get(0).get("name").asText()).isEqualTo("Jitong Lounge");
 
@@ -130,6 +136,153 @@ class GroupContractTest extends ContractTestEnvironment {
         assertThat(response.getStatusCode()).isEqualTo(HttpStatus.CONFLICT);
     }
 
+    @Test
+    void invite_link_is_expiring_usage_limited_and_approval_gated() throws Exception {
+        TestUser owner = createUser("Invite owner");
+        TestUser applicant = createUser("Invite applicant");
+        TestUser secondApplicant = createUser("Second applicant");
+        String ownerToken = login(owner.accountNo(), "invite-owner");
+        String applicantToken = login(applicant.accountNo(), "invite-applicant");
+        String secondApplicantToken = login(secondApplicant.accountNo(), "invite-second-applicant");
+
+        JsonNode group = createGroup(ownerToken, "Invite Lounge", "Approval required", "PRIVATE");
+        UUID conversationId = UUID.fromString(group.get("conversationId").asText());
+        JsonNode invite = exchange(
+                HttpMethod.POST,
+                "/api/v1/groups/" + conversationId + "/invites",
+                ownerToken,
+                Map.of("maxUses", 1, "expiresInSeconds", 600))
+                .getBody();
+        String deepLink = invite.get("deepLink").asText();
+        assertThat(deepLink).startsWith("https://");
+        assertThat(invite.get("qrPayload").asText()).isEqualTo(deepLink);
+        String token = URI.create(deepLink).getQuery().substring("token=".length());
+
+        ResponseEntity<JsonNode> resolved = exchange(
+                HttpMethod.GET,
+                "/api/v1/groups/invites/resolve?token=" + token,
+                applicantToken,
+                null);
+        assertThat(resolved.getStatusCode()).isEqualTo(HttpStatus.OK);
+        assertThat(resolved.getBody().get("conversationId").asText())
+                .isEqualTo(conversationId.toString());
+
+        ResponseEntity<JsonNode> firstRequest = exchange(
+                HttpMethod.POST,
+                "/api/v1/groups/" + conversationId + "/join-requests",
+                applicantToken,
+                Map.of("inviteToken", token));
+        assertThat(firstRequest.getStatusCode()).isEqualTo(HttpStatus.OK);
+        assertThat(firstRequest.getBody().get("status").asText()).isEqualTo("PENDING");
+        UUID requestId = UUID.fromString(firstRequest.getBody().get("requestId").asText());
+
+        ResponseEntity<JsonNode> duplicateRequest = exchange(
+                HttpMethod.POST,
+                "/api/v1/groups/" + conversationId + "/join-requests",
+                applicantToken,
+                Map.of("inviteToken", token));
+        assertThat(duplicateRequest.getStatusCode()).isEqualTo(HttpStatus.OK);
+        assertThat(duplicateRequest.getBody().get("requestId").asText())
+                .isEqualTo(requestId.toString());
+
+        assertThat(exchange(HttpMethod.GET, "/api/v1/groups", applicantToken, null)
+                .getBody()).isEmpty();
+        JsonNode queue = exchange(
+                HttpMethod.GET,
+                "/api/v1/groups/" + conversationId + "/join-requests",
+                ownerToken,
+                null).getBody();
+        assertThat(queue).hasSize(1);
+        assertThat(queue.get(0).get("userId").asText()).isEqualTo(applicant.userId().toString());
+
+        ResponseEntity<JsonNode> approved = exchange(
+                HttpMethod.POST,
+                "/api/v1/groups/" + conversationId + "/join-requests/" + requestId + "/approve",
+                ownerToken,
+                null);
+        assertThat(approved.getStatusCode()).isEqualTo(HttpStatus.OK);
+        assertThat(approved.getBody().get("status").asText()).isEqualTo("APPROVED");
+        assertThat(exchange(HttpMethod.GET, "/api/v1/groups", applicantToken, null)
+                .getBody()).hasSize(1);
+
+        assertThat(exchange(
+                HttpMethod.POST,
+                "/api/v1/groups/" + conversationId + "/join-requests",
+                secondApplicantToken,
+                Map.of("inviteToken", token)).getStatusCode())
+                .isEqualTo(HttpStatus.NOT_FOUND);
+    }
+
+    @Test
+    void ordinary_removal_allows_reapplication_but_ban_blocks_every_entry_path() throws Exception {
+        TestUser owner = createUser("Ban owner");
+        TestUser member = createUser("Ban member");
+        String ownerToken = login(owner.accountNo(), "ban-owner");
+        String memberToken = login(member.accountNo(), "ban-member");
+
+        JsonNode group = createGroup(ownerToken, "Governed Lounge", "", "PUBLIC");
+        UUID conversationId = UUID.fromString(group.get("conversationId").asText());
+        assertThat(addMember(ownerToken, conversationId, member.accountNo()).getStatusCode())
+                .isEqualTo(HttpStatus.OK);
+
+        assertThat(exchange(
+                HttpMethod.DELETE,
+                "/api/v1/groups/" + conversationId + "/members/" + member.userId(),
+                ownerToken,
+                null).getStatusCode()).isEqualTo(HttpStatus.NO_CONTENT);
+        assertThat(exchange(
+                HttpMethod.POST,
+                "/api/v1/groups/" + conversationId + "/join-requests",
+                memberToken,
+                null).getStatusCode()).isEqualTo(HttpStatus.OK);
+
+        assertThat(exchange(
+                HttpMethod.POST,
+                "/api/v1/groups/" + conversationId + "/bans/" + member.userId(),
+                ownerToken,
+                Map.of("reason", "abuse")).getStatusCode())
+                .isEqualTo(HttpStatus.NO_CONTENT);
+        assertThat(search(memberToken, group.get("groupNo").asText()).getStatusCode())
+                .isEqualTo(HttpStatus.NOT_FOUND);
+        assertThat(addMember(ownerToken, conversationId, member.accountNo()).getStatusCode())
+                .isEqualTo(HttpStatus.FORBIDDEN);
+        assertThat(exchange(
+                HttpMethod.POST,
+                "/api/v1/groups/" + conversationId + "/join-requests",
+                memberToken,
+                null).getStatusCode()).isEqualTo(HttpStatus.FORBIDDEN);
+    }
+
+    @Test
+    void concurrent_join_requests_are_idempotent() throws Exception {
+        TestUser owner = createUser("Concurrent owner");
+        TestUser applicant = createUser("Concurrent applicant");
+        String ownerToken = login(owner.accountNo(), "concurrent-owner");
+        String applicantToken = login(applicant.accountNo(), "concurrent-applicant");
+        JsonNode group = createGroup(ownerToken, "Concurrent Lounge", "", "PUBLIC");
+        UUID conversationId = UUID.fromString(group.get("conversationId").asText());
+
+        ExecutorService executor = Executors.newFixedThreadPool(8);
+        try {
+            List<Callable<ResponseEntity<JsonNode>>> calls = java.util.stream.IntStream.range(0, 8)
+                    .mapToObj(ignored -> (Callable<ResponseEntity<JsonNode>>) () -> exchange(
+                            HttpMethod.POST,
+                            "/api/v1/groups/" + conversationId + "/join-requests",
+                            applicantToken,
+                            null))
+                    .toList();
+            List<Future<ResponseEntity<JsonNode>>> responses = executor.invokeAll(calls);
+            List<ResponseEntity<JsonNode>> completed = responses.stream().map(this::get).toList();
+            assertThat(completed).allSatisfy(response ->
+                    assertThat(response.getStatusCode()).isEqualTo(HttpStatus.OK));
+            assertThat(completed.stream()
+                    .map(response -> response.getBody().get("requestId").asText())
+                    .distinct()).hasSize(1);
+        } finally {
+            executor.shutdownNow();
+        }
+    }
+
     private JsonNode createGroup(
             String token,
             String name,
@@ -162,6 +315,14 @@ class GroupContractTest extends ContractTestEnvironment {
                 "/api/v1/groups/" + conversationId + "/members",
                 token,
                 Map.of("accountNo", accountNo));
+    }
+
+    private ResponseEntity<JsonNode> get(Future<ResponseEntity<JsonNode>> response) {
+        try {
+            return response.get();
+        } catch (Exception exception) {
+            throw new AssertionError(exception);
+        }
     }
 
     private TestUser createUser(String displayName) throws Exception {

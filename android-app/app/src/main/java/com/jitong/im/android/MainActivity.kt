@@ -4,6 +4,7 @@ import android.Manifest
 import android.content.pm.PackageManager
 import android.os.Build
 import android.os.Bundle
+import android.content.Intent
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.viewModels
@@ -56,6 +57,23 @@ class MainActivity : ComponentActivity() {
                 )
             }
         }
+        handleInviteIntent(intent)
+    }
+
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        setIntent(intent)
+        handleInviteIntent(intent)
+    }
+
+    private fun handleInviteIntent(intent: Intent?) {
+        val data = intent?.data ?: return
+        if (data.scheme != "https"
+            || data.host != BuildConfig.INVITE_HOST
+            || data.path != "/groups/invite"
+        ) return
+        val token = data.getQueryParameter("token") ?: return
+        groupViewModel.openInviteToken(token)
     }
 
 }

@@ -3,6 +3,7 @@ package com.jitong.im.group;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.validation.Valid;
 import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestHeader;
@@ -42,9 +43,113 @@ class GroupController {
     GroupMemberAddResponse addMember(
             @RequestHeader(value = "Authorization", required = false) String authorization,
             @PathVariable java.util.UUID conversationId,
-            @RequestBody GroupMemberAddRequest request
+            @Valid @RequestBody GroupMemberAddRequest request
     ) {
         return service.addMember(authorization, conversationId, request);
+    }
+
+    @DeleteMapping("/{conversationId}/members/{userId}")
+    org.springframework.http.ResponseEntity<Void> removeMember(
+            @RequestHeader(value = "Authorization", required = false) String authorization,
+            @PathVariable java.util.UUID conversationId,
+            @PathVariable java.util.UUID userId
+    ) {
+        service.removeMember(authorization, conversationId, userId);
+        return org.springframework.http.ResponseEntity.noContent().build();
+    }
+
+    @PostMapping("/{conversationId}/invites")
+    GroupInviteResponse createInvite(
+            @RequestHeader(value = "Authorization", required = false) String authorization,
+            @PathVariable java.util.UUID conversationId,
+            @Valid @RequestBody(required = false) GroupInviteCreateRequest request
+    ) {
+        return service.createInvite(authorization, conversationId, request);
+    }
+
+    @GetMapping("/invites/resolve")
+    GroupInviteResolveResponse resolveInvite(
+            @RequestHeader(value = "Authorization", required = false) String authorization,
+            @RequestParam String token,
+            HttpServletRequest request
+    ) {
+        return service.resolveInvite(authorization, token, clientIp(request));
+    }
+
+    @DeleteMapping("/{conversationId}/invites/{inviteId}")
+    org.springframework.http.ResponseEntity<Void> revokeInvite(
+            @RequestHeader(value = "Authorization", required = false) String authorization,
+            @PathVariable java.util.UUID conversationId,
+            @PathVariable java.util.UUID inviteId
+    ) {
+        service.revokeInvite(authorization, conversationId, inviteId);
+        return org.springframework.http.ResponseEntity.noContent().build();
+    }
+
+    @PostMapping("/{conversationId}/join-requests")
+    GroupJoinRequestResponse createJoinRequest(
+            @RequestHeader(value = "Authorization", required = false) String authorization,
+            @PathVariable java.util.UUID conversationId,
+            @Valid @RequestBody(required = false) GroupJoinRequestCreateRequest request,
+            HttpServletRequest servletRequest
+    ) {
+        return service.createJoinRequest(authorization, conversationId, request, clientIp(servletRequest));
+    }
+
+    @GetMapping("/{conversationId}/join-requests")
+    List<GroupJoinRequestSummary> listJoinRequests(
+            @RequestHeader(value = "Authorization", required = false) String authorization,
+            @PathVariable java.util.UUID conversationId
+    ) {
+        return service.listJoinRequests(authorization, conversationId);
+    }
+
+    @PostMapping("/{conversationId}/join-requests/{requestId}/approve")
+    GroupJoinRequestResponse approveJoinRequest(
+            @RequestHeader(value = "Authorization", required = false) String authorization,
+            @PathVariable java.util.UUID conversationId,
+            @PathVariable java.util.UUID requestId
+    ) {
+        return service.approveJoinRequest(authorization, conversationId, requestId);
+    }
+
+    @PostMapping("/{conversationId}/join-requests/{requestId}/reject")
+    GroupJoinRequestResponse rejectJoinRequest(
+            @RequestHeader(value = "Authorization", required = false) String authorization,
+            @PathVariable java.util.UUID conversationId,
+            @PathVariable java.util.UUID requestId
+    ) {
+        return service.rejectJoinRequest(authorization, conversationId, requestId);
+    }
+
+    @PostMapping("/{conversationId}/join-requests/{requestId}/cancel")
+    GroupJoinRequestResponse cancelJoinRequest(
+            @RequestHeader(value = "Authorization", required = false) String authorization,
+            @PathVariable java.util.UUID conversationId,
+            @PathVariable java.util.UUID requestId
+    ) {
+        return service.cancelJoinRequest(authorization, conversationId, requestId);
+    }
+
+    @PostMapping("/{conversationId}/bans/{userId}")
+    org.springframework.http.ResponseEntity<Void> banUser(
+            @RequestHeader(value = "Authorization", required = false) String authorization,
+            @PathVariable java.util.UUID conversationId,
+            @PathVariable java.util.UUID userId,
+            @Valid @RequestBody(required = false) GroupBanRequest request
+    ) {
+        service.banUser(authorization, conversationId, userId, request);
+        return org.springframework.http.ResponseEntity.noContent().build();
+    }
+
+    @DeleteMapping("/{conversationId}/bans/{userId}")
+    org.springframework.http.ResponseEntity<Void> unbanUser(
+            @RequestHeader(value = "Authorization", required = false) String authorization,
+            @PathVariable java.util.UUID conversationId,
+            @PathVariable java.util.UUID userId
+    ) {
+        service.unbanUser(authorization, conversationId, userId);
+        return org.springframework.http.ResponseEntity.noContent().build();
     }
 
     @GetMapping("/search")

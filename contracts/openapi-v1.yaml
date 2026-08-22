@@ -306,6 +306,236 @@ paths:
           $ref: '#/components/responses/ApiError'
         '409':
           $ref: '#/components/responses/ApiError'
+  /api/v1/groups/{conversationId}/members/{userId}:
+    delete:
+      operationId: removeGroupMember
+      summary: Remove an ordinary member so they may apply again later
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { $ref: '#/components/parameters/ConversationId' }
+        - { $ref: '#/components/parameters/UserId' }
+      responses:
+        '204': { description: Member removed }
+        '401':
+          $ref: '#/components/responses/ApiError'
+        '403':
+          $ref: '#/components/responses/ApiError'
+  /api/v1/groups/{conversationId}/invites:
+    post:
+      operationId: createGroupInvite
+      summary: Create an expiring, usage-limited invitation deep link
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { $ref: '#/components/parameters/ConversationId' }
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              properties:
+                maxUses: { type: integer, minimum: 1, maximum: 10000, default: 100 }
+                expiresInSeconds: { type: integer, minimum: 60, maximum: 2592000, default: 604800 }
+      responses:
+        '200':
+          description: Invitation token metadata and HTTPS deep link
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/GroupInviteResponse' }
+        '400':
+          $ref: '#/components/responses/ApiError'
+        '401':
+          $ref: '#/components/responses/ApiError'
+        '403':
+          $ref: '#/components/responses/ApiError'
+  /api/v1/groups/invites/resolve:
+    get:
+      operationId: resolveGroupInvite
+      summary: Resolve an invitation token into a group application page
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - name: token
+          in: query
+          required: true
+          schema: { type: string, minLength: 20, maxLength: 128 }
+      responses:
+        '200':
+          description: Group application page metadata
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/GroupInviteResolveResponse' }
+        '400':
+          $ref: '#/components/responses/ApiError'
+        '401':
+          $ref: '#/components/responses/ApiError'
+        '404':
+          $ref: '#/components/responses/ApiError'
+  /api/v1/groups/{conversationId}/invites/{inviteId}:
+    delete:
+      operationId: revokeGroupInvite
+      summary: Revoke an invitation token immediately
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { $ref: '#/components/parameters/ConversationId' }
+        - name: inviteId
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        '204': { description: Invitation revoked }
+        '401':
+          $ref: '#/components/responses/ApiError'
+        '403':
+          $ref: '#/components/responses/ApiError'
+        '404':
+          $ref: '#/components/responses/ApiError'
+  /api/v1/groups/{conversationId}/join-requests:
+    post:
+      operationId: createGroupJoinRequest
+      summary: Submit an approval-gated group membership request
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { $ref: '#/components/parameters/ConversationId' }
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              properties:
+                inviteToken: { type: [string, 'null'], minLength: 20, maxLength: 128 }
+      responses:
+        '200':
+          description: Idempotent pending or resolved join request
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/GroupJoinRequestResponse' }
+        '400':
+          $ref: '#/components/responses/ApiError'
+        '401':
+          $ref: '#/components/responses/ApiError'
+        '403':
+          $ref: '#/components/responses/ApiError'
+        '404':
+          $ref: '#/components/responses/ApiError'
+        '409':
+          $ref: '#/components/responses/ApiError'
+    get:
+      operationId: listGroupJoinRequests
+      summary: List group join requests for an owner or administrator
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { $ref: '#/components/parameters/ConversationId' }
+      responses:
+        '200':
+          description: Join request moderation queue
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: '#/components/schemas/GroupJoinRequestSummary' }
+        '401':
+          $ref: '#/components/responses/ApiError'
+        '403':
+          $ref: '#/components/responses/ApiError'
+  /api/v1/groups/{conversationId}/join-requests/{requestId}/approve:
+    post:
+      operationId: approveGroupJoinRequest
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { $ref: '#/components/parameters/ConversationId' }
+        - { $ref: '#/components/parameters/RequestId' }
+      responses:
+        '200':
+          description: Approved or already resolved join request
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/GroupJoinRequestResponse' }
+        '401':
+          $ref: '#/components/responses/ApiError'
+        '403':
+          $ref: '#/components/responses/ApiError'
+        '404':
+          $ref: '#/components/responses/ApiError'
+        '409':
+          $ref: '#/components/responses/ApiError'
+  /api/v1/groups/{conversationId}/join-requests/{requestId}/reject:
+    post:
+      operationId: rejectGroupJoinRequest
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { $ref: '#/components/parameters/ConversationId' }
+        - { $ref: '#/components/parameters/RequestId' }
+      responses:
+        '200':
+          description: Rejected or already resolved join request
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/GroupJoinRequestResponse' }
+        '401':
+          $ref: '#/components/responses/ApiError'
+        '403':
+          $ref: '#/components/responses/ApiError'
+        '404':
+          $ref: '#/components/responses/ApiError'
+  /api/v1/groups/{conversationId}/join-requests/{requestId}/cancel:
+    post:
+      operationId: cancelGroupJoinRequest
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { $ref: '#/components/parameters/ConversationId' }
+        - { $ref: '#/components/parameters/RequestId' }
+      responses:
+        '200':
+          description: Cancelled or already resolved join request
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/GroupJoinRequestResponse' }
+        '401':
+          $ref: '#/components/responses/ApiError'
+        '403':
+          $ref: '#/components/responses/ApiError'
+  /api/v1/groups/{conversationId}/bans/{userId}:
+    post:
+      operationId: banGroupUser
+      summary: Remove and ban a user from group discovery and entry
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { $ref: '#/components/parameters/ConversationId' }
+        - { $ref: '#/components/parameters/UserId' }
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              properties:
+                reason: { type: string, maxLength: 500 }
+      responses:
+        '204': { description: User banned }
+        '400':
+          $ref: '#/components/responses/ApiError'
+        '401':
+          $ref: '#/components/responses/ApiError'
+        '403':
+          $ref: '#/components/responses/ApiError'
+        '404':
+          $ref: '#/components/responses/ApiError'
+    delete:
+      operationId: unbanGroupUser
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { $ref: '#/components/parameters/ConversationId' }
+        - { $ref: '#/components/parameters/UserId' }
+      responses:
+        '204': { description: User unbanned }
+        '401':
+          $ref: '#/components/responses/ApiError'
+        '403':
+          $ref: '#/components/responses/ApiError'
   /api/v1/groups/{conversationId}/profile:
     get:
       operationId: getGroupAvatarProfile
@@ -922,6 +1152,67 @@ components:
         userId: { type: string, format: uuid }
         role: { const: MEMBER }
         memberCount: { type: integer, minimum: 1, maximum: 100 }
+    GroupInviteResponse:
+      type: object
+      additionalProperties: false
+      required: [version, inviteId, conversationId, maxUses, useCount, expiresAt, deepLink, qrPayload]
+      properties:
+        version: { const: 1 }
+        inviteId: { type: string, format: uuid }
+        conversationId: { type: string, format: uuid }
+        maxUses: { type: integer, minimum: 1, maximum: 10000 }
+        useCount: { type: integer, minimum: 0 }
+        expiresAt: { type: string, format: date-time }
+        deepLink: { type: string, format: uri, pattern: '^https://' }
+        qrPayload: { type: string, format: uri, pattern: '^https://' }
+    GroupInviteResolveResponse:
+      type: object
+      additionalProperties: false
+      required:
+        [version, conversationId, groupNo, name, description, visibility,
+         avatarUrl, avatarVersion, memberCount, expiresAt]
+      properties:
+        version: { const: 1 }
+        conversationId: { type: string, format: uuid }
+        groupNo: { type: string, pattern: '^[1-9][0-9]{10}$' }
+        name: { type: string }
+        description: { type: string }
+        visibility: { type: string, enum: [PUBLIC, UNLISTED, PRIVATE] }
+        avatarUrl: { type: [string, 'null'] }
+        avatarVersion: { type: integer, format: int64, minimum: 0 }
+        memberCount: { type: integer, minimum: 1, maximum: 100 }
+        expiresAt: { type: string, format: date-time }
+    GroupJoinRequestResponse:
+      type: object
+      additionalProperties: false
+      required:
+        [version, requestId, conversationId, userId, status, inviteId, createdAt, resolvedAt]
+      properties:
+        version: { const: 1 }
+        requestId: { type: string, format: uuid }
+        conversationId: { type: string, format: uuid }
+        userId: { type: string, format: uuid }
+        status: { type: string, enum: [PENDING, APPROVED, REJECTED, CANCELLED, EXPIRED] }
+        inviteId: { type: [string, 'null'], format: uuid }
+        createdAt: { type: string, format: date-time }
+        resolvedAt: { type: [string, 'null'], format: date-time }
+    GroupJoinRequestSummary:
+      type: object
+      additionalProperties: false
+      required:
+        [version, requestId, conversationId, userId, status, inviteId, createdAt,
+         resolvedAt, accountNo, displayName]
+      properties:
+        version: { const: 1 }
+        requestId: { type: string, format: uuid }
+        conversationId: { type: string, format: uuid }
+        userId: { type: string, format: uuid }
+        status: { type: string, enum: [PENDING, APPROVED, REJECTED, CANCELLED, EXPIRED] }
+        inviteId: { type: [string, 'null'], format: uuid }
+        createdAt: { type: string, format: date-time }
+        resolvedAt: { type: [string, 'null'], format: date-time }
+        accountNo: { type: string, pattern: '^[1-9][0-9]{10}$' }
+        displayName: { type: string }
     ConversationReadState:
       type: object
       additionalProperties: false

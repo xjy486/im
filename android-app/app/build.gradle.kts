@@ -29,6 +29,12 @@ android {
         buildConfigField("String", "FIREBASE_GCM_SENDER_ID", "\"${firebaseProperty("firebaseGcmSenderId")}\"")
         buildConfigField("String", "FIREBASE_PROJECT_ID", "\"${firebaseProperty("firebaseProjectId")}\"")
         buildConfigField("String", "FIREBASE_STORAGE_BUCKET", "\"${firebaseProperty("firebaseStorageBucket")}\"")
+        buildConfigField(
+            "String",
+            "INVITE_HOST",
+            "\"${project.findProperty("jitongInviteHost") ?: "app.jitong.im"}\""
+        )
+        manifestPlaceholders["inviteHost"] = project.findProperty("jitongInviteHost") ?: "app.jitong.im"
     }
 
     buildTypes {
@@ -104,6 +110,7 @@ dependencies {
     implementation("com.squareup.retrofit2:retrofit:2.11.0")
     implementation("com.squareup.retrofit2:converter-gson:2.11.0")
     implementation("com.squareup.okhttp3:logging-interceptor:4.12.0")
+    implementation("com.google.zxing:core:3.5.3")
 
     testImplementation("junit:junit:4.13.2")
     testImplementation("org.jetbrains.kotlinx:kotlinx-coroutines-test:1.9.0")

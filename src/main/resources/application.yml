@@ -37,6 +37,8 @@ jitong:
       max-failures: ${AUTH_LOGIN_MAX_FAILURES:5}
       window: ${AUTH_LOGIN_RATE_WINDOW:1m}
       block: ${AUTH_LOGIN_RATE_BLOCK:1m}
+  group:
+    invite-deep-link-base: ${GROUP_INVITE_DEEP_LINK_BASE:https://app.jitong.im/groups/invite}
   media:
     endpoint: ${MINIO_ENDPOINT:http://localhost:9000}
     access-key: ${MINIO_ACCESS_KEY:jitong-local}

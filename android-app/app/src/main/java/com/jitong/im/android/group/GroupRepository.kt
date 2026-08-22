@@ -2,6 +2,7 @@ package com.jitong.im.android.group
 
 import retrofit2.Response
 import java.io.IOException
+import java.util.UUID
 
 internal class GroupRepository(
     private val api: GroupApi,
@@ -27,8 +28,59 @@ internal class GroupRepository(
     suspend fun search(query: String): List<GroupSearchResult> =
         api.search(query).bodyOrThrow("Group search").groups
 
+    suspend fun createInvite(conversationId: UUID, maxUses: Int? = null): GroupInviteResponse =
+        api.createInvite(
+            conversationId,
+            if (maxUses == null) null else GroupInviteCreateRequest(maxUses = maxUses),
+        ).bodyOrThrow("Group invite creation")
+
+    suspend fun resolveInvite(token: String): GroupInviteResolveResponse =
+        api.resolveInvite(token).bodyOrThrow("Group invite resolution")
+
+    suspend fun revokeInvite(conversationId: UUID, inviteId: UUID) {
+        api.revokeInvite(conversationId, inviteId).ensureSuccessful("Group invite revocation")
+    }
+
+    suspend fun createJoinRequest(conversationId: UUID, inviteToken: String? = null): GroupJoinRequestResponse =
+        api.createJoinRequest(
+            conversationId,
+            GroupJoinRequestCreateRequest(inviteToken),
+        ).bodyOrThrow("Group join request")
+
+    suspend fun listJoinRequests(conversationId: UUID): List<GroupJoinRequestSummary> =
+        api.listJoinRequests(conversationId).bodyOrThrow("Group join request list")
+
+    suspend fun approveJoinRequest(conversationId: UUID, requestId: UUID): GroupJoinRequestResponse =
+        api.approveJoinRequest(conversationId, requestId).bodyOrThrow("Group join request approval")
+
+    suspend fun rejectJoinRequest(conversationId: UUID, requestId: UUID): GroupJoinRequestResponse =
+        api.rejectJoinRequest(conversationId, requestId).bodyOrThrow("Group join request rejection")
+
+    suspend fun cancelJoinRequest(conversationId: UUID, requestId: UUID): GroupJoinRequestResponse =
+        api.cancelJoinRequest(conversationId, requestId).bodyOrThrow("Group join request cancellation")
+
+    suspend fun removeMember(conversationId: UUID, userId: UUID) {
+        api.removeMember(conversationId, userId).ensureSuccessful("Group member removal")
+    }
+
+    suspend fun addMember(conversationId: UUID, accountNo: String): GroupMemberAddResponse =
+        api.addMember(conversationId, GroupMemberAddRequest(accountNo))
+            .bodyOrThrow("Direct group invitation")
+
+    suspend fun banUser(conversationId: UUID, userId: UUID, reason: String? = null) {
+        api.banUser(conversationId, userId, GroupBanRequest(reason)).ensureSuccessful("Group ban")
+    }
+
+    suspend fun unbanUser(conversationId: UUID, userId: UUID) {
+        api.unbanUser(conversationId, userId).ensureSuccessful("Group unban")
+    }
+
     private fun <T> Response<T>.bodyOrThrow(operation: String): T {
         if (isSuccessful && body() != null) return body()!!
         throw IOException("$operation failed with HTTP ${code()}")
+    }
+
+    private fun Response<*>.ensureSuccessful(operation: String) {
+        if (!isSuccessful) throw IOException("$operation failed with HTTP ${code()}")
     }
 }

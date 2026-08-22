@@ -13,6 +13,8 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Button
@@ -38,7 +40,12 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.input.PasswordVisualTransformation
+import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.unit.dp
+import android.graphics.Bitmap
+import android.graphics.Color
+import com.google.zxing.BarcodeFormat
+import com.google.zxing.MultiFormatWriter
 import java.io.ByteArrayOutputStream
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.jitong.im.android.auth.SessionState
@@ -190,10 +197,19 @@ private fun HomeScreen(
     var selectedConversationId by rememberSaveable { mutableStateOf<String?>(null) }
     var selectedMessageId by rememberSaveable { mutableStateOf<String?>(null) }
     LaunchedEffect(state.session.userId) {
+        selectedConversationId = null
+        selectedMessageId = null
         messageViewModel.clearForLogout()
         contactViewModel.refresh()
         avatarViewModel.refresh()
         groupViewModel.refresh()
+    }
+    LaunchedEffect(groupState.autoResolveInvite) {
+        if (groupState.autoResolveInvite) {
+            selectedConversationId = null
+            selectedMessageId = null
+            selectedTab = "groups"
+        }
     }
     val selectedConversation = contactState.conversations
         .firstOrNull { it.conversationId.toString() == selectedConversationId }
@@ -357,22 +373,34 @@ private fun GroupPanel(
     loadSearchAvatar: suspend (String) -> ByteArray?,
 ) {
     var selectedSection by rememberSaveable { mutableStateOf("owned") }
+    LaunchedEffect(state.autoResolveInvite) {
+        if (state.autoResolveInvite) {
+            selectedSection = "invite"
+            viewModel.resolveInvite()
+        }
+    }
     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             OutlinedButton(onClick = { selectedSection = "owned" }, modifier = Modifier.weight(1f)) { Text("我的群") }
             OutlinedButton(onClick = { selectedSection = "search" }, modifier = Modifier.weight(1f)) { Text("找群") }
+            OutlinedButton(onClick = { selectedSection = "invite" }, modifier = Modifier.weight(1f)) { Text("邀请") }
             OutlinedButton(onClick = { selectedSection = "create" }, modifier = Modifier.weight(1f)) { Text("建群") }
         }
         when (selectedSection) {
             "search" -> GroupSearchPanel(state, viewModel, loadSearchAvatar)
+            "invite" -> GroupInvitePanel(state, viewModel)
             "create" -> GroupCreatePanel(state, viewModel)
-            else -> GroupListPanel(state, loadGroupAvatar)
+            else -> GroupListPanel(state, viewModel, loadGroupAvatar)
         }
     }
 }
 
 @Composable
-private fun GroupListPanel(state: GroupUiState, load: suspend (UUID, Long) -> ByteArray?) {
+private fun GroupListPanel(
+    state: GroupUiState,
+    viewModel: GroupViewModel,
+    load: suspend (UUID, Long) -> ByteArray?,
+) {
     if (state.groups.isEmpty()) { Text("还没有加入群聊。"); return }
     state.groups.forEach { group ->
         Card(Modifier.fillMaxWidth()) {
@@ -388,6 +416,101 @@ private fun GroupListPanel(state: GroupUiState, load: suspend (UUID, Long) -> By
                 Text("群号 ${group.groupNo}")
                 Text(group.description.ifBlank { "暂无简介" })
                 Text("${group.visibility} · ${group.role} · ${group.memberCount} 人")
+                if (group.role == "OWNER" || group.role == "ADMIN") {
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        OutlinedButton(onClick = { viewModel.createInvite(group) }) { Text("生成邀请") }
+                        OutlinedButton(onClick = { viewModel.loadJoinRequests(group) }) { Text("入群审批") }
+                    }
+                    OutlinedTextField(
+                        value = state.directInviteAccountNo,
+                        onValueChange = viewModel::setDirectInviteAccountNo,
+                        label = { Text("直接邀请账号") },
+                        singleLine = true,
+                        modifier = Modifier.fillMaxWidth(),
+                    )
+                    Button(
+                        onClick = { viewModel.directInvite(group) },
+                        enabled = !state.loading,
+                        modifier = Modifier.fillMaxWidth(),
+                    ) { Text("无需审批直接加入") }
+                }
+                state.createdInvite
+                    ?.takeIf { it.conversationId == group.conversationId }
+                    ?.let { invite ->
+                        Text("邀请链接：${invite.deepLink}", style = MaterialTheme.typography.bodySmall)
+                        InviteQrCode(invite.qrPayload)
+                    }
+                state.joinRequests
+                    .filter { it.conversationId == group.conversationId && it.status == "PENDING" }
+                    .forEach { request ->
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            Text("${request.displayName} 申请入群")
+                            Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                                Button(onClick = { viewModel.approveJoinRequest(request) }) {
+                                    Text("通过")
+                                }
+                                OutlinedButton(onClick = { viewModel.rejectJoinRequest(request) }) {
+                                    Text("拒绝")
+                                }
+                            }
+                        }
+                    }
+            }
+        }
+    }
+}
+
+@Composable
+private fun InviteQrCode(payload: String) {
+    val bitmap = remember(payload) { createQrBitmap(payload) } ?: return
+    Image(
+        bitmap = bitmap.asImageBitmap(),
+        contentDescription = "群邀请二维码",
+        modifier = Modifier.size(220.dp),
+    )
+}
+
+private fun createQrBitmap(payload: String): Bitmap? = runCatching {
+    val matrix = MultiFormatWriter().encode(payload, BarcodeFormat.QR_CODE, 512, 512)
+    val bitmap = Bitmap.createBitmap(matrix.width, matrix.height, Bitmap.Config.ARGB_8888)
+    for (x in 0 until matrix.width) {
+        for (y in 0 until matrix.height) {
+            bitmap.setPixel(x, y, if (matrix[x, y]) Color.BLACK else Color.WHITE)
+        }
+    }
+    bitmap
+}.getOrNull()
+
+@Composable
+private fun GroupInvitePanel(
+    state: GroupUiState,
+    viewModel: GroupViewModel,
+) {
+    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        OutlinedTextField(
+            value = state.inviteToken,
+            onValueChange = viewModel::setInviteToken,
+            label = { Text("邀请令牌") },
+            singleLine = true,
+            modifier = Modifier.fillMaxWidth(),
+        )
+        Button(
+            onClick = viewModel::resolveInvite,
+            enabled = state.inviteToken.isNotBlank() && !state.loading,
+            modifier = Modifier.fillMaxWidth(),
+        ) { Text("打开邀请页") }
+        state.invite?.let { invite ->
+            Card(Modifier.fillMaxWidth()) {
+                Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                    Text(invite.name, style = MaterialTheme.typography.titleMedium)
+                    Text(invite.description.ifBlank { "暂无简介" })
+                    Text("${invite.visibility} · ${invite.memberCount} 人")
+                    Button(onClick = viewModel::requestToJoin) { Text("提交入群申请") }
+                }
             }
         }
     }

@@ -1,4 +1,7 @@
 services:
+  server:
+    environment:
+      GROUP_INVITE_DEEP_LINK_BASE: https://${JITONG_DOMAIN:?set JITONG_DOMAIN to the public hostname}/groups/invite
   caddy:
     command:
       - caddy

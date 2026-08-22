@@ -41,6 +41,7 @@ services:
       MINIO_SECRET_KEY: ${MINIO_ROOT_PASSWORD:?run scripts/dev-up.sh first}
       MINIO_BUCKET: ${MINIO_BUCKET:-jitong-media}
       ADMIN_API_KEY: ${ADMIN_API_KEY:?run scripts/dev-up.sh first}
+      GROUP_INVITE_DEEP_LINK_BASE: ${GROUP_INVITE_DEEP_LINK_BASE:-https://app.jitong.im/groups/invite}
       JAVA_TOOL_OPTIONS: -Xms256m -Xmx640m -XX:MaxMetaspaceSize=192m
     networks:
       - backend
