@@ -22,6 +22,9 @@
       "$ref": "#/$defs/groupProfileEnvelope"
     },
     {
+      "$ref": "#/$defs/membershipEnvelope"
+    },
+    {
       "$ref": "#/$defs/errorEnvelope"
     }
   ],
@@ -167,6 +170,24 @@
             },
             "body": {
               "$ref": "#/$defs/groupProfileBody"
+            }
+          }
+        }
+      ]
+    },
+    "membershipEnvelope": {
+      "allOf": [
+        {
+          "$ref": "#/$defs/baseEnvelope"
+        },
+        {
+          "type": "object",
+          "properties": {
+            "operation": {
+              "enum": ["membership.revoked", "membership.granted", "group.dissolved"]
+            },
+            "body": {
+              "$ref": "#/$defs/membershipBody"
             }
           }
         }
@@ -367,6 +388,15 @@
         "conversationId": { "type": "string", "format": "uuid" },
         "avatarUrl": { "type": ["string", "null"] },
         "avatarVersion": { "type": "integer", "minimum": 0 },
+        "syncSeq": { "type": "integer", "minimum": 1 }
+      }
+    },
+    "membershipBody": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["conversationId", "syncSeq"],
+      "properties": {
+        "conversationId": { "type": "string", "format": "uuid" },
         "syncSeq": { "type": "integer", "minimum": 1 }
       }
     },

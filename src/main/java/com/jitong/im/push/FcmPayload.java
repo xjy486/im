@@ -18,4 +18,5 @@ final class FcmPayload {
                 "version", "1",
                 "type", "PROFILE_CHANGED");
     }
+
 }

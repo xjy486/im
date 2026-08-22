@@ -392,6 +392,19 @@ paths:
           $ref: '#/components/responses/ApiError'
         '403':
           $ref: '#/components/responses/ApiError'
+  /api/v1/groups/{conversationId}:
+    delete:
+      operationId: dissolveGroup
+      summary: Dissolve a group as its OWNER and retire its group number
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { $ref: '#/components/parameters/ConversationId' }
+      responses:
+        '204': { description: Group dissolved; access is revoked immediately and content is retained for 30 days }
+        '401':
+          $ref: '#/components/responses/ApiError'
+        '403':
+          $ref: '#/components/responses/ApiError'
   /api/v1/groups/{conversationId}/invites:
     post:
       operationId: createGroupInvite

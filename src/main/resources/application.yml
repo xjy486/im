@@ -39,6 +39,8 @@ jitong:
       block: ${AUTH_LOGIN_RATE_BLOCK:1m}
   group:
     invite-deep-link-base: ${GROUP_INVITE_DEEP_LINK_BASE:https://app.jitong.im/groups/invite}
+    dissolution-purge-interval: ${GROUP_DISSOLUTION_PURGE_INTERVAL:3600000}
+    dissolution-purge-initial-delay: ${GROUP_DISSOLUTION_PURGE_INITIAL_DELAY:60000}
   media:
     endpoint: ${MINIO_ENDPOINT:http://localhost:9000}
     access-key: ${MINIO_ACCESS_KEY:jitong-local}

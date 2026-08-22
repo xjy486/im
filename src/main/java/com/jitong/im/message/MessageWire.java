@@ -153,6 +153,14 @@ final class MessageWire {
                 new MembershipBody(conversationId, syncSeq));
     }
 
+    static WireEnvelope groupDissolved(UUID conversationId, long syncSeq) {
+        return new WireEnvelope(
+                1,
+                "group.dissolved",
+                null,
+                new MembershipBody(conversationId, syncSeq));
+    }
+
     record WireEnvelope(
             int version,
             String operation,

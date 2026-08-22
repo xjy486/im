@@ -57,7 +57,10 @@ class SyncRepository {
         return jdbc.sql("""
                         SELECT sync_seq,
                                CASE
-                                   WHEN event_type IN ('MEMBERSHIP_REVOKED', 'MEMBERSHIP_GRANTED')
+                                   WHEN event_type IN (
+                                       'MEMBERSHIP_REVOKED',
+                                       'MEMBERSHIP_GRANTED',
+                                       'GROUP_DISSOLVED')
                                        THEN event_type
                                    WHEN conversation_id IS NOT NULL
                                        AND EXISTS (
@@ -77,7 +80,10 @@ class SyncRepository {
                                    ELSE event_type
                                END AS event_type,
                                CASE
-                                   WHEN event_type IN ('MEMBERSHIP_REVOKED', 'MEMBERSHIP_GRANTED')
+                                   WHEN event_type IN (
+                                       'MEMBERSHIP_REVOKED',
+                                       'MEMBERSHIP_GRANTED',
+                                       'GROUP_DISSOLVED')
                                        THEN entity_id
                                    WHEN conversation_id IS NOT NULL
                                        AND EXISTS (
@@ -97,7 +103,10 @@ class SyncRepository {
                                    ELSE entity_id
                                END AS entity_id,
                                CASE
-                                   WHEN event_type IN ('MEMBERSHIP_REVOKED', 'MEMBERSHIP_GRANTED')
+                                   WHEN event_type IN (
+                                       'MEMBERSHIP_REVOKED',
+                                       'MEMBERSHIP_GRANTED',
+                                       'GROUP_DISSOLVED')
                                        THEN conversation_id
                                    WHEN conversation_id IS NOT NULL
                                        AND EXISTS (

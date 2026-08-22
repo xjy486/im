@@ -567,6 +567,19 @@ class LocalDatabase internal constructor(
         mediaIds.forEach { mediaCache.deleteMatching("message-media-$it") }
     }
 
+    fun clearGroupData(conversationId: String) {
+        clearConversationMessages(conversationId)
+        pool.connection.use { connection ->
+            connection.prepareStatement(
+                "DELETE FROM local_group_profiles WHERE conversation_id = ?",
+            ).use { statement ->
+                statement.setString(1, conversationId)
+                statement.executeUpdate()
+            }
+        }
+        mediaCache.deleteMatching("group-avatar-$conversationId-v")
+    }
+
     fun upsertGroupProfile(profile: LocalGroupProfile) {
         pool.connection.use { connection ->
             connection.prepareStatement(
@@ -884,6 +897,7 @@ class LocalDatabase internal constructor(
                     statement.executeUpdate("DELETE FROM message_search_terms")
                     statement.executeUpdate("DELETE FROM local_conversations")
                     statement.executeUpdate("DELETE FROM local_read_states")
+                    statement.executeUpdate("DELETE FROM local_group_profiles")
                 }
                 connection.commit()
             } catch (exception: RuntimeException) {
@@ -894,6 +908,7 @@ class LocalDatabase internal constructor(
             }
         }
         mediaCache.deleteMatching("message-media-")
+        mediaCache.deleteMatching("group-avatar-")
     }
 
     fun saveSession(session: StoredSession) {

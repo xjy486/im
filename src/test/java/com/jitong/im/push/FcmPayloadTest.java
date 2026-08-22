@@ -19,6 +19,7 @@ class FcmPayloadTest {
         assertThat(FcmPayload.profileChangedData())
                 .containsExactlyInAnyOrderEntriesOf(java.util.Map.of(
                         "version", "1",
-                        "type", "PROFILE_CHANGED"));
+                "type", "PROFILE_CHANGED"));
     }
+
 }

@@ -4,6 +4,7 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.jdbc.core.simple.JdbcClient;
 import org.springframework.boot.test.web.client.TestRestTemplate;
 import org.springframework.http.HttpEntity;
 import org.springframework.http.HttpHeaders;
@@ -37,6 +38,9 @@ class GroupContractTest extends ContractTestEnvironment {
 
     @Autowired
     private ObjectMapper objectMapper;
+
+    @Autowired
+    private JdbcClient jdbc;
 
     @Test
     void creates_immutable_owner_group_and_applies_visibility_to_exact_and_name_search() throws Exception {
@@ -534,6 +538,116 @@ class GroupContractTest extends ContractTestEnvironment {
         }
     }
 
+    @Test
+    void owner_dissolution_revokes_access_retires_group_number_and_emits_a_dissolution_event()
+            throws Exception {
+        TestUser owner = createUser("Dissolution owner");
+        TestUser member = createUser("Dissolution member");
+        String ownerToken = login(owner.accountNo(), "dissolution-owner");
+        String memberToken = login(member.accountNo(), "dissolution-member");
+
+        JsonNode group = createGroup(ownerToken, "Dissolution Lounge", "", "PUBLIC");
+        UUID conversationId = UUID.fromString(group.get("conversationId").asText());
+        String groupNo = group.get("groupNo").asText();
+        assertThat(addMember(ownerToken, conversationId, member.accountNo()).getStatusCode())
+                .isEqualTo(HttpStatus.OK);
+        postMessage(ownerToken, conversationId, "content before dissolution");
+
+        long ownerWatermark = highWatermark(ownerToken);
+        long memberWatermark = highWatermark(memberToken);
+        ResponseEntity<JsonNode> dissolved = exchange(
+                HttpMethod.DELETE,
+                "/api/v1/groups/" + conversationId,
+                ownerToken,
+                null);
+        assertThat(dissolved.getStatusCode()).isEqualTo(HttpStatus.NO_CONTENT);
+
+        assertThat(exchange(HttpMethod.GET, "/api/v1/groups", ownerToken, null)
+                .getBody()).isEmpty();
+        assertThat(exchange(HttpMethod.GET, "/api/v1/groups", memberToken, null)
+                .getBody()).isEmpty();
+        assertThat(search(memberToken, groupNo).getStatusCode())
+                .isEqualTo(HttpStatus.NOT_FOUND);
+        assertThat(exchange(
+                HttpMethod.GET,
+                "/api/v1/conversations/" + conversationId + "/messages?afterSeq=0&limit=200",
+                ownerToken,
+                null).getStatusCode()).isEqualTo(HttpStatus.FORBIDDEN);
+        assertThat(exchange(
+                HttpMethod.POST,
+                "/api/v1/conversations/" + conversationId + "/messages",
+                memberToken,
+                Map.of("clientMsgId", UUID.randomUUID(), "text", "must fail"))
+                .getStatusCode()).isEqualTo(HttpStatus.FORBIDDEN);
+
+        for (String token : List.of(ownerToken, memberToken)) {
+            JsonNode events = exchange(
+                    HttpMethod.GET,
+                    "/api/v1/sync?after=" + (token.equals(ownerToken)
+                            ? ownerWatermark
+                            : memberWatermark) + "&limit=200",
+                    token,
+                    null).getBody().get("events");
+            assertThat(events)
+                    .extracting(node -> node.get("eventType").asText())
+                    .contains("GROUP_DISSOLVED");
+            assertThat(events)
+                    .filteredOn(node -> node.get("eventType").asText().equals("GROUP_DISSOLVED"))
+                    .allSatisfy(node -> assertThat(node.get("conversationId").asText())
+                            .isEqualTo(conversationId.toString()));
+        }
+
+        assertThat(jdbc.sql("""
+                        SELECT retired_at
+                        FROM public_identifiers
+                        WHERE public_no = :groupNo
+                        """)
+                .param("groupNo", groupNo)
+                .query(Object.class)
+                .single()).isNotNull();
+    }
+
+    @Test
+    void dissolution_schedules_a_thirty_day_purge_without_removing_governance_audit()
+            throws Exception {
+        TestUser owner = createUser("Purge owner");
+        String ownerToken = login(owner.accountNo(), "purge-owner");
+        JsonNode group = createGroup(ownerToken, "Purge Lounge", "", "PRIVATE");
+        UUID conversationId = UUID.fromString(group.get("conversationId").asText());
+        postMessage(ownerToken, conversationId, "purged content");
+
+        assertThat(exchange(
+                HttpMethod.DELETE,
+                "/api/v1/groups/" + conversationId,
+                ownerToken,
+                null).getStatusCode()).isEqualTo(HttpStatus.NO_CONTENT);
+
+        assertThat(jdbc.sql("""
+                        SELECT status, dissolved_at, purge_after
+                        FROM groups
+                        WHERE conversation_id = :conversationId
+                        """)
+                .param("conversationId", conversationId)
+                .query((row, rowNum) -> Map.of(
+                        "status", row.getString("status"),
+                        "dissolvedAt", row.getObject("dissolved_at"),
+                        "purgeAfter", row.getObject("purge_after")))
+                .single())
+                .containsEntry("status", "DISSOLVED")
+                .containsKeys("dissolvedAt", "purgeAfter");
+
+        assertThat(jdbc.sql("""
+                        SELECT COUNT(*)
+                        FROM audit_logs
+                        WHERE subject_type = 'GROUP'
+                          AND subject_id = :conversationId
+                          AND event_type = 'GROUP_DISSOLUTION'
+                        """)
+                .param("conversationId", conversationId)
+                .query(Long.class)
+                .single()).isEqualTo(1L);
+    }
+
     private JsonNode createGroup(
             String token,
             String name,
@@ -554,6 +668,14 @@ class GroupContractTest extends ContractTestEnvironment {
                 "/api/v1/groups/search?query=" + query.replace(" ", "%20"),
                 token,
                 null);
+    }
+
+    private long highWatermark(String token) {
+        return exchange(
+                HttpMethod.GET,
+                "/api/v1/sync?after=0&until=0",
+                token,
+                null).getBody().get("highWatermark").asLong();
     }
 
     private ResponseEntity<JsonNode> addMember(

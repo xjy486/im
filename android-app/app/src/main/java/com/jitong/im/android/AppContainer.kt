@@ -122,7 +122,7 @@ internal class AppContainer(context: Context) {
                             }
                             "message.created", "message.ack", "message.recalled", "message.moderated", "conversation.read",
                             "user.profile.updated", "group.profile.updated",
-                            "membership.revoked", "membership.granted", "error" ->
+                            "membership.revoked", "membership.granted", "group.dissolved", "error" ->
                                 messageRepository.apply(event, userId)
                         }
                     }

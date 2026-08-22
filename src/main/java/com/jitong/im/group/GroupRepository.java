@@ -332,6 +332,195 @@ class GroupRepository {
                 .update();
     }
 
+    DissolutionRecord dissolve(
+            UUID conversationId,
+            UUID ownerUserId,
+            Instant dissolvedAt,
+            Instant purgeAfter
+    ) {
+        DissolutionRecord group = jdbc.sql("""
+                        SELECT conversation_id, group_no, owner_user_id
+                        FROM groups
+                        WHERE conversation_id = :conversationId
+                          AND owner_user_id = :ownerUserId
+                          AND status = 'ACTIVE'
+                        FOR UPDATE
+                        """)
+                .param("conversationId", conversationId)
+                .param("ownerUserId", ownerUserId)
+                .query((row, rowNum) -> new DissolutionRecord(
+                        row.getObject("conversation_id", UUID.class),
+                        row.getString("group_no").trim(),
+                        row.getObject("owner_user_id", UUID.class)))
+                .optional()
+                .orElse(null);
+        if (group == null) {
+            return null;
+        }
+
+        jdbc.sql("""
+                        UPDATE groups
+                        SET status = 'DISSOLVED',
+                            dissolved_at = :dissolvedAt,
+                            purge_after = :purgeAfter
+                        WHERE conversation_id = :conversationId
+                          AND status = 'ACTIVE'
+                        """)
+                .param("conversationId", conversationId)
+                .param("dissolvedAt", utc(dissolvedAt), Types.TIMESTAMP_WITH_TIMEZONE)
+                .param("purgeAfter", utc(purgeAfter), Types.TIMESTAMP_WITH_TIMEZONE)
+                .update();
+        jdbc.sql("""
+                        UPDATE conversations
+                        SET status = 'DISSOLVED'
+                        WHERE id = :conversationId
+                          AND type = 'GROUP'
+                          AND status = 'ACTIVE'
+                        """)
+                .param("conversationId", conversationId)
+                .update();
+        jdbc.sql("""
+                        UPDATE conversation_members
+                        SET status = 'REMOVED',
+                            left_at = :dissolvedAt
+                        WHERE conversation_id = :conversationId
+                          AND status = 'ACTIVE'
+                        """)
+                .param("conversationId", conversationId)
+                .param("dissolvedAt", utc(dissolvedAt), Types.TIMESTAMP_WITH_TIMEZONE)
+                .update();
+        jdbc.sql("""
+                        UPDATE public_identifiers
+                        SET retired_at = :dissolvedAt
+                        WHERE entity_type = 'GROUP'
+                          AND entity_id = :conversationId
+                          AND retired_at IS NULL
+                        """)
+                .param("conversationId", conversationId)
+                .param("dissolvedAt", utc(dissolvedAt), Types.TIMESTAMP_WITH_TIMEZONE)
+                .update();
+        jdbc.sql("""
+                        INSERT INTO group_dissolution_audit (
+                            conversation_id, group_no, owner_user_id, dissolved_at
+                        ) VALUES (
+                            :conversationId, :groupNo, :ownerUserId, :dissolvedAt
+                        )
+                        ON CONFLICT (conversation_id) DO NOTHING
+                        """)
+                .param("conversationId", conversationId)
+                .param("groupNo", group.groupNo())
+                .param("ownerUserId", group.ownerUserId())
+                .param("dissolvedAt", utc(dissolvedAt), Types.TIMESTAMP_WITH_TIMEZONE)
+                .update();
+        return group;
+    }
+
+    List<DissolvedGroupRecord> findGroupsDueForPurge(Instant now) {
+        return jdbc.sql("""
+                        SELECT conversation_id, group_no, owner_user_id,
+                               dissolved_at, purge_after
+                        FROM groups
+                        WHERE status = 'DISSOLVED'
+                          AND purge_after <= :now
+                        ORDER BY purge_after, conversation_id
+                        FOR UPDATE SKIP LOCKED
+                        LIMIT 25
+                        """)
+                .param("now", utc(now), Types.TIMESTAMP_WITH_TIMEZONE)
+                .query((row, rowNum) -> new DissolvedGroupRecord(
+                        row.getObject("conversation_id", UUID.class),
+                        row.getString("group_no").trim(),
+                        row.getObject("owner_user_id", UUID.class),
+                        row.getObject("dissolved_at", OffsetDateTime.class).toInstant(),
+                        row.getObject("purge_after", OffsetDateTime.class).toInstant()))
+                .list();
+    }
+
+    List<UUID> purgeGroupContent(UUID conversationId) {
+        List<UUID> mediaIds = jdbc.sql("""
+                        SELECT media_id
+                        FROM messages
+                        WHERE conversation_id = :conversationId
+                          AND media_id IS NOT NULL
+                        UNION
+                        SELECT avatar_media_id
+                        FROM groups
+                        WHERE conversation_id = :conversationId
+                          AND avatar_media_id IS NOT NULL
+                        """)
+                .param("conversationId", conversationId)
+                .query(UUID.class)
+                .list();
+        jdbc.sql("""
+                        DELETE FROM outbox
+                        WHERE conversation_id = :conversationId
+                        """)
+                .param("conversationId", conversationId)
+                .update();
+        // Keep the content-free GROUP_DISSOLVED sync marker. Removing an event
+        // from the middle of a user's ordered sync stream would create a gap
+        // and incorrectly force unrelated devices into a full reset.
+        jdbc.sql("""
+                        DELETE FROM conversation_read_states
+                        WHERE conversation_id = :conversationId
+                        """)
+                .param("conversationId", conversationId)
+                .update();
+        jdbc.sql("""
+                        DELETE FROM group_join_requests
+                        WHERE conversation_id = :conversationId
+                        """)
+                .param("conversationId", conversationId)
+                .update();
+        jdbc.sql("""
+                        DELETE FROM group_invites
+                        WHERE conversation_id = :conversationId
+                        """)
+                .param("conversationId", conversationId)
+                .update();
+        jdbc.sql("""
+                        DELETE FROM group_bans
+                        WHERE conversation_id = :conversationId
+                        """)
+                .param("conversationId", conversationId)
+                .update();
+        jdbc.sql("""
+                        DELETE FROM messages
+                        WHERE conversation_id = :conversationId
+                        """)
+                .param("conversationId", conversationId)
+                .update();
+        for (UUID mediaId : mediaIds) {
+            jdbc.sql("""
+                            UPDATE media
+                            SET state = 'EXPIRED',
+                                expired_at = COALESCE(expired_at, CURRENT_TIMESTAMP),
+                                attached_message_id = NULL,
+                                attached_entity_id = NULL,
+                                attached_entity_type = NULL,
+                                bound_at = NULL
+                            WHERE id = :mediaId
+                            """)
+                    .param("mediaId", mediaId)
+                    .update();
+        }
+        jdbc.sql("""
+                        UPDATE groups
+                        SET avatar_media_id = NULL
+                        WHERE conversation_id = :conversationId
+                        """)
+                .param("conversationId", conversationId)
+                .update();
+        jdbc.sql("""
+                        UPDATE group_dissolution_audit
+                        SET purged_at = CURRENT_TIMESTAMP
+                        WHERE conversation_id = :conversationId
+                        """)
+                .param("conversationId", conversationId)
+                .update();
+        return mediaIds;
+    }
+
     String groupNo(UUID conversationId) {
         return jdbc.sql("""
                         SELECT group_no
@@ -854,6 +1043,18 @@ class GroupRepository {
     }
 
     record GroupActor(UUID conversationId, String role, int memberCount) {
+    }
+
+    record DissolutionRecord(UUID conversationId, String groupNo, UUID ownerUserId) {
+    }
+
+    record DissolvedGroupRecord(
+            UUID conversationId,
+            String groupNo,
+            UUID ownerUserId,
+            Instant dissolvedAt,
+            Instant purgeAfter
+    ) {
     }
 
     record GroupInviteRecord(

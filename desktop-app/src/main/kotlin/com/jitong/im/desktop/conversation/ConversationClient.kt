@@ -485,6 +485,15 @@ class ConversationClient(
                         avatarVersion = profile.avatarVersion))
                 local.mediaCache().deleteMatching("group-avatar-$conversationId-v")
             }
+        events
+            .filter {
+                (it.eventType == "GROUP_ACCESS_REVOKED"
+                    || it.eventType == "GROUP_DISSOLVED")
+                    && it.conversationId != null
+            }
+            .map { it.conversationId!! }
+            .distinct()
+            .forEach(local::clearGroupData)
     }
 
     fun restoreGroupProfiles(
@@ -853,6 +862,12 @@ class ConversationClient(
                     avatarUrl = body.avatarUrl,
                     avatarVersion = body.avatarVersion ?: 0))
             local.mediaCache().deleteMatching("group-avatar-$conversationId-v")
+            syncSeq?.let(local::saveLastSyncSeq)
+            return
+        }
+        if (envelope.operation == "group.dissolved") {
+            val conversationId = body.conversationId ?: return
+            local.clearGroupData(conversationId)
             syncSeq?.let(local::saveLastSyncSeq)
             return
         }

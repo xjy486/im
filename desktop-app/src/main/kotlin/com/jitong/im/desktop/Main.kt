@@ -1332,7 +1332,25 @@ private suspend fun synchronize(
                         page.highWatermark)
                 }
             }
+            .also { events ->
+                events
+                    .filter {
+                        (it.eventType == "GROUP_ACCESS_REVOKED"
+                            || it.eventType == "GROUP_DISSOLVED")
+                            && it.conversationId != null
+                    }
+                    .map { it.conversationId!! }
+                    .distinct()
+                    .forEach(local::clearGroupData)
+            }
             .mapNotNull { it.conversationId }
+            .filter { conversationId ->
+                page.events.none {
+                    it.conversationId == conversationId
+                        && (it.eventType == "GROUP_ACCESS_REVOKED"
+                            || it.eventType == "GROUP_DISSOLVED")
+                }
+            }
             .distinct()
             .forEach { conversationId ->
                 client.restoreConversation(

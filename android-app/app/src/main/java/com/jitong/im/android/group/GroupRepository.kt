@@ -29,6 +29,10 @@ internal class GroupRepository(
         api.leave(conversationId).ensureSuccessful("Group leave")
     }
 
+    suspend fun dissolve(conversationId: UUID) {
+        api.dissolve(conversationId).ensureSuccessful("Group dissolution")
+    }
+
     suspend fun search(query: String): List<GroupSearchResult> =
         api.search(query).bodyOrThrow("Group search").groups
 

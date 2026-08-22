@@ -19,6 +19,9 @@ internal interface GroupApi {
     @POST("api/v1/groups/{conversationId}/leave")
     suspend fun leave(@Path("conversationId") conversationId: UUID): Response<Unit>
 
+    @DELETE("api/v1/groups/{conversationId}")
+    suspend fun dissolve(@Path("conversationId") conversationId: UUID): Response<Unit>
+
     @GET("api/v1/groups/search")
     suspend fun search(@Query("query") query: String): Response<GroupSearchPage>
 

@@ -642,6 +642,31 @@ public class GroupService {
     }
 
     @Transactional
+    public void dissolve(String authorization, UUID conversationId) {
+        UUID ownerUserId = authService.requireUserId(authorization);
+        GroupRepository.GroupActor actor = repository.lockActor(conversationId, ownerUserId);
+        if (actor == null || !"OWNER".equals(actor.role())) {
+            throw new GroupException(ApiErrorDefinition.FORBIDDEN_ROLE);
+        }
+        List<UUID> memberIds = repository.activeMemberIds(conversationId);
+        Instant now = clock.instant();
+        GroupRepository.DissolutionRecord group = repository.dissolve(
+                conversationId,
+                ownerUserId,
+                now,
+                now.plus(Duration.ofDays(30)));
+        if (group == null) {
+            throw new GroupException(ApiErrorDefinition.RESOURCE_NOT_FOUND);
+        }
+        groupMessageService.recordGroupDissolved(conversationId, ownerUserId, memberIds);
+        recordAudit(
+                SecurityAuditEventType.GROUP_DISSOLUTION,
+                ownerUserId,
+                conversationId,
+                AuditOutcome.SUCCEEDED);
+    }
+
+    @Transactional
     public void unbanUser(String authorization, UUID conversationId, UUID userId) {
         UUID actorId = authService.requireUserId(authorization);
         GroupRepository.GroupActor actor = repository.lockActor(conversationId, actorId);

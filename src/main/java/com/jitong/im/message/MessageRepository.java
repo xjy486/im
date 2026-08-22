@@ -62,7 +62,6 @@ class MessageRepository {
                             SELECT 1
                             FROM groups
                             WHERE conversation_id = :conversationId
-                              AND status = 'ACTIVE'
                         )
                         """)
                 .param("conversationId", conversationId)
@@ -135,7 +134,6 @@ class MessageRepository {
                         FROM conversations c
                         JOIN groups g
                           ON g.conversation_id = c.id
-                         AND g.status = 'ACTIVE'
                         WHERE c.id = :conversationId
                           AND c.type = 'GROUP'
                           AND c.status = 'ACTIVE'
@@ -156,13 +154,13 @@ class MessageRepository {
                         FROM conversations c
                         JOIN groups g
                           ON g.conversation_id = c.id
-                         AND g.status = 'ACTIVE'
                         JOIN conversation_members member
                           ON member.conversation_id = c.id
                          AND member.user_id = :userId
                          AND member.status = 'ACTIVE'
                         WHERE c.id = :conversationId
                           AND c.type = 'GROUP'
+                          AND g.status = 'ACTIVE'
                           AND c.status = 'ACTIVE'
                         """)
                 .param("conversationId", conversationId)

@@ -195,6 +195,9 @@ interface LocalGroupProfileDao {
 
     @Query("DELETE FROM local_group_profile WHERE conversationId = :conversationId")
     fun delete(conversationId: String)
+
+    @Query("DELETE FROM local_group_profile")
+    fun clearAll()
 }
 
 @Dao

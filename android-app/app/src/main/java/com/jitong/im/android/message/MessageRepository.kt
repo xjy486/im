@@ -174,6 +174,14 @@ internal class MessageRepository(
                 fullRestore(currentUserId, requestedUntil)
                 return
             }
+            val dissolvedConversations = page.events
+                .filter {
+                    (it.eventType == "GROUP_ACCESS_REVOKED"
+                        || it.eventType == "GROUP_DISSOLVED")
+                        && it.conversationId != null
+                }
+                .mapNotNull { it.conversationId }
+                .toSet()
             page.events
                 .filter { it.eventType == "USER_PROFILE_UPDATED" && it.conversationId == null }
                 .map { it.entityId }
@@ -192,6 +200,7 @@ internal class MessageRepository(
                 .filter {
                     it.eventType == "MESSAGE_CREATED"
                         && it.conversationId != null
+                        && it.conversationId !in dissolvedConversations
                 }
                 .mapNotNull { it.conversationId }
                 .distinct()
@@ -199,14 +208,22 @@ internal class MessageRepository(
                     restoreConversation(conversationId, currentUserId, db)
                 }
             page.events
-                .filter { it.eventType == "GROUP_ACCESS_REVOKED" && it.conversationId != null }
+                .filter {
+                    (it.eventType == "GROUP_ACCESS_REVOKED"
+                        || it.eventType == "GROUP_DISSOLVED")
+                        && it.conversationId != null
+                }
                 .mapNotNull { it.conversationId }
                 .distinct()
                 .forEach { conversationId ->
                     clearConversationData(conversationId, db)
                 }
             page.events
-                .filter { it.eventType == "MEMBERSHIP_GRANTED" && it.conversationId != null }
+                .filter {
+                    it.eventType == "MEMBERSHIP_GRANTED"
+                        && it.conversationId != null
+                        && it.conversationId !in dissolvedConversations
+                }
                 .mapNotNull { it.conversationId }
                 .distinct()
                 .forEach { conversationId ->
@@ -272,12 +289,14 @@ internal class MessageRepository(
             db.messageDao().acceptedImageMediaIds()
         }
         acceptedMediaIds.forEach { mediaCache()?.deleteMessageMedia(it) }
+        mediaCache()?.deleteMatching("group-avatar-")
         val conversations = syncApi.conversations().syncBodyOrThrow()
         val groups = syncApi.groups().syncBodyOrThrow()
         withContext(Dispatchers.IO) {
             db.withTransaction {
                 db.messageDao().clearAccepted()
                 db.conversationReadStateDao().clearAll()
+                db.groupProfileDao().clearAll()
                 db.syncStateDao().upsert(
                     SyncStateEntity(
                         deviceId = deviceId()?.toString().orEmpty(),
@@ -407,6 +426,7 @@ internal class MessageRepository(
         }
         mediaIds.forEach { mediaCache()?.deleteMessageMedia(it) }
         localPaths.forEach { mediaCache()?.delete(it) }
+        mediaCache()?.deleteMatching("group-avatar-${conversationId}-v")
         searchInvalidations.tryEmit(Unit)
     }
 
@@ -897,7 +917,9 @@ internal class MessageRepository(
             syncApi.acknowledge(SyncAckRequest(syncSeq)).syncBodyOrThrow()
             return
         }
-        if (event.operation == "membership.revoked" || event.operation == "membership.granted") {
+        if (event.operation == "membership.revoked"
+            || event.operation == "membership.granted"
+            || event.operation == "group.dissolved") {
             val conversationId = body.conversationId ?: return
             val syncSeq = body.syncSeq ?: return
             val lastSyncSeq = withContext(Dispatchers.IO) {
@@ -908,7 +930,7 @@ internal class MessageRepository(
                 synchronize(currentUserId, syncSeq)
                 return
             }
-            if (event.operation == "membership.revoked") {
+            if (event.operation == "membership.revoked" || event.operation == "group.dissolved") {
                 clearConversationData(conversationId, db)
             } else {
                 restoreConversation(conversationId, currentUserId, db)

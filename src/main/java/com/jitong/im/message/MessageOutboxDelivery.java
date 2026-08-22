@@ -90,6 +90,7 @@ class MessageOutboxDelivery implements OutboxDelivery {
         }
         if (record.conversationId() != null
                 && messageRepository.isGroupConversation(record.conversationId())
+                && !"GROUP_DISSOLVED".equals(record.eventType())
                 && !"MEMBERSHIP_REVOKED".equals(record.eventType())
                 && !"MEMBERSHIP_GRANTED".equals(record.eventType())
                 && !messageRepository.canDeviceReceiveGroupEvent(
@@ -162,6 +163,8 @@ class MessageOutboxDelivery implements OutboxDelivery {
                     MessageWire.membershipRevoked(record.conversationId(), record.syncSeq());
             case "MEMBERSHIP_GRANTED" ->
                     MessageWire.membershipGranted(record.conversationId(), record.syncSeq());
+            case "GROUP_DISSOLVED" ->
+                    MessageWire.groupDissolved(record.conversationId(), record.syncSeq());
             default -> null;
         };
         if (envelope == null) {
@@ -207,6 +210,8 @@ class MessageOutboxDelivery implements OutboxDelivery {
             case "MESSAGE_CREATED", "MESSAGE_RECALLED", "MESSAGE_MODERATED" ->
                     fcmSender.sendNewMessage(token);
             case "USER_PROFILE_UPDATED", "GROUP_PROFILE_UPDATED" ->
+                    fcmSender.sendProfileChanged(token);
+            case "GROUP_DISSOLVED" ->
                     fcmSender.sendProfileChanged(token);
             default -> FcmDeliveryResult.SENT;
         };

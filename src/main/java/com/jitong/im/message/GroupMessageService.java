@@ -180,6 +180,33 @@ public class GroupMessageService {
         recordSystemMessage(conversationId, actorId, "GROUP_PROFILE_UPDATED", null, null);
     }
 
+    public void recordGroupDissolved(
+            UUID conversationId,
+            UUID actorId,
+            List<UUID> memberIds
+    ) {
+        long sequence = repository.nextConversationSequence(conversationId);
+        repository.insertSystemMessage(
+                UuidV7.random(),
+                conversationId,
+                sequence,
+                actorId,
+                UUID.randomUUID(),
+                clock.instant(),
+                "GROUP_DISSOLVED",
+                null,
+                null);
+        for (UUID memberId : memberIds.stream().sorted().toList()) {
+            long syncSeq = syncService.allocateSequence(memberId);
+            syncService.recordEvent(
+                    memberId,
+                    syncSeq,
+                    "GROUP_DISSOLVED",
+                    conversationId,
+                    conversationId);
+        }
+    }
+
     ConversationMessagePage listMessages(
             UUID userId,
             UUID conversationId,
