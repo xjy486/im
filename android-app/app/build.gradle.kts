@@ -9,6 +9,10 @@ android {
     namespace = "com.jitong.im.android"
     compileSdk = 35
 
+    sourceSets {
+        getByName("androidTest").assets.srcDir("schemas")
+    }
+
     fun firebaseProperty(name: String): String =
         project.findProperty(name)?.toString().orEmpty()
 

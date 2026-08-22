@@ -21,7 +21,7 @@ object LocalSearchText {
         val terms: List<String>,
     ) {
         val ftsMatch: String
-            get() = terms.joinToString(" AND ")
+            get() = terms.joinToString(" OR ") { "\"$it\"" }
     }
 
     fun plan(query: String): QueryPlan? {

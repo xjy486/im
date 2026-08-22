@@ -78,7 +78,6 @@ data class LocalMessageEntity(
 
 @Fts4(
     tokenizer = "simple",
-    notIndexed = ["messageId"],
 )
 @Entity(tableName = "local_message_search")
 data class LocalMessageSearchEntity(
@@ -380,7 +379,8 @@ interface LocalMessageDao {
         """
         SELECT local_message.*
         FROM local_message
-        JOIN local_conversation AS conversation ON conversation.conversationId = local_message.conversationId
+        JOIN local_conversation AS conversation
+          ON conversation.conversationId = local_message.conversationId
         WHERE (:conversationId IS NULL OR local_message.conversationId = :conversationId)
           AND conversation.searchVisible = 1
           AND (conversationSeq IS NULL OR conversationSeq > conversation.searchVisibleAfterSeq)
@@ -507,7 +507,7 @@ interface SyncStateDao {
         PendingMessageCommandEntity::class,
         LocalGroupProfileEntity::class,
     ],
-    version = 13,
+    version = 14,
     exportSchema = true,
 )
 abstract class AccountDatabase : RoomDatabase() {
@@ -666,7 +666,7 @@ abstract class AccountDatabase : RoomDatabase() {
                 database.execSQL(
                     """
                     CREATE VIRTUAL TABLE IF NOT EXISTS local_message_search
-                    USING FTS4(messageId TEXT NOT NULL, terms TEXT NOT NULL, notindexed=messageId)
+                    USING FTS4(`messageId` TEXT NOT NULL, `terms` TEXT NOT NULL, notindexed=`messageId`)
                     """.trimIndent(),
                 )
             }
@@ -700,6 +700,29 @@ abstract class AccountDatabase : RoomDatabase() {
                 )
                 database.execSQL(
                     "ALTER TABLE local_conversation ADD COLUMN searchVisibleAfterSeq INTEGER NOT NULL DEFAULT 0",
+                )
+            }
+        }
+
+        val MIGRATION_13_14 = object : androidx.room.migration.Migration(13, 14) {
+            override fun migrate(database: androidx.sqlite.db.SupportSQLiteDatabase) {
+                database.execSQL("DROP TABLE IF EXISTS local_message_search_v14")
+                database.execSQL(
+                    """
+                    CREATE VIRTUAL TABLE local_message_search_v14
+                    USING FTS4(messageId TEXT NOT NULL, terms TEXT NOT NULL)
+                    """.trimIndent(),
+                )
+                database.execSQL(
+                    """
+                    INSERT INTO local_message_search_v14 (messageId, terms)
+                    SELECT messageId, terms
+                    FROM local_message_search
+                    """.trimIndent(),
+                )
+                database.execSQL("DROP TABLE local_message_search")
+                database.execSQL(
+                    "ALTER TABLE local_message_search_v14 RENAME TO local_message_search",
                 )
             }
         }

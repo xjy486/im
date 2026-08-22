@@ -56,7 +56,7 @@ class AccountDatabaseSearchTest {
                 .map { it.messageId },
         )
         assertEquals(
-            listOf("single", "continuous"),
+            listOf("single", "punctuated", "continuous"),
             database.messageDao()
                 .searchSingleCjk(null, "你", 100)
                 .map { it.messageId },

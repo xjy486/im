@@ -1225,8 +1225,7 @@ internal class MessageRepository(
     ) {
         val cache = mediaCache() ?: return
         mediaId?.let {
-            cache.delete(it)
-            cache.delete("$it-thumb")
+            cache.deleteMessageMedia(it)
         }
         cache.delete(localMediaPath)
     }
