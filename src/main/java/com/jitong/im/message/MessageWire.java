@@ -123,6 +123,22 @@ final class MessageWire {
                         syncSeq));
     }
 
+    static WireEnvelope membershipRevoked(UUID conversationId, long syncSeq) {
+        return new WireEnvelope(
+                1,
+                "membership.revoked",
+                null,
+                new MembershipBody(conversationId, syncSeq));
+    }
+
+    static WireEnvelope membershipGranted(UUID conversationId, long syncSeq) {
+        return new WireEnvelope(
+                1,
+                "membership.granted",
+                null,
+                new MembershipBody(conversationId, syncSeq));
+    }
+
     record WireEnvelope(
             int version,
             String operation,
@@ -182,6 +198,12 @@ final class MessageWire {
             UUID conversationId,
             String avatarUrl,
             long avatarVersion,
+            long syncSeq
+    ) {
+    }
+
+    record MembershipBody(
+            UUID conversationId,
             long syncSeq
     ) {
     }

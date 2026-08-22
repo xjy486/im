@@ -189,11 +189,35 @@ internal class MessageRepository(
                     applyGroupProfile(syncApi.groupProfile(conversationId).syncBodyOrThrow())
                 }
             page.events
-                .filter { it.eventType == "MESSAGE_CREATED" && it.conversationId != null }
+                .filter {
+                    it.eventType == "MESSAGE_CREATED"
+                        && it.conversationId != null
+                }
                 .mapNotNull { it.conversationId }
                 .distinct()
                 .forEach { conversationId ->
                     restoreConversation(conversationId, currentUserId, db)
+                }
+            page.events
+                .filter { it.eventType == "GROUP_ACCESS_REVOKED" && it.conversationId != null }
+                .mapNotNull { it.conversationId }
+                .distinct()
+                .forEach { conversationId ->
+                    clearConversationData(conversationId, db)
+                }
+            page.events
+                .filter { it.eventType == "MEMBERSHIP_GRANTED" && it.conversationId != null }
+                .mapNotNull { it.conversationId }
+                .distinct()
+                .forEach { conversationId ->
+                    restoreConversation(conversationId, currentUserId, db)
+                }
+            page.events
+                .filter { it.eventType == "MEMBERSHIP_REVOKED" && it.conversationId != null }
+                .mapNotNull { it.conversationId }
+                .distinct()
+                .forEach { conversationId ->
+                    clearConversationData(conversationId, db)
                 }
             page.events
                 .filter { it.eventType == "CONVERSATION_READ" && it.conversationId != null }
@@ -249,6 +273,7 @@ internal class MessageRepository(
         }
         acceptedMediaIds.forEach { mediaCache()?.deleteMessageMedia(it) }
         val conversations = syncApi.conversations().syncBodyOrThrow()
+        val groups = syncApi.groups().syncBodyOrThrow()
         withContext(Dispatchers.IO) {
             db.withTransaction {
                 db.messageDao().clearAccepted()
@@ -275,6 +300,13 @@ internal class MessageRepository(
                     applyGroupProfile(groupProfile.body()!!)
                 }
             }
+        groups.forEach { group ->
+            restoreConversation(group.conversationId, currentUserId, db)
+            val groupProfile = syncApi.groupProfile(group.conversationId)
+            if (groupProfile.isSuccessful && groupProfile.body() != null) {
+                applyGroupProfile(groupProfile.body()!!)
+            }
+        }
         withContext(Dispatchers.IO) {
             db.withTransaction {
                 db.syncStateDao().upsert(
@@ -354,6 +386,28 @@ internal class MessageRepository(
                 ),
             )
         }
+    }
+
+    private suspend fun clearConversationData(
+        conversationId: UUID,
+        db: AccountDatabase,
+    ) {
+        val mediaIds = withContext(Dispatchers.IO) {
+            db.messageDao().imageMediaIds(conversationId.toString())
+        }
+        val localPaths = withContext(Dispatchers.IO) {
+            db.messageDao().imageCachePaths(conversationId.toString())
+        }
+        withContext(Dispatchers.IO) {
+            db.withTransaction {
+                db.pendingCommandDao().deleteForConversation(conversationId.toString())
+                db.messageDao().clearConversation(conversationId.toString())
+                db.groupProfileDao().delete(conversationId.toString())
+            }
+        }
+        mediaIds.forEach { mediaCache()?.deleteMessageMedia(it) }
+        localPaths.forEach { mediaCache()?.delete(it) }
+        searchInvalidations.tryEmit(Unit)
     }
 
     private suspend fun restoreConversation(
@@ -831,6 +885,34 @@ internal class MessageRepository(
             }
             val profile = syncApi.groupProfile(conversationId).syncBodyOrThrow()
             applyGroupProfile(profile)
+            withContext(Dispatchers.IO) {
+                db.syncStateDao().upsert(
+                    SyncStateEntity(
+                        deviceId = deviceId()?.toString().orEmpty(),
+                        lastSyncSeq = syncSeq,
+                        lastFullRestoreAt = db.syncStateDao().current()?.lastFullRestoreAt,
+                    ),
+                )
+            }
+            syncApi.acknowledge(SyncAckRequest(syncSeq)).syncBodyOrThrow()
+            return
+        }
+        if (event.operation == "membership.revoked" || event.operation == "membership.granted") {
+            val conversationId = body.conversationId ?: return
+            val syncSeq = body.syncSeq ?: return
+            val lastSyncSeq = withContext(Dispatchers.IO) {
+                db.syncStateDao().current()?.lastSyncSeq ?: 0L
+            }
+            if (syncSeq <= lastSyncSeq) return
+            if (syncSeq != lastSyncSeq + 1) {
+                synchronize(currentUserId, syncSeq)
+                return
+            }
+            if (event.operation == "membership.revoked") {
+                clearConversationData(conversationId, db)
+            } else {
+                restoreConversation(conversationId, currentUserId, db)
+            }
             withContext(Dispatchers.IO) {
                 db.syncStateDao().upsert(
                     SyncStateEntity(

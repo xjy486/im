@@ -21,6 +21,9 @@ internal interface SyncApi {
     @GET("api/v1/conversations")
     suspend fun conversations(): Response<List<SyncConversationResponse>>
 
+    @GET("api/v1/groups")
+    suspend fun groups(): Response<List<com.jitong.im.android.group.GroupSummary>>
+
     @GET("api/v1/users/{userId}/profile")
     suspend fun profile(
         @retrofit2.http.Path("userId") userId: UUID,

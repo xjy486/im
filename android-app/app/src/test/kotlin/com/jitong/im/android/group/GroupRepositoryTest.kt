@@ -53,6 +53,9 @@ class GroupRepositoryTest {
 
                 override suspend fun list() = error("not used")
 
+                override suspend fun leave(conversationId: UUID) =
+                    error("not used")
+
                 override suspend fun search(query: String) = error("not used")
 
                 override suspend fun createInvite(

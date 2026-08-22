@@ -8,6 +8,7 @@ import com.jitong.im.audit.SecurityAuditEvent;
 import com.jitong.im.audit.SecurityAuditEventType;
 import com.jitong.im.audit.SecurityAuditSink;
 import com.jitong.im.auth.UuidV7;
+import com.jitong.im.message.GroupMessageService;
 import com.jitong.im.platform.error.ApiErrorDefinition;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
@@ -32,6 +33,7 @@ public class GroupService {
     private final GroupRateLimiter rateLimiter;
     private final GroupInviteProperties inviteProperties;
     private final SecurityAuditSink auditSink;
+    private final GroupMessageService groupMessageService;
     private final Clock clock;
 
     @Autowired
@@ -41,7 +43,8 @@ public class GroupService {
             PublicNumberGenerator publicNumberGenerator,
             GroupRateLimiter rateLimiter,
             GroupInviteProperties inviteProperties,
-            SecurityAuditSink auditSink
+            SecurityAuditSink auditSink,
+            GroupMessageService groupMessageService
     ) {
         this(
                 repository,
@@ -50,6 +53,7 @@ public class GroupService {
                 rateLimiter,
                 inviteProperties,
                 auditSink,
+                groupMessageService,
                 Clock.systemUTC());
     }
 
@@ -60,6 +64,7 @@ public class GroupService {
             GroupRateLimiter rateLimiter,
             GroupInviteProperties inviteProperties,
             SecurityAuditSink auditSink,
+            GroupMessageService groupMessageService,
             Clock clock
     ) {
         this.repository = repository;
@@ -68,6 +73,7 @@ public class GroupService {
         this.rateLimiter = rateLimiter;
         this.inviteProperties = inviteProperties;
         this.auditSink = auditSink;
+        this.groupMessageService = groupMessageService;
         this.clock = clock;
     }
 
@@ -104,6 +110,7 @@ public class GroupService {
                 description,
                 visibility,
                 publicNumberGenerator);
+        groupMessageService.recordGroupCreated(group.conversationId(), ownerUserId);
         return toCreateResponse(group);
     }
 
@@ -154,6 +161,10 @@ public class GroupService {
                     actorId,
                     clock.instant());
         }
+        groupMessageService.recordMemberJoinedAfterMembershipChange(
+                conversationId,
+                actorId,
+                memberId);
         recordAudit(
                 SecurityAuditEventType.GROUP_MEMBERSHIP_CHANGE,
                 actorId,
@@ -183,6 +194,7 @@ public class GroupService {
             throw new GroupException(ApiErrorDefinition.FORBIDDEN);
         }
         repository.removeMember(conversationId, userId, clock.instant());
+        groupMessageService.recordMemberRemoved(conversationId, actorId, userId);
         recordAudit(
                 SecurityAuditEventType.GROUP_MEMBERSHIP_CHANGE,
                 actorId,
@@ -370,6 +382,10 @@ public class GroupService {
                 "APPROVED",
                 actorId,
                 clock.instant());
+        groupMessageService.recordMemberJoinedAfterMembershipChange(
+                conversationId,
+                actorId,
+                request.userId());
         return toJoinRequestResponse(repository.findJoinRequest(requestId));
     }
 
@@ -477,7 +493,27 @@ public class GroupService {
                 AuditOutcome.SUCCEEDED);
         if (repository.isActiveMember(conversationId, userId)) {
             repository.removeMember(conversationId, userId, clock.instant());
+            groupMessageService.recordMemberRemoved(conversationId, actorId, userId);
         }
+    }
+
+    @Transactional
+    public void leave(String authorization, UUID conversationId) {
+        UUID userId = authService.requireUserId(authorization);
+        String role = repository.memberRole(conversationId, userId);
+        if (role == null) {
+            throw new GroupException(ApiErrorDefinition.NOT_MEMBER);
+        }
+        if ("OWNER".equals(role)) {
+            throw new GroupException(ApiErrorDefinition.FORBIDDEN);
+        }
+        groupMessageService.recordMemberLeft(conversationId, userId);
+        repository.removeMember(conversationId, userId, clock.instant());
+        recordAudit(
+                SecurityAuditEventType.GROUP_MEMBERSHIP_CHANGE,
+                userId,
+                conversationId,
+                AuditOutcome.SUCCEEDED);
     }
 
     @Transactional

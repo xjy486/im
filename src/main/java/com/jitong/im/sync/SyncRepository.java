@@ -55,7 +55,68 @@ class SyncRepository {
 
     List<SyncEventRecord> listEvents(UUID userId, long afterSeq, long untilSeq, int limit) {
         return jdbc.sql("""
-                        SELECT sync_seq, event_type, entity_id, conversation_id, created_at
+                        SELECT sync_seq,
+                               CASE
+                                   WHEN event_type IN ('MEMBERSHIP_REVOKED', 'MEMBERSHIP_GRANTED')
+                                       THEN event_type
+                                   WHEN conversation_id IS NOT NULL
+                                       AND EXISTS (
+                                           SELECT 1
+                                           FROM groups group_chat
+                                           WHERE group_chat.conversation_id = user_sync_events.conversation_id
+                                       )
+                                       AND NOT EXISTS (
+                                           SELECT 1
+                                           FROM conversation_members member
+                                           WHERE member.conversation_id = user_sync_events.conversation_id
+                                             AND member.user_id = :userId
+                                             AND member.status = 'ACTIVE'
+                                             AND user_sync_events.created_at >= member.joined_at
+                                       )
+                                       THEN 'GROUP_ACCESS_REVOKED'
+                                   ELSE event_type
+                               END AS event_type,
+                               CASE
+                                   WHEN event_type IN ('MEMBERSHIP_REVOKED', 'MEMBERSHIP_GRANTED')
+                                       THEN entity_id
+                                   WHEN conversation_id IS NOT NULL
+                                       AND EXISTS (
+                                           SELECT 1
+                                           FROM groups group_chat
+                                           WHERE group_chat.conversation_id = user_sync_events.conversation_id
+                                       )
+                                       AND NOT EXISTS (
+                                           SELECT 1
+                                           FROM conversation_members member
+                                           WHERE member.conversation_id = user_sync_events.conversation_id
+                                             AND member.user_id = :userId
+                                             AND member.status = 'ACTIVE'
+                                             AND user_sync_events.created_at >= member.joined_at
+                                       )
+                                       THEN conversation_id
+                                   ELSE entity_id
+                               END AS entity_id,
+                               CASE
+                                   WHEN event_type IN ('MEMBERSHIP_REVOKED', 'MEMBERSHIP_GRANTED')
+                                       THEN conversation_id
+                                   WHEN conversation_id IS NOT NULL
+                                       AND EXISTS (
+                                           SELECT 1
+                                           FROM groups group_chat
+                                           WHERE group_chat.conversation_id = user_sync_events.conversation_id
+                                       )
+                                       AND NOT EXISTS (
+                                           SELECT 1
+                                           FROM conversation_members member
+                                           WHERE member.conversation_id = user_sync_events.conversation_id
+                                             AND member.user_id = :userId
+                                             AND member.status = 'ACTIVE'
+                                             AND user_sync_events.created_at >= member.joined_at
+                                       )
+                                       THEN conversation_id
+                                   ELSE conversation_id
+                               END AS conversation_id,
+                               created_at
                         FROM user_sync_events
                         WHERE user_id = :userId
                           AND sync_seq > :afterSeq

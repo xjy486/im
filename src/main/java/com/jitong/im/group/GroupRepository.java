@@ -338,13 +338,18 @@ class GroupRepository {
 
     int addMember(UUID conversationId, UUID userId) {
         return jdbc.sql("""
+                        WITH group_state AS (
+                            SELECT conversation.last_seq
+                            FROM conversations conversation
+                            WHERE conversation.id = :conversationId
+                            FOR UPDATE
+                        )
                         INSERT INTO conversation_members (
                             conversation_id, user_id, role, status,
                             history_visible_after_seq, membership_version)
                         SELECT :conversationId, :userId, 'MEMBER', 'ACTIVE',
-                               conversation.last_seq, 1
-                        FROM conversations conversation
-                        WHERE conversation.id = :conversationId
+                               group_state.last_seq, 1
+                        FROM group_state
                         ON CONFLICT (conversation_id, user_id)
                         DO UPDATE SET role = 'MEMBER',
                                       status = 'ACTIVE',

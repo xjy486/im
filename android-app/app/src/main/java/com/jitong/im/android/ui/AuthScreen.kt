@@ -50,6 +50,7 @@ import java.io.ByteArrayOutputStream
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.jitong.im.android.auth.SessionState
 import com.jitong.im.android.contact.ConversationSummary
+import com.jitong.im.android.group.GroupSummary
 import java.util.UUID
 
 @Composable
@@ -195,9 +196,11 @@ private fun HomeScreen(
     val groupState by groupViewModel.state.collectAsStateWithLifecycle()
     var selectedTab by rememberSaveable { mutableStateOf("contacts") }
     var selectedConversationId by rememberSaveable { mutableStateOf<String?>(null) }
+    var selectedGroupConversationId by rememberSaveable { mutableStateOf<String?>(null) }
     var selectedMessageId by rememberSaveable { mutableStateOf<String?>(null) }
     LaunchedEffect(state.session.userId) {
         selectedConversationId = null
+        selectedGroupConversationId = null
         selectedMessageId = null
         messageViewModel.clearForLogout()
         contactViewModel.refresh()
@@ -213,6 +216,8 @@ private fun HomeScreen(
     }
     val selectedConversation = contactState.conversations
         .firstOrNull { it.conversationId.toString() == selectedConversationId }
+    val selectedGroup = groupState.groups
+        .firstOrNull { it.conversationId.toString() == selectedGroupConversationId }
     if (selectedConversation != null) {
         ConversationScreen(
             conversation = selectedConversation,
@@ -221,6 +226,18 @@ private fun HomeScreen(
             initialMessageId = selectedMessageId,
             onBack = {
                 selectedConversationId = null
+                selectedMessageId = null
+            },
+        )
+        return
+    }
+    if (selectedGroup != null) {
+        GroupConversationScreen(
+            group = selectedGroup,
+            viewModel = messageViewModel,
+            loadGroupAvatar = avatarViewModel::loadGroupAvatar,
+            onBack = {
+                selectedGroupConversationId = null
                 selectedMessageId = null
             },
         )
@@ -269,6 +286,10 @@ private fun HomeScreen(
                 viewModel = groupViewModel,
                 loadGroupAvatar = avatarViewModel::loadGroupAvatar,
                 loadSearchAvatar = avatarViewModel::loadGroupAvatarUrl,
+                onOpenGroup = {
+                    selectedGroupConversationId = it.conversationId.toString()
+                    selectedMessageId = null
+                },
             )
             "requests" -> ContactRequestsPanel(contactState, contactViewModel)
             else -> ContactListPanel(
@@ -371,6 +392,7 @@ private fun GroupPanel(
     viewModel: GroupViewModel,
     loadGroupAvatar: suspend (UUID, Long) -> ByteArray?,
     loadSearchAvatar: suspend (String) -> ByteArray?,
+    onOpenGroup: (GroupSummary) -> Unit,
 ) {
     var selectedSection by rememberSaveable { mutableStateOf("owned") }
     LaunchedEffect(state.autoResolveInvite) {
@@ -390,7 +412,7 @@ private fun GroupPanel(
             "search" -> GroupSearchPanel(state, viewModel, loadSearchAvatar)
             "invite" -> GroupInvitePanel(state, viewModel)
             "create" -> GroupCreatePanel(state, viewModel)
-            else -> GroupListPanel(state, viewModel, loadGroupAvatar)
+            else -> GroupListPanel(state, viewModel, loadGroupAvatar, onOpenGroup)
         }
     }
 }
@@ -400,6 +422,7 @@ private fun GroupListPanel(
     state: GroupUiState,
     viewModel: GroupViewModel,
     load: suspend (UUID, Long) -> ByteArray?,
+    onOpenGroup: (GroupSummary) -> Unit,
 ) {
     if (state.groups.isEmpty()) { Text("还没有加入群聊。"); return }
     state.groups.forEach { group ->
@@ -416,6 +439,9 @@ private fun GroupListPanel(
                 Text("群号 ${group.groupNo}")
                 Text(group.description.ifBlank { "暂无简介" })
                 Text("${group.visibility} · ${group.role} · ${group.memberCount} 人")
+                Button(onClick = { onOpenGroup(group) }) {
+                    Text("进入群聊")
+                }
                 if (group.role == "OWNER" || group.role == "ADMIN") {
                     Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                         OutlinedButton(onClick = { viewModel.createInvite(group) }) { Text("生成邀请") }
@@ -433,6 +459,11 @@ private fun GroupListPanel(
                         enabled = !state.loading,
                         modifier = Modifier.fillMaxWidth(),
                     ) { Text("无需审批直接加入") }
+                } else {
+                    OutlinedButton(
+                        onClick = { viewModel.leave(group) },
+                        enabled = !state.loading,
+                    ) { Text("退出群聊") }
                 }
                 state.createdInvite
                     ?.takeIf { it.conversationId == group.conversationId }
@@ -461,6 +492,113 @@ private fun GroupListPanel(
                     }
             }
         }
+    }
+}
+
+@Composable
+private fun GroupConversationScreen(
+    group: GroupSummary,
+    viewModel: MessageViewModel,
+    loadGroupAvatar: suspend (UUID, Long) -> ByteArray?,
+    onBack: () -> Unit,
+) {
+    val state by viewModel.state.collectAsStateWithLifecycle()
+    val listState = rememberLazyListState()
+    val context = LocalContext.current
+    val imagePicker = rememberLauncherForActivityResult(
+        ActivityResultContracts.GetContent(),
+    ) { uri ->
+        if (uri == null) return@rememberLauncherForActivityResult
+        val bytes = context.contentResolver.openInputStream(uri)?.use { input -> input.readBytes() }
+            ?: return@rememberLauncherForActivityResult
+        viewModel.sendImage(bytes)
+    }
+    LaunchedEffect(group.conversationId) {
+        viewModel.open(group.conversationId)
+    }
+    LaunchedEffect(state.messages, group.conversationId) {
+        val lastIndex = state.messages.lastIndex
+        if (lastIndex >= 0) listState.animateScrollToItem(lastIndex)
+    }
+    LaunchedEffect(state.messages.size, group.conversationId) {
+        val lastSequence = state.messages.lastOrNull()?.conversationSeq ?: return@LaunchedEffect
+        viewModel.markRead(lastSequence)
+    }
+    Column(
+        modifier = Modifier.fillMaxSize().padding(24.dp),
+        verticalArrangement = Arrangement.spacedBy(16.dp),
+    ) {
+        TextButton(onClick = onBack) { Text("返回群列表") }
+        RemoteGroupAvatar(
+            conversationId = group.conversationId,
+            avatarVersion = group.avatarVersion,
+            fallback = group.name.take(2),
+            load = loadGroupAvatar,
+            size = 64.dp,
+        )
+        Text(group.name, style = MaterialTheme.typography.headlineMedium)
+        Text("群号 ${group.groupNo} · ${group.memberCount} 人")
+        LazyColumn(
+            state = listState,
+            modifier = Modifier
+                .fillMaxWidth()
+                .weight(1f, fill = false)
+                .heightIn(max = 420.dp),
+            verticalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+            if (state.messages.isEmpty()) {
+                item { Text("还没有群消息") }
+            }
+            items(state.messages, key = { it.messageId }) { message ->
+                Card(Modifier.fillMaxWidth()) {
+                    Column(Modifier.padding(14.dp)) {
+                        when {
+                            message.type == "SYSTEM" -> Text("群系统事件")
+                            message.state == "RECALLED" -> Text("消息已撤回")
+                            message.state == "MODERATED" -> Text("消息已被治理")
+                            message.type == "IMAGE" -> ImageMessageContent(message) { item, thumbnail ->
+                                viewModel.loadMedia(item, thumbnail)
+                            }
+                            else -> Text(message.text)
+                        }
+                        Text(
+                            if (message.conversationSeq != null) {
+                                "序号 ${message.conversationSeq}"
+                            } else {
+                                "等待确认"
+                            },
+                            style = MaterialTheme.typography.bodySmall,
+                        )
+                        if (message.state == "ACTIVE"
+                            && message.localState == "SENT"
+                            && message.senderId == state.currentUserId?.toString()
+                        ) {
+                            TextButton(onClick = { viewModel.recall(message) }) { Text("撤回") }
+                        }
+                    }
+                }
+            }
+        }
+        OutlinedTextField(
+            value = state.draft,
+            onValueChange = viewModel::setDraft,
+            enabled = !state.loading,
+            label = { Text("输入群消息") },
+            modifier = Modifier.fillMaxWidth(),
+        )
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            Button(
+                onClick = viewModel::send,
+                enabled = state.draft.isNotBlank() && !state.loading,
+                modifier = Modifier.weight(1f),
+            ) { Text("发送") }
+            OutlinedButton(
+                onClick = { imagePicker.launch("image/*") },
+                enabled = !state.loading,
+                modifier = Modifier.weight(1f),
+            ) { Text("发送图片") }
+        }
+        state.message?.let { Text(it, color = MaterialTheme.colorScheme.error) }
     }
 }
 

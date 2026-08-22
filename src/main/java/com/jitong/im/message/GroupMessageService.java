@@ -1,0 +1,267 @@
+package com.jitong.im.message;
+
+import com.jitong.im.auth.UuidV7;
+import com.jitong.im.media.MediaService;
+import com.jitong.im.platform.error.ApiErrorDefinition;
+import com.jitong.im.sync.SyncService;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.stereotype.Service;
+
+import java.time.Clock;
+import java.time.Instant;
+import java.util.List;
+import java.util.UUID;
+
+/**
+ * Owns the group-specific part of the message transaction.
+ *
+ * Group membership changes call this service after changing membership state,
+ * so the membership boundary and the lifecycle message are committed in the
+ * same transaction as the change that caused them.
+ */
+@Service
+public class GroupMessageService {
+
+    private final MessageRepository repository;
+    private final SyncService syncService;
+    private final MediaService mediaService;
+    private final Clock clock;
+
+    @Autowired
+    GroupMessageService(
+            MessageRepository repository,
+            SyncService syncService,
+            MediaService mediaService
+    ) {
+        this(repository, syncService, mediaService, Clock.systemUTC());
+    }
+
+    GroupMessageService(
+            MessageRepository repository,
+            SyncService syncService,
+            MediaService mediaService,
+            Clock clock
+    ) {
+        this.repository = repository;
+        this.syncService = syncService;
+        this.mediaService = mediaService;
+        this.clock = clock;
+    }
+
+    MessageSendResult sendText(
+            UUID senderId,
+            UUID conversationId,
+            UUID clientMsgId,
+            String text
+    ) {
+        MessagePayloadValidator.validateText(text);
+        MessagePayloadValidator.validateClientMessageId(clientMsgId);
+        MessageRepository.GroupConversationTarget target =
+                repository.lockGroupConversation(conversationId, senderId);
+        if (target == null) {
+            throw new MessageException(ApiErrorDefinition.NOT_MEMBER);
+        }
+
+        MessageRecord previous = repository.findByClientMessageId(senderId, clientMsgId);
+        if (previous != null) {
+            if (!previous.conversationId().equals(conversationId)
+                    || !"TEXT".equals(previous.type())
+                    || !text.equals(previous.text())) {
+                throw new MessageException(ApiErrorDefinition.IDEMPOTENCY_CONFLICT);
+            }
+            return new MessageSendResult(previous, false);
+        }
+
+        long sequence = repository.nextConversationSequence(conversationId);
+        MessageRecord message = repository.insertTextMessage(
+                UuidV7.random(),
+                conversationId,
+                sequence,
+                senderId,
+                clientMsgId,
+                text,
+                clock.instant());
+        recordMessageCreated(message);
+        return new MessageSendResult(message, true);
+    }
+
+    MessageSendResult sendImage(
+            UUID senderId,
+            UUID conversationId,
+            UUID clientMsgId,
+            UUID mediaId
+    ) {
+        MessagePayloadValidator.validateClientMessageId(clientMsgId);
+        if (mediaId == null) {
+            throw new MessageException(ApiErrorDefinition.MEDIA_INVALID);
+        }
+        MessageRepository.GroupConversationTarget target =
+                repository.lockGroupConversation(conversationId, senderId);
+        if (target == null) {
+            throw new MessageException(ApiErrorDefinition.NOT_MEMBER);
+        }
+
+        MessageRecord previous = repository.findByClientMessageId(senderId, clientMsgId);
+        if (previous != null) {
+            if (!previous.conversationId().equals(conversationId)
+                    || !"IMAGE".equals(previous.type())
+                    || !mediaId.equals(previous.mediaId())) {
+                throw new MessageException(ApiErrorDefinition.IDEMPOTENCY_CONFLICT);
+            }
+            return new MessageSendResult(previous, false);
+        }
+
+        UUID messageId = UuidV7.random();
+        mediaService.bindMessageImage(senderId, mediaId, messageId);
+        long sequence = repository.nextConversationSequence(conversationId);
+        MessageRecord message = repository.insertImageMessage(
+                messageId,
+                conversationId,
+                sequence,
+                senderId,
+                clientMsgId,
+                mediaId,
+                clock.instant());
+        recordMessageCreated(message);
+        return new MessageSendResult(message, true);
+    }
+
+    public void recordGroupCreated(UUID conversationId, UUID ownerUserId) {
+        recordSystemMessage(conversationId, ownerUserId);
+    }
+
+    public void recordMemberJoined(UUID conversationId, UUID actorId) {
+        recordSystemMessage(conversationId, actorId);
+    }
+
+    public void recordMemberJoinedAfterMembershipChange(
+            UUID conversationId,
+            UUID actorId,
+            UUID joinedUserId
+    ) {
+        recordSystemMessage(conversationId, actorId);
+        recordMembershipGranted(conversationId, joinedUserId);
+    }
+
+    public void recordMemberLeft(UUID conversationId, UUID actorId) {
+        recordSystemMessage(conversationId, actorId);
+        recordMembershipRevoked(conversationId, actorId);
+    }
+
+    public void recordMemberRemoved(UUID conversationId, UUID actorId, UUID removedUserId) {
+        recordSystemMessage(conversationId, actorId);
+        recordMembershipRevoked(conversationId, removedUserId);
+    }
+
+    ConversationMessagePage listMessages(
+            UUID userId,
+            UUID conversationId,
+            long afterSequence,
+            int limit
+    ) {
+        MessageRepository.GroupConversationTarget target =
+                repository.findGroupConversation(conversationId, userId);
+        if (target == null) {
+            throw new MessageException(ApiErrorDefinition.NOT_MEMBER);
+        }
+        return new ConversationMessagePage(
+                1,
+                conversationId,
+                List.copyOf(repository.listGroupMessages(
+                        conversationId,
+                        afterSequence,
+                        target.historyVisibleAfterSeq(),
+                        limit)));
+    }
+
+    MessageRecord recall(UUID senderId, UUID messageId) {
+        UUID conversationId = repository.findConversationId(messageId);
+        if (conversationId == null
+                || repository.lockGroupConversation(conversationId, senderId) == null) {
+            throw new MessageException(ApiErrorDefinition.FORBIDDEN);
+        }
+        MessageRecord message = repository.findByIdForUpdate(messageId);
+        if (message == null || !senderId.equals(message.senderId())) {
+            throw new MessageException(ApiErrorDefinition.FORBIDDEN);
+        }
+        if ("SYSTEM".equals(message.type())) {
+            throw new MessageException(ApiErrorDefinition.FORBIDDEN);
+        }
+        if ("RECALLED".equals(message.state())) {
+            return message;
+        }
+        if (!"ACTIVE".equals(message.state())) {
+            throw new MessageException(ApiErrorDefinition.FORBIDDEN);
+        }
+        Instant now = clock.instant();
+        if (!now.isBefore(message.serverAcceptedAt().plusSeconds(60))) {
+            throw new MessageException(ApiErrorDefinition.RECALL_WINDOW_EXPIRED);
+        }
+        if (message.mediaId() != null) {
+            mediaService.expireBoundMedia(message.messageId());
+        }
+        repository.recallMessage(messageId, now);
+        MessageRecord recalled = repository.findById(messageId);
+        for (UUID memberId : repository.groupActiveMemberIds(message.conversationId())
+                .stream()
+                .sorted()
+                .toList()) {
+            long syncSeq = syncService.allocateSequence(memberId);
+            syncService.recordEvent(
+                    memberId,
+                    syncSeq,
+                    "MESSAGE_RECALLED",
+                    message.messageId(),
+                    message.conversationId());
+        }
+        return recalled;
+    }
+
+    private void recordSystemMessage(UUID conversationId, UUID actorId) {
+        if (repository.lockGroupConversation(conversationId) == null) {
+            throw new MessageException(ApiErrorDefinition.NOT_MEMBER);
+        }
+        long sequence = repository.nextConversationSequence(conversationId);
+        MessageRecord message = repository.insertSystemMessage(
+                UuidV7.random(),
+                conversationId,
+                sequence,
+                actorId,
+                UUID.randomUUID(),
+                clock.instant());
+        recordMessageCreated(message);
+    }
+
+    private void recordMembershipRevoked(UUID conversationId, UUID userId) {
+        long syncSeq = syncService.allocateSequence(userId);
+        syncService.recordEvent(
+                userId,
+                syncSeq,
+                "MEMBERSHIP_REVOKED",
+                conversationId,
+                conversationId);
+    }
+
+    private void recordMembershipGranted(UUID conversationId, UUID userId) {
+        long syncSeq = syncService.allocateSequence(userId);
+        syncService.recordEvent(
+                userId,
+                syncSeq,
+                "MEMBERSHIP_GRANTED",
+                conversationId,
+                conversationId);
+    }
+
+    private void recordMessageCreated(MessageRecord message) {
+        List<UUID> memberIds = repository.groupActiveMemberIds(message.conversationId());
+        for (UUID memberId : memberIds.stream().sorted().toList()) {
+            long syncSeq = syncService.allocateSequence(memberId);
+            syncService.recordEvent(
+                    memberId,
+                    syncSeq,
+                    "MESSAGE_CREATED",
+                    message.messageId(),
+                    message.conversationId());
+        }
+    }
+}

@@ -25,6 +25,10 @@ internal class GroupRepository(
     suspend fun list(): List<GroupSummary> =
         api.list().bodyOrThrow("Group list")
 
+    suspend fun leave(conversationId: UUID) {
+        api.leave(conversationId).ensureSuccessful("Group leave")
+    }
+
     suspend fun search(query: String): List<GroupSearchResult> =
         api.search(query).bodyOrThrow("Group search").groups
 

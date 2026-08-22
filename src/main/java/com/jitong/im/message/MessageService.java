@@ -21,6 +21,7 @@ public class MessageService {
     private final ContactService contactService;
     private final SyncService syncService;
     private final MediaService mediaService;
+    private final GroupMessageService groupMessageService;
     private final Clock clock;
 
     @Autowired
@@ -28,9 +29,10 @@ public class MessageService {
             MessageRepository repository,
             ContactService contactService,
             SyncService syncService,
-            MediaService mediaService
+            MediaService mediaService,
+            GroupMessageService groupMessageService
     ) {
-        this(repository, contactService, syncService, mediaService, Clock.systemUTC());
+        this(repository, contactService, syncService, mediaService, groupMessageService, Clock.systemUTC());
     }
 
     MessageService(
@@ -39,7 +41,7 @@ public class MessageService {
             SyncService syncService,
             Clock clock
     ) {
-        this(repository, contactService, syncService, null, clock);
+        this(repository, contactService, syncService, null, null, clock);
     }
 
     MessageService(
@@ -49,10 +51,22 @@ public class MessageService {
             MediaService mediaService,
             Clock clock
     ) {
+        this(repository, contactService, syncService, mediaService, null, clock);
+    }
+
+    MessageService(
+            MessageRepository repository,
+            ContactService contactService,
+            SyncService syncService,
+            MediaService mediaService,
+            GroupMessageService groupMessageService,
+            Clock clock
+    ) {
         this.repository = repository;
         this.contactService = contactService;
         this.syncService = syncService;
         this.mediaService = mediaService;
+        this.groupMessageService = groupMessageService;
         this.clock = clock;
     }
 
@@ -63,6 +77,9 @@ public class MessageService {
         UUID clientMsgId,
         String text
     ) {
+        if (groupMessageService != null && repository.isGroupConversation(conversationId)) {
+            return groupMessageService.sendText(senderId, conversationId, clientMsgId, text);
+        }
         MessagePayloadValidator.validateText(text);
         MessagePayloadValidator.validateClientMessageId(clientMsgId);
         MessageRepository.ConversationTarget target = repository.lockConversation(conversationId, senderId);
@@ -110,6 +127,9 @@ public class MessageService {
             UUID clientMsgId,
             UUID mediaId
     ) {
+        if (groupMessageService != null && repository.isGroupConversation(conversationId)) {
+            return groupMessageService.sendImage(senderId, conversationId, clientMsgId, mediaId);
+        }
         MessagePayloadValidator.validateClientMessageId(clientMsgId);
         if (mediaId == null || mediaService == null) {
             throw new MessageException(ApiErrorDefinition.MEDIA_INVALID);
@@ -164,6 +184,9 @@ public class MessageService {
         if (afterSequence < 0 || limit < 1 || limit > 200) {
             throw new MessageException(ApiErrorDefinition.INVALID_REQUEST);
         }
+        if (groupMessageService != null && repository.isGroupConversation(conversationId)) {
+            return groupMessageService.listMessages(userId, conversationId, afterSequence, limit);
+        }
         MessageRepository.ConversationTarget target = repository.findConversation(conversationId, userId);
         if (target == null) {
             throw new MessageException(ApiErrorDefinition.NOT_CONTACT);
@@ -179,6 +202,9 @@ public class MessageService {
         UUID conversationId = repository.findConversationId(messageId);
         if (conversationId == null) {
             throw new MessageException(ApiErrorDefinition.RESOURCE_NOT_FOUND);
+        }
+        if (groupMessageService != null && repository.isGroupConversation(conversationId)) {
+            return groupMessageService.recall(senderId, messageId);
         }
         if (repository.lockConversation(conversationId, senderId) == null) {
             throw new MessageException(ApiErrorDefinition.FORBIDDEN);

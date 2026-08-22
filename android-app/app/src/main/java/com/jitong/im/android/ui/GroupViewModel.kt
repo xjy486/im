@@ -90,6 +90,13 @@ internal class GroupViewModel(
         }
     }
 
+    fun leave(group: GroupSummary) {
+        launchRequest {
+            repository.leave(group.conversationId)
+            refreshData()
+        }
+    }
+
     fun openInviteToken(value: String) {
         _state.value = _state.value.copy(
             inviteToken = value.trim(),

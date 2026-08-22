@@ -20,6 +20,13 @@ import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
 import java.net.URI;
+import java.awt.Color;
+import java.awt.image.BufferedImage;
+import java.io.ByteArrayOutputStream;
+import javax.imageio.ImageIO;
+import org.springframework.core.io.ByteArrayResource;
+import org.springframework.util.LinkedMultiValueMap;
+import org.springframework.util.MultiValueMap;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
@@ -283,6 +290,137 @@ class GroupContractTest extends ContractTestEnvironment {
         }
     }
 
+    @Test
+    void group_messages_enforce_membership_boundaries_and_media_access() throws Exception {
+        TestUser owner = createUser("Message owner");
+        TestUser member = createUser("Message member");
+        String ownerToken = login(owner.accountNo(), "group-message-owner");
+        String memberToken = login(member.accountNo(), "group-message-member");
+
+        JsonNode group = createGroup(ownerToken, "Message Lounge", "", "PRIVATE");
+        UUID conversationId = UUID.fromString(group.get("conversationId").asText());
+        postMessage(ownerToken, conversationId, "before join");
+        assertThat(addMember(ownerToken, conversationId, member.accountNo()).getStatusCode())
+                .isEqualTo(HttpStatus.OK);
+
+        JsonNode afterJoin = postMessage(ownerToken, conversationId, "after join");
+        JsonNode memberMessage = postMessage(memberToken, conversationId, "member message");
+        assertThat(afterJoin.get("conversationSeq").asLong()).isEqualTo(4);
+        assertThat(memberMessage.get("conversationSeq").asLong()).isEqualTo(5);
+
+        JsonNode memberHistory = exchange(
+                HttpMethod.GET,
+                "/api/v1/conversations/" + conversationId + "/messages?afterSeq=0&limit=200",
+                memberToken,
+                null).getBody();
+        assertThat(memberHistory.get("messages"))
+                .extracting(node -> node.get("conversationSeq").asLong())
+                .containsExactly(3L, 4L, 5L);
+
+        JsonNode ownerHistory = exchange(
+                HttpMethod.GET,
+                "/api/v1/conversations/" + conversationId + "/messages?afterSeq=0&limit=200",
+                ownerToken,
+                null).getBody();
+        assertThat(ownerHistory.get("messages"))
+                .extracting(node -> node.get("conversationSeq").asLong())
+                .containsExactly(1L, 2L, 3L, 4L, 5L);
+
+        UUID mediaId = UUID.fromString(uploadImage(ownerToken).get("mediaId").asText());
+        JsonNode image = exchange(
+                HttpMethod.POST,
+                "/api/v1/conversations/" + conversationId + "/messages",
+                ownerToken,
+                Map.of(
+                        "clientMsgId", UUID.randomUUID(),
+                        "type", "IMAGE",
+                        "mediaId", mediaId))
+                .getBody();
+        assertThat(image.get("type").asText()).isEqualTo("IMAGE");
+        assertThat(downloadMedia(memberToken, mediaId).getStatusCode()).isEqualTo(HttpStatus.OK);
+
+        JsonNode syncBeforeRemoval = exchange(
+                HttpMethod.GET,
+                "/api/v1/sync?after=0&until=0",
+                memberToken,
+                null).getBody();
+        long beforeRemoval = syncBeforeRemoval.get("highWatermark").asLong();
+
+        assertThat(exchange(
+                HttpMethod.DELETE,
+                "/api/v1/groups/" + conversationId + "/members/" + member.userId(),
+                ownerToken,
+                null).getStatusCode()).isEqualTo(HttpStatus.NO_CONTENT);
+
+        ResponseEntity<JsonNode> sendAfterRemoval = exchange(
+                HttpMethod.POST,
+                "/api/v1/conversations/" + conversationId + "/messages",
+                memberToken,
+                Map.of("clientMsgId", UUID.randomUUID(), "text", "should fail"));
+        assertThat(sendAfterRemoval.getStatusCode()).isEqualTo(HttpStatus.FORBIDDEN);
+        assertThat(sendAfterRemoval.getBody().get("code").asText()).isEqualTo("NOT_MEMBER");
+        assertThat(exchange(
+                HttpMethod.GET,
+                "/api/v1/conversations/" + conversationId + "/messages?afterSeq=0&limit=200",
+                memberToken,
+                null).getStatusCode()).isEqualTo(HttpStatus.FORBIDDEN);
+        assertThat(downloadMedia(memberToken, mediaId).getStatusCode())
+                .isEqualTo(HttpStatus.FORBIDDEN);
+
+        JsonNode revoked = exchange(
+                HttpMethod.GET,
+                "/api/v1/sync?after=" + beforeRemoval + "&limit=200",
+                memberToken,
+                null).getBody();
+        assertThat(revoked.get("events"))
+                .extracting(node -> node.get("eventType").asText())
+                .contains("MEMBERSHIP_REVOKED");
+
+        assertThat(addMember(ownerToken, conversationId, member.accountNo()).getStatusCode())
+                .isEqualTo(HttpStatus.OK);
+        JsonNode afterRejoin = postMessage(ownerToken, conversationId, "after rejoin");
+        JsonNode rejoinedHistory = exchange(
+                HttpMethod.GET,
+                "/api/v1/conversations/" + conversationId + "/messages?afterSeq=0&limit=200",
+                memberToken,
+                null).getBody();
+        assertThat(rejoinedHistory.get("messages"))
+                .extracting(node -> node.get("conversationSeq").asLong())
+                .containsExactly(
+                        afterRejoin.get("conversationSeq").asLong() - 1,
+                        afterRejoin.get("conversationSeq").asLong());
+    }
+
+    @Test
+    void group_message_sync_fanout_has_one_event_per_active_member() throws Exception {
+        TestUser owner = createUser("Fanout owner");
+        TestUser first = createUser("Fanout first");
+        TestUser second = createUser("Fanout second");
+        String ownerToken = login(owner.accountNo(), "fanout-owner");
+        String firstToken = login(first.accountNo(), "fanout-first");
+        String secondToken = login(second.accountNo(), "fanout-second");
+
+        JsonNode group = createGroup(ownerToken, "Fanout Lounge", "", "PRIVATE");
+        UUID conversationId = UUID.fromString(group.get("conversationId").asText());
+        assertThat(addMember(ownerToken, conversationId, first.accountNo()).getStatusCode())
+                .isEqualTo(HttpStatus.OK);
+        assertThat(addMember(ownerToken, conversationId, second.accountNo()).getStatusCode())
+                .isEqualTo(HttpStatus.OK);
+
+        postMessage(ownerToken, conversationId, "fanout");
+
+        for (String token : List.of(ownerToken, firstToken, secondToken)) {
+            JsonNode page = exchange(
+                    HttpMethod.GET,
+                    "/api/v1/sync?after=0&limit=200",
+                    token,
+                    null).getBody();
+            assertThat(page.get("events"))
+                    .extracting(node -> node.get("eventType").asText())
+                    .contains("MESSAGE_CREATED");
+        }
+    }
+
     private JsonNode createGroup(
             String token,
             String name,
@@ -315,6 +453,47 @@ class GroupContractTest extends ContractTestEnvironment {
                 "/api/v1/groups/" + conversationId + "/members",
                 token,
                 Map.of("accountNo", accountNo));
+    }
+
+    private JsonNode postMessage(String token, UUID conversationId, String text) {
+        ResponseEntity<JsonNode> response = exchange(
+                HttpMethod.POST,
+                "/api/v1/conversations/" + conversationId + "/messages",
+                token,
+                Map.of("clientMsgId", UUID.randomUUID(), "text", text));
+        assertThat(response.getStatusCode()).isEqualTo(HttpStatus.OK);
+        return response.getBody();
+    }
+
+    private JsonNode uploadImage(String token) throws Exception {
+        BufferedImage image = new BufferedImage(32, 24, BufferedImage.TYPE_INT_RGB);
+        for (int x = 0; x < image.getWidth(); x++) {
+            for (int y = 0; y < image.getHeight(); y++) {
+                image.setRGB(x, y, new Color(80 + x, 100 + y, 120).getRGB());
+            }
+        }
+        ByteArrayOutputStream output = new ByteArrayOutputStream();
+        ImageIO.write(image, "png", output);
+        MultiValueMap<String, Object> parts = new LinkedMultiValueMap<>();
+        parts.add("file", new NamedByteArrayResource(output.toByteArray(), "group.png"));
+        HttpHeaders headers = new HttpHeaders();
+        headers.setBearerAuth(token);
+        headers.setContentType(MediaType.MULTIPART_FORM_DATA);
+        return http.exchange(
+                "/api/v1/media/images?uploadId=" + UUID.randomUUID(),
+                HttpMethod.POST,
+                new HttpEntity<>(parts, headers),
+                JsonNode.class).getBody();
+    }
+
+    private ResponseEntity<byte[]> downloadMedia(String token, UUID mediaId) {
+        HttpHeaders headers = new HttpHeaders();
+        headers.setBearerAuth(token);
+        return http.exchange(
+                "/api/v1/media/" + mediaId + "?variant=full",
+                HttpMethod.GET,
+                new HttpEntity<>(headers),
+                byte[].class);
     }
 
     private ResponseEntity<JsonNode> get(Future<ResponseEntity<JsonNode>> response) {
@@ -381,5 +560,19 @@ class GroupContractTest extends ContractTestEnvironment {
     }
 
     private record TestUser(UUID userId, String accountNo) {
+    }
+
+    private static final class NamedByteArrayResource extends ByteArrayResource {
+        private final String filename;
+
+        private NamedByteArrayResource(byte[] content, String filename) {
+            super(content);
+            this.filename = filename;
+        }
+
+        @Override
+        public String getFilename() {
+            return filename;
+        }
     }
 }

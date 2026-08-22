@@ -187,6 +187,9 @@ interface LocalGroupProfileDao {
 
     @Query("SELECT * FROM local_group_profile WHERE conversationId = :conversationId LIMIT 1")
     fun find(conversationId: String): LocalGroupProfileEntity?
+
+    @Query("DELETE FROM local_group_profile WHERE conversationId = :conversationId")
+    fun delete(conversationId: String)
 }
 
 @Dao
@@ -307,6 +310,26 @@ interface LocalMessageDao {
         """,
     )
     fun acceptedImageMediaIds(conversationId: String): List<String>
+
+    @Query(
+        """
+        SELECT mediaId FROM local_message
+        WHERE conversationId = :conversationId
+          AND type = 'IMAGE'
+          AND mediaId IS NOT NULL
+        """,
+    )
+    fun imageMediaIds(conversationId: String): List<String>
+
+    @Query(
+        """
+        SELECT localMediaPath FROM local_message
+        WHERE conversationId = :conversationId
+          AND type = 'IMAGE'
+          AND localMediaPath IS NOT NULL
+        """,
+    )
+    fun imageCachePaths(conversationId: String): List<String>
 
     @Query("DELETE FROM local_message_search WHERE messageId IN (SELECT messageId FROM local_message WHERE conversationId = :conversationId)")
     fun deleteSearchForConversation(conversationId: String)
@@ -455,6 +478,9 @@ interface PendingCommandDao {
 
     @Query("DELETE FROM pending_commands WHERE clientMsgId = :clientMsgId")
     fun delete(clientMsgId: String)
+
+    @Query("DELETE FROM pending_commands WHERE conversationId = :conversationId")
+    fun deleteForConversation(conversationId: String)
 
     @Query("SELECT COUNT(*) FROM pending_commands WHERE status IN ('PENDING', 'SENDING')")
     fun pendingCount(): Int

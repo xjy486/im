@@ -58,6 +58,15 @@ class GroupController {
         return org.springframework.http.ResponseEntity.noContent().build();
     }
 
+    @PostMapping("/{conversationId}/leave")
+    org.springframework.http.ResponseEntity<Void> leave(
+            @RequestHeader(value = "Authorization", required = false) String authorization,
+            @PathVariable java.util.UUID conversationId
+    ) {
+        service.leave(authorization, conversationId);
+        return org.springframework.http.ResponseEntity.noContent().build();
+    }
+
     @PostMapping("/{conversationId}/invites")
     GroupInviteResponse createInvite(
             @RequestHeader(value = "Authorization", required = false) String authorization,

@@ -88,6 +88,20 @@ class MessageOutboxDelivery implements OutboxDelivery {
             // durable sync state is no longer readable by that device either.
             return true;
         }
+        if (record.conversationId() != null
+                && messageRepository.isGroupConversation(record.conversationId())
+                && !"MEMBERSHIP_REVOKED".equals(record.eventType())
+                && !"MEMBERSHIP_GRANTED".equals(record.eventType())
+                && !messageRepository.canDeviceReceiveGroupEvent(
+                        record.targetDeviceId(),
+                        record.conversationId(),
+                        record.syncSeq())) {
+            // A membership change can revoke a device's right to receive
+            // already-created group events while those outbox rows are still
+            // pending. The revocation marker itself remains deliverable so the
+            // client can erase its local group copy.
+            return true;
+        }
         if ("MESSAGE_CREATED".equals(record.eventType())) {
             MessageRecord current = messageRepository.findById(record.entityId());
             if (current != null && "RECALLED".equals(current.state())) {
@@ -140,6 +154,10 @@ class MessageOutboxDelivery implements OutboxDelivery {
                                 profile.avatarVersion(),
                                 record.syncSeq());
             }
+            case "MEMBERSHIP_REVOKED" ->
+                    MessageWire.membershipRevoked(record.conversationId(), record.syncSeq());
+            case "MEMBERSHIP_GRANTED" ->
+                    MessageWire.membershipGranted(record.conversationId(), record.syncSeq());
             default -> null;
         };
         if (envelope == null) {

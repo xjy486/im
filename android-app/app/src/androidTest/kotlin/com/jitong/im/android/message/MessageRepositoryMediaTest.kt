@@ -272,6 +272,9 @@ class MessageRepositoryMediaTest {
         override suspend fun conversations(): Response<List<SyncConversationResponse>> =
             error("not used")
 
+        override suspend fun groups(): Response<List<com.jitong.im.android.group.GroupSummary>> =
+            error("not used")
+
         override suspend fun groupProfile(
             conversationId: UUID,
         ): Response<GroupProfileResponse> = error("not used")

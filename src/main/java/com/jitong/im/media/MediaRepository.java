@@ -241,6 +241,20 @@ class MediaRepository {
                                              OR conversation.user_high_id = :userId
                                          )
                                    ))
+                                   OR (m.state = 'BOUND' AND EXISTS (
+                                       SELECT 1
+                                       FROM messages message
+                                       JOIN conversation_members member
+                                         ON member.conversation_id = message.conversation_id
+                                        AND member.user_id = :userId
+                                        AND member.status = 'ACTIVE'
+                                       JOIN groups group_chat
+                                         ON group_chat.conversation_id = message.conversation_id
+                                        AND group_chat.status = 'ACTIVE'
+                                       WHERE message.media_id = m.id
+                                         AND message.state = 'ACTIVE'
+                                         AND message.conversation_seq > member.history_visible_after_seq
+                                   ))
                                ) AS permitted
                         FROM media m
                         WHERE m.id = :mediaId
