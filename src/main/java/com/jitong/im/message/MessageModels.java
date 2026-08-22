@@ -15,8 +15,47 @@ record MessageRecord(
         String text,
         UUID mediaId,
         Instant serverAcceptedAt,
-        Instant recalledAt
+        Instant recalledAt,
+        String systemEventType,
+        UUID systemTargetUserId,
+        String systemRole,
+        UUID moderatedByUserId,
+        String moderatedReason,
+        Instant moderatedAt
 ) {
+    MessageRecord(
+            UUID messageId,
+            UUID conversationId,
+            UUID senderId,
+            UUID clientMsgId,
+            long conversationSeq,
+            String type,
+            String state,
+            String text,
+            UUID mediaId,
+            Instant serverAcceptedAt,
+            Instant recalledAt
+    ) {
+        this(
+                messageId,
+                conversationId,
+                senderId,
+                clientMsgId,
+                conversationSeq,
+                type,
+                state,
+                text,
+                mediaId,
+                serverAcceptedAt,
+                recalledAt,
+                null,
+                null,
+                null,
+                null,
+                null,
+                null);
+    }
+
     MessageRecord(
             UUID messageId,
             UUID conversationId,
@@ -39,6 +78,12 @@ record MessageRecord(
                 text,
                 null,
                 serverAcceptedAt,
+                null,
+                null,
+                null,
+                null,
+                null,
+                null,
                 null);
     }
 
@@ -65,6 +110,12 @@ record MessageRecord(
                 text,
                 mediaId,
                 serverAcceptedAt,
+                null,
+                null,
+                null,
+                null,
+                null,
+                null,
                 null);
     }
 }
@@ -79,5 +130,10 @@ record ConversationMessagePage(
 record MessageSendResult(
         MessageRecord message,
         boolean created
+) {
+}
+
+record ModerateMessageRequest(
+        String reason
 ) {
 }

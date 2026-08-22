@@ -73,6 +73,12 @@ data class LocalMessageEntity(
     val localMediaPath: String? = null,
     val serverAcceptedAt: String?,
     val recalledAt: String? = null,
+    val systemEventType: String? = null,
+    val systemTargetUserId: String? = null,
+    val systemRole: String? = null,
+    val moderatedByUserId: String? = null,
+    val moderatedReason: String? = null,
+    val moderatedAt: String? = null,
     val createdAt: Long,
 )
 
@@ -507,7 +513,7 @@ interface SyncStateDao {
         PendingMessageCommandEntity::class,
         LocalGroupProfileEntity::class,
     ],
-    version = 14,
+    version = 15,
     exportSchema = true,
 )
 abstract class AccountDatabase : RoomDatabase() {
@@ -724,6 +730,17 @@ abstract class AccountDatabase : RoomDatabase() {
                 database.execSQL(
                     "ALTER TABLE local_message_search_v14 RENAME TO local_message_search",
                 )
+            }
+        }
+
+        val MIGRATION_14_15 = object : androidx.room.migration.Migration(14, 15) {
+            override fun migrate(database: androidx.sqlite.db.SupportSQLiteDatabase) {
+                database.execSQL("ALTER TABLE local_message ADD COLUMN systemEventType TEXT")
+                database.execSQL("ALTER TABLE local_message ADD COLUMN systemTargetUserId TEXT")
+                database.execSQL("ALTER TABLE local_message ADD COLUMN systemRole TEXT")
+                database.execSQL("ALTER TABLE local_message ADD COLUMN moderatedByUserId TEXT")
+                database.execSQL("ALTER TABLE local_message ADD COLUMN moderatedReason TEXT")
+                database.execSQL("ALTER TABLE local_message ADD COLUMN moderatedAt TEXT")
             }
         }
 

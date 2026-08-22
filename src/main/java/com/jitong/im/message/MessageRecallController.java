@@ -1,8 +1,10 @@
 package com.jitong.im.message;
 
 import com.jitong.im.auth.AuthService;
+import jakarta.validation.Valid;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
+import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestHeader;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
@@ -24,5 +26,17 @@ class MessageRecallController {
     MessageRecord recall(@RequestHeader(value = "Authorization", required = false) String authorization,
                          @PathVariable UUID messageId) {
         return messageService.recall(authService.requireUserId(authorization), messageId);
+    }
+
+    @PostMapping("/{messageId}/moderate")
+    MessageRecord moderate(
+            @RequestHeader(value = "Authorization", required = false) String authorization,
+            @PathVariable UUID messageId,
+            @Valid @RequestBody(required = false) ModerateMessageRequest request
+    ) {
+        return messageService.moderate(
+                authService.requireUserId(authorization),
+                messageId,
+                request);
     }
 }

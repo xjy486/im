@@ -196,6 +196,12 @@ data class DesktopMessage(
     val mediaId: String? = null,
     val serverAcceptedAt: String,
     val recalledAt: String? = null,
+    val systemEventType: String? = null,
+    val systemTargetUserId: String? = null,
+    val systemRole: String? = null,
+    val moderatedByUserId: String? = null,
+    val moderatedReason: String? = null,
+    val moderatedAt: String? = null,
 )
 
 @Serializable
@@ -234,6 +240,12 @@ data class DesktopRealtimeBody(
     val mediaId: String? = null,
     val serverAcceptedAt: String? = null,
     val recalledAt: String? = null,
+    val systemEventType: String? = null,
+    val systemTargetUserId: String? = null,
+    val systemRole: String? = null,
+    val moderatedByUserId: String? = null,
+    val moderatedReason: String? = null,
+    val moderatedAt: String? = null,
     val syncSeq: Long? = null,
     val userId: String? = null,
     val displayName: String? = null,
@@ -710,6 +722,12 @@ class ConversationClient(
                 mediaId = message.mediaId,
                 serverAcceptedAt = message.serverAcceptedAt,
                 recalledAt = message.recalledAt,
+                systemEventType = message.systemEventType,
+                systemTargetUserId = message.systemTargetUserId,
+                systemRole = message.systemRole,
+                moderatedByUserId = message.moderatedByUserId,
+                moderatedReason = message.moderatedReason,
+                moderatedAt = message.moderatedAt,
                 createdAt = System.currentTimeMillis()))
     }
 
@@ -737,6 +755,12 @@ class ConversationClient(
                 serverAcceptedAt = message.serverAcceptedAt
                     .ifBlank { previous?.serverAcceptedAt },
                 recalledAt = message.recalledAt,
+                systemEventType = message.systemEventType,
+                systemTargetUserId = message.systemTargetUserId,
+                systemRole = message.systemRole,
+                moderatedByUserId = message.moderatedByUserId,
+                moderatedReason = message.moderatedReason,
+                moderatedAt = message.moderatedAt,
                 createdAt = previous?.createdAt ?: System.currentTimeMillis()))
         local.deleteMessageMediaCache(previousMediaId ?: message.mediaId)
     }
@@ -868,7 +892,13 @@ class ConversationClient(
             text = text,
             mediaId = mediaId,
             serverAcceptedAt = serverAcceptedAt.orEmpty(),
-            recalledAt = recalledAt)
+            recalledAt = recalledAt,
+            systemEventType = systemEventType,
+            systemTargetUserId = systemTargetUserId,
+            systemRole = systemRole,
+            moderatedByUserId = moderatedByUserId,
+            moderatedReason = moderatedReason,
+            moderatedAt = moderatedAt)
     }
 
     fun loadMedia(

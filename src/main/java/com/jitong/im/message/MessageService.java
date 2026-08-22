@@ -240,6 +240,22 @@ public class MessageService {
         return recalled;
     }
 
+    @Transactional
+    public MessageRecord moderate(
+            UUID moderatorId,
+            UUID messageId,
+            ModerateMessageRequest request
+    ) {
+        UUID conversationId = repository.findConversationId(messageId);
+        if (conversationId == null) {
+            throw new MessageException(ApiErrorDefinition.RESOURCE_NOT_FOUND);
+        }
+        if (groupMessageService == null || !repository.isGroupConversation(conversationId)) {
+            throw new MessageException(ApiErrorDefinition.FORBIDDEN);
+        }
+        return groupMessageService.moderate(moderatorId, messageId, request);
+    }
+
     MessageRepository.ConversationTarget target(UUID conversationId, UUID userId) {
         return repository.findConversation(conversationId, userId);
     }

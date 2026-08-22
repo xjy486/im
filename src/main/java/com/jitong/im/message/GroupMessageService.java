@@ -1,6 +1,11 @@
 package com.jitong.im.message;
 
 import com.jitong.im.auth.UuidV7;
+import com.jitong.im.audit.AuditOutcome;
+import com.jitong.im.audit.AuditSubjectType;
+import com.jitong.im.audit.SecurityAuditEvent;
+import com.jitong.im.audit.SecurityAuditEventType;
+import com.jitong.im.audit.SecurityAuditSink;
 import com.jitong.im.media.MediaService;
 import com.jitong.im.platform.error.ApiErrorDefinition;
 import com.jitong.im.sync.SyncService;
@@ -25,26 +30,30 @@ public class GroupMessageService {
     private final MessageRepository repository;
     private final SyncService syncService;
     private final MediaService mediaService;
+    private final SecurityAuditSink auditSink;
     private final Clock clock;
 
     @Autowired
     GroupMessageService(
             MessageRepository repository,
             SyncService syncService,
-            MediaService mediaService
+            MediaService mediaService,
+            SecurityAuditSink auditSink
     ) {
-        this(repository, syncService, mediaService, Clock.systemUTC());
+        this(repository, syncService, mediaService, auditSink, Clock.systemUTC());
     }
 
     GroupMessageService(
             MessageRepository repository,
             SyncService syncService,
             MediaService mediaService,
+            SecurityAuditSink auditSink,
             Clock clock
     ) {
         this.repository = repository;
         this.syncService = syncService;
         this.mediaService = mediaService;
+        this.auditSink = auditSink;
         this.clock = clock;
     }
 
@@ -127,11 +136,7 @@ public class GroupMessageService {
     }
 
     public void recordGroupCreated(UUID conversationId, UUID ownerUserId) {
-        recordSystemMessage(conversationId, ownerUserId);
-    }
-
-    public void recordMemberJoined(UUID conversationId, UUID actorId) {
-        recordSystemMessage(conversationId, actorId);
+        recordSystemMessage(conversationId, ownerUserId, "GROUP_CREATED", null, null);
     }
 
     public void recordMemberJoinedAfterMembershipChange(
@@ -139,18 +144,40 @@ public class GroupMessageService {
             UUID actorId,
             UUID joinedUserId
     ) {
-        recordSystemMessage(conversationId, actorId);
+        recordSystemMessage(conversationId, actorId, "MEMBER_JOINED", joinedUserId, "MEMBER");
         recordMembershipGranted(conversationId, joinedUserId);
     }
 
     public void recordMemberLeft(UUID conversationId, UUID actorId) {
-        recordSystemMessage(conversationId, actorId);
+        recordSystemMessage(conversationId, actorId, "MEMBER_LEFT", actorId, null);
         recordMembershipRevoked(conversationId, actorId);
     }
 
     public void recordMemberRemoved(UUID conversationId, UUID actorId, UUID removedUserId) {
-        recordSystemMessage(conversationId, actorId);
+        recordSystemMessage(conversationId, actorId, "MEMBER_REMOVED", removedUserId, null);
         recordMembershipRevoked(conversationId, removedUserId);
+    }
+
+    public void recordRoleChanged(
+            UUID conversationId,
+            UUID actorId,
+            UUID targetUserId,
+            String role
+    ) {
+        recordSystemMessage(conversationId, actorId, "ROLE_CHANGED", targetUserId, role);
+    }
+
+    public void recordOwnerTransferred(
+            UUID conversationId,
+            UUID actorId,
+            UUID targetUserId
+    ) {
+        recordSystemMessage(conversationId, actorId, "ROLE_CHANGED", actorId, "ADMIN");
+        recordSystemMessage(conversationId, actorId, "ROLE_CHANGED", targetUserId, "OWNER");
+    }
+
+    public void recordGroupProfileUpdated(UUID conversationId, UUID actorId) {
+        recordSystemMessage(conversationId, actorId, "GROUP_PROFILE_UPDATED", null, null);
     }
 
     ConversationMessagePage listMessages(
@@ -217,7 +244,77 @@ public class GroupMessageService {
         return recalled;
     }
 
-    private void recordSystemMessage(UUID conversationId, UUID actorId) {
+    MessageRecord moderate(
+            UUID moderatorId,
+            UUID messageId,
+            ModerateMessageRequest request
+    ) {
+        UUID conversationId = repository.findConversationId(messageId);
+        if (conversationId == null || !repository.isGroupConversation(conversationId)) {
+            throw new MessageException(ApiErrorDefinition.RESOURCE_NOT_FOUND);
+        }
+        if (repository.lockGroupConversation(conversationId) == null) {
+            throw new MessageException(ApiErrorDefinition.RESOURCE_NOT_FOUND);
+        }
+        String role = repository.groupMemberRole(conversationId, moderatorId);
+        if (!"OWNER".equals(role) && !"ADMIN".equals(role)) {
+            throw new MessageException(ApiErrorDefinition.FORBIDDEN_ROLE);
+        }
+        MessageRecord message = repository.findByIdForUpdate(messageId);
+        if (message == null || !conversationId.equals(message.conversationId())) {
+            throw new MessageException(ApiErrorDefinition.RESOURCE_NOT_FOUND);
+        }
+        if ("MODERATED".equals(message.state())) {
+            return message;
+        }
+        if (!"ACTIVE".equals(message.state()) || "SYSTEM".equals(message.type())) {
+            throw new MessageException(ApiErrorDefinition.FORBIDDEN);
+        }
+        String reason = request == null || request.reason() == null
+                ? ""
+                : request.reason().trim();
+        if (reason.codePointCount(0, reason.length()) > 500) {
+            throw new MessageException(ApiErrorDefinition.INVALID_REQUEST);
+        }
+        if (message.mediaId() != null) {
+            mediaService.expireBoundMedia(message.messageId());
+        }
+        Instant now = clock.instant();
+        repository.moderateMessage(messageId, moderatorId, reason, now);
+        MessageRecord moderated = repository.findById(messageId);
+        for (UUID memberId : repository.groupActiveMemberIds(conversationId)
+                .stream()
+                .sorted()
+                .toList()) {
+            long syncSeq = syncService.allocateSequence(memberId);
+            syncService.recordEvent(
+                    memberId,
+                    syncSeq,
+                    "MESSAGE_MODERATED",
+                    message.messageId(),
+                    conversationId);
+        }
+        auditSink.record(new SecurityAuditEvent(
+                UuidV7.random(),
+                SecurityAuditEventType.MESSAGE_MODERATION,
+                AuditOutcome.SUCCEEDED,
+                moderatorId,
+                null,
+                AuditSubjectType.MESSAGE,
+                messageId,
+                null,
+                null,
+                now));
+        return moderated;
+    }
+
+    private void recordSystemMessage(
+            UUID conversationId,
+            UUID actorId,
+            String eventType,
+            UUID targetUserId,
+            String role
+    ) {
         if (repository.lockGroupConversation(conversationId) == null) {
             throw new MessageException(ApiErrorDefinition.NOT_MEMBER);
         }
@@ -228,7 +325,10 @@ public class GroupMessageService {
                 sequence,
                 actorId,
                 UUID.randomUUID(),
-                clock.instant());
+                clock.instant(),
+                eventType,
+                targetUserId,
+                role);
         recordMessageCreated(message);
     }
 

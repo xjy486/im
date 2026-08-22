@@ -229,7 +229,7 @@
           "minimum": 1
         },
         "type": {
-          "enum": ["TEXT", "IMAGE"]
+          "enum": ["TEXT", "IMAGE", "SYSTEM"]
         },
         "state": {
           "enum": ["ACTIVE", "RECALLED", "MODERATED"]
@@ -246,6 +246,27 @@
           "format": "date-time"
         },
         "recalledAt": {
+          "type": ["string", "null"],
+          "format": "date-time"
+        },
+        "systemEventType": {
+          "type": ["string", "null"]
+        },
+        "systemTargetUserId": {
+          "type": ["string", "null"],
+          "format": "uuid"
+        },
+        "systemRole": {
+          "type": ["string", "null"]
+        },
+        "moderatedByUserId": {
+          "type": ["string", "null"],
+          "format": "uuid"
+        },
+        "moderatedReason": {
+          "type": ["string", "null"]
+        },
+        "moderatedAt": {
           "type": ["string", "null"],
           "format": "date-time"
         },

@@ -92,6 +92,22 @@ class GroupRepositoryTest {
                     request: GroupMemberAddRequest,
                 ) = error("not used")
 
+                override suspend fun changeRole(
+                    conversationId: UUID,
+                    userId: UUID,
+                    request: GroupRoleChangeRequest,
+                ) = error("not used")
+
+                override suspend fun transferOwner(
+                    conversationId: UUID,
+                    request: GroupOwnerTransferRequest,
+                ) = error("not used")
+
+                override suspend fun updateProfile(
+                    conversationId: UUID,
+                    request: GroupProfileUpdateRequest,
+                ) = error("not used")
+
                 override suspend fun banUser(
                     conversationId: UUID,
                     userId: UUID,

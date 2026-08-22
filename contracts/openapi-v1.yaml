@@ -320,6 +320,65 @@ paths:
           $ref: '#/components/responses/ApiError'
         '403':
           $ref: '#/components/responses/ApiError'
+  /api/v1/groups/{conversationId}/members/{userId}/role:
+    put:
+      operationId: changeGroupMemberRole
+      summary: Change a non-owner group member role; OWNER only
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { $ref: '#/components/parameters/ConversationId' }
+        - { $ref: '#/components/parameters/UserId' }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [role]
+              properties:
+                role: { type: string, enum: [ADMIN, MEMBER] }
+      responses:
+        '200':
+          description: Updated group role
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/GroupRoleChangeResponse' }
+        '400':
+          $ref: '#/components/responses/ApiError'
+        '401':
+          $ref: '#/components/responses/ApiError'
+        '403':
+          $ref: '#/components/responses/ApiError'
+  /api/v1/groups/{conversationId}/owner-transfer:
+    post:
+      operationId: transferGroupOwner
+      summary: Transfer group ownership to another active member; OWNER only
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { $ref: '#/components/parameters/ConversationId' }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [userId]
+              properties:
+                userId: { type: string, format: uuid }
+      responses:
+        '200':
+          description: Ownership transferred
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/GroupOwnerTransferResponse' }
+        '401':
+          $ref: '#/components/responses/ApiError'
+        '403':
+          $ref: '#/components/responses/ApiError'
+        '404':
+          $ref: '#/components/responses/ApiError'
   /api/v1/groups/{conversationId}/leave:
     post:
       operationId: leaveGroup
@@ -550,6 +609,36 @@ paths:
         '403':
           $ref: '#/components/responses/ApiError'
   /api/v1/groups/{conversationId}/profile:
+    put:
+      operationId: updateGroupProfile
+      summary: Update group name, description and visibility
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { $ref: '#/components/parameters/ConversationId' }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [name, description, visibility]
+              properties:
+                name: { type: string, minLength: 1, maxLength: 128 }
+                description: { type: string, maxLength: 1000 }
+                visibility: { type: string, enum: [PUBLIC, UNLISTED, PRIVATE] }
+      responses:
+        '200':
+          description: Updated group profile
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/GroupSummary' }
+        '400':
+          $ref: '#/components/responses/ApiError'
+        '401':
+          $ref: '#/components/responses/ApiError'
+        '403':
+          $ref: '#/components/responses/ApiError'
     get:
       operationId: getGroupAvatarProfile
       security: [{ bearerAuth: [] }]
@@ -608,6 +697,37 @@ paths:
       responses:
         '200':
           description: Idempotent recalled message tombstone
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Message' }
+        '401':
+          $ref: '#/components/responses/ApiError'
+        '403':
+          $ref: '#/components/responses/ApiError'
+        '404':
+          $ref: '#/components/responses/ApiError'
+  /api/v1/messages/{messageId}/moderate:
+    post:
+      operationId: moderateMessage
+      summary: Replace group message content with a moderation tombstone
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - name: messageId
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              properties:
+                reason: { type: string, maxLength: 500 }
+      responses:
+        '200':
+          description: Moderated message tombstone
           content:
             application/json:
               schema: { $ref: '#/components/schemas/Message' }
@@ -1165,6 +1285,24 @@ components:
         userId: { type: string, format: uuid }
         role: { const: MEMBER }
         memberCount: { type: integer, minimum: 1, maximum: 100 }
+    GroupRoleChangeResponse:
+      type: object
+      additionalProperties: false
+      required: [version, conversationId, userId, role]
+      properties:
+        version: { const: 1 }
+        conversationId: { type: string, format: uuid }
+        userId: { type: string, format: uuid }
+        role: { type: string, enum: [ADMIN, MEMBER] }
+    GroupOwnerTransferResponse:
+      type: object
+      additionalProperties: false
+      required: [version, conversationId, previousOwnerUserId, ownerUserId]
+      properties:
+        version: { const: 1 }
+        conversationId: { type: string, format: uuid }
+        previousOwnerUserId: { type: string, format: uuid }
+        ownerUserId: { type: string, format: uuid }
     GroupInviteResponse:
       type: object
       additionalProperties: false
@@ -1273,6 +1411,12 @@ components:
         mediaId: { type: [string, 'null'], format: uuid }
         serverAcceptedAt: { type: string, format: date-time }
         recalledAt: { type: [string, 'null'], format: date-time }
+        systemEventType: { type: [string, 'null'] }
+        systemTargetUserId: { type: [string, 'null'], format: uuid }
+        systemRole: { type: [string, 'null'] }
+        moderatedByUserId: { type: [string, 'null'], format: uuid }
+        moderatedReason: { type: [string, 'null'] }
+        moderatedAt: { type: [string, 'null'], format: date-time }
     ConversationMessagePage:
       type: object
       additionalProperties: false

@@ -90,6 +90,40 @@ internal class GroupViewModel(
         }
     }
 
+    fun promoteMember(group: GroupSummary, userId: UUID) {
+        launchRequest {
+            repository.changeRole(group.conversationId, userId, "ADMIN")
+            refreshData()
+        }
+    }
+
+    fun demoteMember(group: GroupSummary, userId: UUID) {
+        launchRequest {
+            repository.changeRole(group.conversationId, userId, "MEMBER")
+            refreshData()
+        }
+    }
+
+    fun transferOwner(group: GroupSummary, userId: UUID) {
+        launchRequest {
+            repository.transferOwner(group.conversationId, userId)
+            refreshData()
+        }
+    }
+
+    fun updateProfile(group: GroupSummary) {
+        val current = _state.value
+        launchRequest {
+            repository.updateProfile(
+                group.conversationId,
+                current.name.trim(),
+                current.description.trim(),
+                current.visibility,
+            )
+            refreshData()
+        }
+    }
+
     fun leave(group: GroupSummary) {
         launchRequest {
             repository.leave(group.conversationId)

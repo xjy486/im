@@ -78,6 +78,25 @@ internal interface GroupApi {
         @Body request: GroupMemberAddRequest,
     ): Response<GroupMemberAddResponse>
 
+    @retrofit2.http.PUT("api/v1/groups/{conversationId}/members/{userId}/role")
+    suspend fun changeRole(
+        @Path("conversationId") conversationId: UUID,
+        @Path("userId") userId: UUID,
+        @Body request: GroupRoleChangeRequest,
+    ): Response<GroupRoleChangeResponse>
+
+    @POST("api/v1/groups/{conversationId}/owner-transfer")
+    suspend fun transferOwner(
+        @Path("conversationId") conversationId: UUID,
+        @Body request: GroupOwnerTransferRequest,
+    ): Response<GroupOwnerTransferResponse>
+
+    @retrofit2.http.PUT("api/v1/groups/{conversationId}/profile")
+    suspend fun updateProfile(
+        @Path("conversationId") conversationId: UUID,
+        @Body request: GroupProfileUpdateRequest,
+    ): Response<GroupSummary>
+
     @POST("api/v1/groups/{conversationId}/bans/{userId}")
     suspend fun banUser(
         @Path("conversationId") conversationId: UUID,

@@ -119,3 +119,31 @@ internal data class GroupMemberAddResponse(
     val role: String,
     val memberCount: Int,
 )
+
+internal data class GroupRoleChangeRequest(
+    val role: String,
+)
+
+internal data class GroupRoleChangeResponse(
+    val version: Int,
+    val conversationId: UUID,
+    val userId: UUID,
+    val role: String,
+)
+
+internal data class GroupOwnerTransferRequest(
+    val userId: UUID,
+)
+
+internal data class GroupOwnerTransferResponse(
+    val version: Int,
+    val conversationId: UUID,
+    val previousOwnerUserId: UUID,
+    val ownerUserId: UUID,
+)
+
+internal data class GroupProfileUpdateRequest(
+    val name: String,
+    val description: String,
+    val visibility: String,
+)

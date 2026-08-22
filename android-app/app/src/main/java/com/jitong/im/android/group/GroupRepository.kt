@@ -71,6 +71,32 @@ internal class GroupRepository(
         api.addMember(conversationId, GroupMemberAddRequest(accountNo))
             .bodyOrThrow("Direct group invitation")
 
+    suspend fun changeRole(
+        conversationId: UUID,
+        userId: UUID,
+        role: String,
+    ): GroupRoleChangeResponse =
+        api.changeRole(conversationId, userId, GroupRoleChangeRequest(role))
+            .bodyOrThrow("Group role change")
+
+    suspend fun transferOwner(
+        conversationId: UUID,
+        userId: UUID,
+    ): GroupOwnerTransferResponse =
+        api.transferOwner(conversationId, GroupOwnerTransferRequest(userId))
+            .bodyOrThrow("Group owner transfer")
+
+    suspend fun updateProfile(
+        conversationId: UUID,
+        name: String,
+        description: String,
+        visibility: String,
+    ): GroupSummary =
+        api.updateProfile(
+            conversationId,
+            GroupProfileUpdateRequest(name, description, visibility),
+        ).bodyOrThrow("Group profile update")
+
     suspend fun banUser(conversationId: UUID, userId: UUID, reason: String? = null) {
         api.banUser(conversationId, userId, GroupBanRequest(reason)).ensureSuccessful("Group ban")
     }

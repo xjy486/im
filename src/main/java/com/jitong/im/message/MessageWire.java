@@ -37,6 +37,14 @@ final class MessageWire {
                 body(message, syncSeq));
     }
 
+    static WireEnvelope moderated(MessageRecord message, Long syncSeq) {
+        return new WireEnvelope(
+                1,
+                "message.moderated",
+                null,
+                body(message, syncSeq));
+    }
+
     private static MessageBody body(MessageRecord message) {
         return body(message, null);
     }
@@ -54,6 +62,12 @@ final class MessageWire {
                 message.mediaId(),
                 message.serverAcceptedAt(),
                 message.recalledAt(),
+                message.systemEventType(),
+                message.systemTargetUserId(),
+                message.systemRole(),
+                message.moderatedByUserId(),
+                message.moderatedReason(),
+                message.moderatedAt(),
                 syncSeq);
     }
 
@@ -159,6 +173,12 @@ final class MessageWire {
             UUID mediaId,
             java.time.Instant serverAcceptedAt,
             java.time.Instant recalledAt,
+            String systemEventType,
+            UUID systemTargetUserId,
+            String systemRole,
+            UUID moderatedByUserId,
+            String moderatedReason,
+            java.time.Instant moderatedAt,
             Long syncSeq
     ) {
     }

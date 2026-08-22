@@ -116,6 +116,18 @@ class LocalDatabaseManager(
                     statement.executeUpdate(
                         "ALTER TABLE local_messages ADD COLUMN IF NOT EXISTS recalled_at VARCHAR(64)")
                     statement.executeUpdate(
+                        "ALTER TABLE local_messages ADD COLUMN IF NOT EXISTS system_event_type VARCHAR(64)")
+                    statement.executeUpdate(
+                        "ALTER TABLE local_messages ADD COLUMN IF NOT EXISTS system_target_user_id VARCHAR(36)")
+                    statement.executeUpdate(
+                        "ALTER TABLE local_messages ADD COLUMN IF NOT EXISTS system_role VARCHAR(16)")
+                    statement.executeUpdate(
+                        "ALTER TABLE local_messages ADD COLUMN IF NOT EXISTS moderated_by_user_id VARCHAR(36)")
+                    statement.executeUpdate(
+                        "ALTER TABLE local_messages ADD COLUMN IF NOT EXISTS moderated_reason VARCHAR(500)")
+                    statement.executeUpdate(
+                        "ALTER TABLE local_messages ADD COLUMN IF NOT EXISTS moderated_at VARCHAR(64)")
+                    statement.executeUpdate(
                         "ALTER TABLE local_messages ADD COLUMN IF NOT EXISTS search_text CLOB NOT NULL DEFAULT ''")
                     statement.executeUpdate(
                         """
@@ -710,7 +722,8 @@ class LocalDatabase internal constructor(
                 """
                 SELECT message_id, conversation_id, sender_id, client_msg_id, conversation_seq,
                        type, state, local_state, text_content, media_id, server_accepted_at,
-                       recalled_at, created_at
+                       recalled_at, system_event_type, system_target_user_id, system_role,
+                       moderated_by_user_id, moderated_reason, moderated_at, created_at
                 FROM local_messages
                 WHERE conversation_id = ?
                 ORDER BY CASE WHEN conversation_seq IS NULL THEN 1 ELSE 0 END,
@@ -751,7 +764,8 @@ class LocalDatabase internal constructor(
                 """
                 SELECT message_id, conversation_id, sender_id, client_msg_id, conversation_seq,
                        type, state, local_state, text_content, media_id, server_accepted_at,
-                       recalled_at, created_at
+                       recalled_at, system_event_type, system_target_user_id, system_role,
+                       moderated_by_user_id, moderated_reason, moderated_at, created_at
                 FROM local_messages
                 WHERE client_msg_id = ?
                   AND (? IS NULL OR conversation_id = ?)
@@ -943,8 +957,9 @@ class LocalDatabase internal constructor(
             MERGE INTO local_messages (
                 message_id, conversation_id, sender_id, client_msg_id, conversation_seq,
                 type, state, local_state, text_content, search_text, media_id,
-                server_accepted_at, recalled_at, created_at
-            ) KEY(message_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                server_accepted_at, recalled_at, system_event_type, system_target_user_id,
+                system_role, moderated_by_user_id, moderated_reason, moderated_at, created_at
+            ) KEY(message_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """.trimIndent()).use { statement ->
             statement.setString(1, message.messageId)
             statement.setString(2, message.conversationId)
@@ -963,7 +978,13 @@ class LocalDatabase internal constructor(
             statement.setString(11, message.mediaId)
             statement.setString(12, message.serverAcceptedAt)
             statement.setString(13, message.recalledAt)
-            statement.setLong(14, message.createdAt)
+            statement.setString(14, message.systemEventType)
+            statement.setString(15, message.systemTargetUserId)
+            statement.setString(16, message.systemRole)
+            statement.setString(17, message.moderatedByUserId)
+            statement.setString(18, message.moderatedReason)
+            statement.setString(19, message.moderatedAt)
+            statement.setLong(20, message.createdAt)
             statement.executeUpdate()
         }
         deleteSearchTerms(connection, message.messageId)
@@ -992,7 +1013,8 @@ class LocalDatabase internal constructor(
             """
             SELECT message_id, conversation_id, sender_id, client_msg_id, conversation_seq,
                    type, state, local_state, text_content, search_text, media_id,
-                   server_accepted_at, recalled_at, created_at
+                   server_accepted_at, recalled_at, system_event_type, system_target_user_id,
+                   system_role, moderated_by_user_id, moderated_reason, moderated_at, created_at
             FROM local_messages
             """.trimIndent()).use { statement ->
             statement.executeQuery().use { result ->
@@ -1072,7 +1094,9 @@ class LocalDatabase internal constructor(
             SELECT lm.message_id, lm.conversation_id, lm.sender_id, lm.client_msg_id,
                    lm.conversation_seq, lm.type, lm.state, lm.local_state,
                    lm.text_content, lm.search_text, lm.media_id, lm.server_accepted_at,
-                   lm.recalled_at, lm.created_at
+                   lm.recalled_at, lm.system_event_type, lm.system_target_user_id,
+                   lm.system_role, lm.moderated_by_user_id, lm.moderated_reason,
+                   lm.moderated_at, lm.created_at
             FROM local_messages lm
             JOIN message_search_terms mst ON mst.message_id = lm.message_id
             JOIN local_conversations conversation
@@ -1087,7 +1111,9 @@ class LocalDatabase internal constructor(
             GROUP BY lm.message_id, lm.conversation_id, lm.sender_id, lm.client_msg_id,
                      lm.conversation_seq, lm.type, lm.state, lm.local_state,
                      lm.text_content, lm.search_text, lm.media_id, lm.server_accepted_at,
-                     lm.recalled_at, lm.created_at
+                     lm.recalled_at, lm.system_event_type, lm.system_target_user_id,
+                     lm.system_role, lm.moderated_by_user_id, lm.moderated_reason,
+                     lm.moderated_at, lm.created_at
             HAVING COUNT(DISTINCT mst.term) = ?
             ORDER BY MAX(mst.created_at) DESC, lm.message_id DESC
             LIMIT ?
@@ -1121,7 +1147,9 @@ class LocalDatabase internal constructor(
         val sql = """
             SELECT lm.message_id, lm.conversation_id, lm.sender_id, lm.client_msg_id, lm.conversation_seq,
                    lm.type, lm.state, lm.local_state, lm.text_content, lm.media_id, lm.server_accepted_at,
-                   lm.recalled_at, lm.created_at
+                   lm.recalled_at, lm.system_event_type, lm.system_target_user_id,
+                   lm.system_role, lm.moderated_by_user_id, lm.moderated_reason,
+                   lm.moderated_at, lm.created_at
             FROM (
                 SELECT message_id, created_at
                 FROM message_search_terms
@@ -1166,7 +1194,9 @@ class LocalDatabase internal constructor(
         val sql = """
             SELECT lm.message_id, lm.conversation_id, lm.sender_id, lm.client_msg_id, lm.conversation_seq,
                    lm.type, lm.state, lm.local_state, lm.text_content, lm.media_id, lm.server_accepted_at,
-                   lm.recalled_at, lm.created_at
+                   lm.recalled_at, lm.system_event_type, lm.system_target_user_id,
+                   lm.system_role, lm.moderated_by_user_id, lm.moderated_reason,
+                   lm.moderated_at, lm.created_at
             FROM local_messages lm
             JOIN local_conversations conversation
               ON conversation.conversation_id = lm.conversation_id
@@ -1225,6 +1255,12 @@ class LocalDatabase internal constructor(
         mediaId = getString("media_id"),
         serverAcceptedAt = getString("server_accepted_at"),
         recalledAt = getString("recalled_at"),
+        systemEventType = getString("system_event_type"),
+        systemTargetUserId = getString("system_target_user_id"),
+        systemRole = getString("system_role"),
+        moderatedByUserId = getString("moderated_by_user_id"),
+        moderatedReason = getString("moderated_reason"),
+        moderatedAt = getString("moderated_at"),
         createdAt = getLong("created_at"))
 }
 
@@ -1362,6 +1398,12 @@ data class LocalMessage(
     val mediaId: String? = null,
     val serverAcceptedAt: String?,
     val recalledAt: String? = null,
+    val systemEventType: String? = null,
+    val systemTargetUserId: String? = null,
+    val systemRole: String? = null,
+    val moderatedByUserId: String? = null,
+    val moderatedReason: String? = null,
+    val moderatedAt: String? = null,
     val createdAt: Long,
 )
 

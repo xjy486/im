@@ -175,11 +175,28 @@ class MessageRepository {
                 .orElse(null);
     }
 
+    String groupMemberRole(UUID conversationId, UUID userId) {
+        return jdbc.sql("""
+                        SELECT role
+                        FROM conversation_members
+                        WHERE conversation_id = :conversationId
+                          AND user_id = :userId
+                          AND status = 'ACTIVE'
+                        """)
+                .param("conversationId", conversationId)
+                .param("userId", userId)
+                .query(String.class)
+                .optional()
+                .orElse(null);
+    }
+
     MessageRecord findByClientMessageId(UUID senderId, UUID clientMsgId) {
         return jdbc.sql("""
                         SELECT id, conversation_id, sender_id, client_msg_id,
                                conversation_seq, type, state, text_content,
-                               media_id, server_accepted_at, recalled_at
+                               media_id, server_accepted_at, recalled_at,
+                               system_event_type, system_target_user_id, system_role,
+                               moderated_by_user_id, moderated_reason, moderated_at
                         FROM messages
                         WHERE sender_id = :senderId AND client_msg_id = :clientMsgId
                         """)
@@ -266,17 +283,21 @@ class MessageRepository {
             long conversationSeq,
             UUID senderId,
             UUID clientMsgId,
-            Instant acceptedAt
+            Instant acceptedAt,
+            String eventType,
+            UUID targetUserId,
+            String role
     ) {
         jdbc.sql("""
                         INSERT INTO messages (
                             id, conversation_id, conversation_seq, sender_id,
                             client_msg_id, type, state, text_content, media_id,
-                            server_accepted_at
+                            server_accepted_at, system_event_type,
+                            system_target_user_id, system_role
                         ) VALUES (
                             :id, :conversationId, :conversationSeq, :senderId,
                             :clientMsgId, 'SYSTEM', 'ACTIVE', NULL, NULL,
-                            :acceptedAt
+                            :acceptedAt, :eventType, :targetUserId, :role
                         )
                         """)
                 .param("id", messageId)
@@ -285,6 +306,9 @@ class MessageRepository {
                 .param("senderId", senderId)
                 .param("clientMsgId", clientMsgId)
                 .param("acceptedAt", utc(acceptedAt), Types.TIMESTAMP_WITH_TIMEZONE)
+                .param("eventType", eventType)
+                .param("targetUserId", targetUserId, Types.OTHER)
+                .param("role", role, Types.VARCHAR)
                 .update();
         return findById(messageId);
     }
@@ -293,7 +317,9 @@ class MessageRepository {
         return jdbc.sql("""
                         SELECT id, conversation_id, sender_id, client_msg_id,
                                conversation_seq, type, state, text_content,
-                               media_id, server_accepted_at, recalled_at
+                               media_id, server_accepted_at, recalled_at,
+                               system_event_type, system_target_user_id, system_role,
+                               moderated_by_user_id, moderated_reason, moderated_at
                         FROM messages
                         WHERE id = :messageId
                         """)
@@ -318,7 +344,9 @@ class MessageRepository {
         return jdbc.sql("""
                         SELECT id, conversation_id, sender_id, client_msg_id,
                                conversation_seq, type, state, text_content,
-                               media_id, server_accepted_at, recalled_at
+                               media_id, server_accepted_at, recalled_at,
+                               system_event_type, system_target_user_id, system_role,
+                               moderated_by_user_id, moderated_reason, moderated_at
                         FROM messages
                         WHERE id = :messageId
                         FOR UPDATE
@@ -340,6 +368,30 @@ class MessageRepository {
                         """)
                 .param("messageId", messageId)
                 .param("recalledAt", utc(recalledAt), Types.TIMESTAMP_WITH_TIMEZONE)
+                .update();
+    }
+
+    void moderateMessage(
+            UUID messageId,
+            UUID moderatorId,
+            String reason,
+            Instant moderatedAt
+    ) {
+        jdbc.sql("""
+                        UPDATE messages
+                        SET state = 'MODERATED',
+                            text_content = NULL,
+                            media_id = NULL,
+                            moderated_by_user_id = :moderatorId,
+                            moderated_reason = :reason,
+                            moderated_at = :moderatedAt
+                        WHERE id = :messageId
+                          AND state = 'ACTIVE'
+                        """)
+                .param("messageId", messageId)
+                .param("moderatorId", moderatorId)
+                .param("reason", reason)
+                .param("moderatedAt", utc(moderatedAt), Types.TIMESTAMP_WITH_TIMEZONE)
                 .update();
     }
 
@@ -382,7 +434,9 @@ class MessageRepository {
         return jdbc.sql("""
                         SELECT id, conversation_id, sender_id, client_msg_id,
                                conversation_seq, type, state, text_content,
-                               media_id, server_accepted_at, recalled_at
+                               media_id, server_accepted_at, recalled_at,
+                               system_event_type, system_target_user_id, system_role,
+                               moderated_by_user_id, moderated_reason, moderated_at
                         FROM messages
                         WHERE conversation_id = :conversationId
                           AND conversation_seq > :afterSequence
@@ -405,7 +459,9 @@ class MessageRepository {
         return jdbc.sql("""
                         SELECT id, conversation_id, sender_id, client_msg_id,
                                conversation_seq, type, state, text_content,
-                               media_id, server_accepted_at, recalled_at
+                               media_id, server_accepted_at, recalled_at,
+                               system_event_type, system_target_user_id, system_role,
+                               moderated_by_user_id, moderated_reason, moderated_at
                         FROM messages
                         WHERE conversation_id = :conversationId
                           AND conversation_seq > GREATEST(:afterSequence, :historyBoundary)
@@ -460,7 +516,13 @@ class MessageRepository {
                 row.getString("text_content"),
                 row.getObject("media_id", UUID.class),
                 row.getObject("server_accepted_at", OffsetDateTime.class).toInstant(),
-                nullableInstant(row, "recalled_at"));
+                nullableInstant(row, "recalled_at"),
+                row.getString("system_event_type"),
+                row.getObject("system_target_user_id", UUID.class),
+                row.getString("system_role"),
+                row.getObject("moderated_by_user_id", UUID.class),
+                row.getString("moderated_reason"),
+                nullableInstant(row, "moderated_at"));
     }
 
     private static Instant nullableInstant(java.sql.ResultSet row, String column) throws java.sql.SQLException {

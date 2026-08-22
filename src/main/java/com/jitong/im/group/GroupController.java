@@ -5,6 +5,7 @@ import jakarta.validation.Valid;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.PostMapping;
+import org.springframework.web.bind.annotation.PutMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestHeader;
 import org.springframework.web.bind.annotation.RequestMapping;
@@ -56,6 +57,34 @@ class GroupController {
     ) {
         service.removeMember(authorization, conversationId, userId);
         return org.springframework.http.ResponseEntity.noContent().build();
+    }
+
+    @PutMapping("/{conversationId}/members/{userId}/role")
+    GroupRoleChangeResponse changeRole(
+            @RequestHeader(value = "Authorization", required = false) String authorization,
+            @PathVariable java.util.UUID conversationId,
+            @PathVariable java.util.UUID userId,
+            @Valid @RequestBody GroupRoleChangeRequest request
+    ) {
+        return service.changeRole(authorization, conversationId, userId, request);
+    }
+
+    @PostMapping("/{conversationId}/owner-transfer")
+    GroupOwnerTransferResponse transferOwner(
+            @RequestHeader(value = "Authorization", required = false) String authorization,
+            @PathVariable java.util.UUID conversationId,
+            @Valid @RequestBody GroupOwnerTransferRequest request
+    ) {
+        return service.transferOwner(authorization, conversationId, request);
+    }
+
+    @PutMapping("/{conversationId}/profile")
+    GroupSummary updateProfile(
+            @RequestHeader(value = "Authorization", required = false) String authorization,
+            @PathVariable java.util.UUID conversationId,
+            @Valid @RequestBody GroupProfileUpdateRequest request
+    ) {
+        return service.updateProfile(authorization, conversationId, request);
     }
 
     @PostMapping("/{conversationId}/leave")

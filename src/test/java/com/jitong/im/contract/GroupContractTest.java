@@ -261,6 +261,119 @@ class GroupContractTest extends ContractTestEnvironment {
     }
 
     @Test
+    void owner_only_role_changes_and_owner_transfer_are_visible_in_the_shared_system_timeline()
+            throws Exception {
+        TestUser owner = createUser("Role owner");
+        TestUser administrator = createUser("Role administrator");
+        TestUser member = createUser("Role member");
+        String ownerToken = login(owner.accountNo(), "role-owner");
+        String administratorToken = login(administrator.accountNo(), "role-administrator");
+        String memberToken = login(member.accountNo(), "role-member");
+
+        JsonNode group = createGroup(ownerToken, "Role Lounge", "", "PRIVATE");
+        UUID conversationId = UUID.fromString(group.get("conversationId").asText());
+        assertThat(addMember(ownerToken, conversationId, administrator.accountNo()).getStatusCode())
+                .isEqualTo(HttpStatus.OK);
+        assertThat(addMember(ownerToken, conversationId, member.accountNo()).getStatusCode())
+                .isEqualTo(HttpStatus.OK);
+
+        assertThat(changeRole(
+                administratorToken,
+                conversationId,
+                member.userId(),
+                "ADMIN").getStatusCode()).isEqualTo(HttpStatus.FORBIDDEN);
+        assertThat(changeRole(
+                ownerToken,
+                conversationId,
+                member.userId(),
+                "ADMIN").getStatusCode()).isEqualTo(HttpStatus.OK);
+        assertThat(changeRole(
+                administratorToken,
+                conversationId,
+                member.userId(),
+                "MEMBER").getStatusCode()).isEqualTo(HttpStatus.FORBIDDEN);
+        JsonNode transferred = exchange(
+                HttpMethod.POST,
+                "/api/v1/groups/" + conversationId + "/owner-transfer",
+                ownerToken,
+                Map.of("userId", administrator.userId())).getBody();
+        assertThat(transferred.get("previousOwnerUserId").asText())
+                .isEqualTo(owner.userId().toString());
+        assertThat(transferred.get("ownerUserId").asText())
+                .isEqualTo(administrator.userId().toString());
+
+        assertThat(exchange(HttpMethod.GET, "/api/v1/groups", ownerToken, null)
+                .getBody().get(0).get("role").asText()).isEqualTo("ADMIN");
+        assertThat(exchange(HttpMethod.GET, "/api/v1/groups", administratorToken, null)
+                .getBody().get(0).get("role").asText()).isEqualTo("OWNER");
+
+        JsonNode ownerHistory = exchange(
+                HttpMethod.GET,
+                "/api/v1/conversations/" + conversationId + "/messages?afterSeq=0&limit=200",
+                ownerToken,
+                null).getBody();
+        JsonNode administratorHistory = exchange(
+                HttpMethod.GET,
+                "/api/v1/conversations/" + conversationId + "/messages?afterSeq=0&limit=200",
+                administratorToken,
+                null).getBody();
+        assertThat(systemSequences(ownerHistory))
+                .containsExactly(1L, 2L, 3L, 4L, 5L, 6L);
+        assertThat(systemSequences(administratorHistory))
+                .containsExactly(2L, 3L, 4L, 5L, 6L);
+        assertThat(ownerHistory.get("messages"))
+                .extracting(node -> node.get("systemEventType").asText())
+                .containsExactly(
+                        "GROUP_CREATED",
+                        "MEMBER_JOINED",
+                        "MEMBER_JOINED",
+                        "ROLE_CHANGED",
+                        "ROLE_CHANGED",
+                        "ROLE_CHANGED");
+        assertThat(memberToken).isNotBlank();
+    }
+
+    @Test
+    void admins_can_update_group_profile_and_profile_change_is_a_system_item()
+            throws Exception {
+        TestUser owner = createUser("Profile owner");
+        TestUser administrator = createUser("Profile administrator");
+        String ownerToken = login(owner.accountNo(), "profile-owner");
+        String administratorToken = login(administrator.accountNo(), "profile-administrator");
+
+        JsonNode group = createGroup(ownerToken, "Old name", "Old description", "PRIVATE");
+        UUID conversationId = UUID.fromString(group.get("conversationId").asText());
+        assertThat(addMember(ownerToken, conversationId, administrator.accountNo()).getStatusCode())
+                .isEqualTo(HttpStatus.OK);
+        assertThat(changeRole(
+                ownerToken,
+                conversationId,
+                administrator.userId(),
+                "ADMIN").getStatusCode()).isEqualTo(HttpStatus.OK);
+
+        ResponseEntity<JsonNode> updated = exchange(
+                HttpMethod.PUT,
+                "/api/v1/groups/" + conversationId + "/profile",
+                administratorToken,
+                Map.of(
+                        "name", "New name",
+                        "description", "New description",
+                        "visibility", "UNLISTED"));
+        assertThat(updated.getStatusCode()).isEqualTo(HttpStatus.OK);
+        assertThat(updated.getBody().get("name").asText()).isEqualTo("New name");
+        assertThat(updated.getBody().get("visibility").asText()).isEqualTo("UNLISTED");
+
+        JsonNode history = exchange(
+                HttpMethod.GET,
+                "/api/v1/conversations/" + conversationId + "/messages?afterSeq=0&limit=200",
+                ownerToken,
+                null).getBody();
+        assertThat(history.get("messages"))
+                .extracting(node -> node.get("systemEventType").asText())
+                .contains("GROUP_PROFILE_UPDATED");
+    }
+
+    @Test
     void concurrent_join_requests_are_idempotent() throws Exception {
         TestUser owner = createUser("Concurrent owner");
         TestUser applicant = createUser("Concurrent applicant");
@@ -453,6 +566,29 @@ class GroupContractTest extends ContractTestEnvironment {
                 "/api/v1/groups/" + conversationId + "/members",
                 token,
                 Map.of("accountNo", accountNo));
+    }
+
+    private ResponseEntity<JsonNode> changeRole(
+            String token,
+            UUID conversationId,
+            UUID userId,
+            String role
+    ) {
+        return exchange(
+                HttpMethod.PUT,
+                "/api/v1/groups/" + conversationId + "/members/" + userId + "/role",
+                token,
+                Map.of("role", role));
+    }
+
+    private List<Long> systemSequences(JsonNode history) {
+        List<Long> sequences = new java.util.ArrayList<>();
+        history.get("messages").forEach(message -> {
+            if ("SYSTEM".equals(message.get("type").asText())) {
+                sequences.add(message.get("conversationSeq").asLong());
+            }
+        });
+        return sequences;
     }
 
     private JsonNode postMessage(String token, UUID conversationId, String text) {

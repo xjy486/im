@@ -190,7 +190,8 @@ public class GroupService {
             throw new GroupException(ApiErrorDefinition.FORBIDDEN);
         }
         String targetRole = repository.memberRole(conversationId, userId);
-        if (!"MEMBER".equals(targetRole)) {
+        if (!"MEMBER".equals(targetRole)
+                && !("OWNER".equals(actor.role()) && "ADMIN".equals(targetRole))) {
             throw new GroupException(ApiErrorDefinition.FORBIDDEN);
         }
         repository.removeMember(conversationId, userId, clock.instant());
@@ -200,6 +201,128 @@ public class GroupService {
                 actorId,
                 conversationId,
                 AuditOutcome.SUCCEEDED);
+    }
+
+    @Transactional
+    public GroupRoleChangeResponse changeRole(
+            String authorization,
+            UUID conversationId,
+            UUID userId,
+            GroupRoleChangeRequest request
+    ) {
+        UUID actorId = authService.requireUserId(authorization);
+        GroupRepository.GroupActor actor = repository.lockActor(conversationId, actorId);
+        if (actor == null) {
+            throw new GroupException(ApiErrorDefinition.FORBIDDEN);
+        }
+        if (!"OWNER".equals(actor.role())) {
+            throw new GroupException(ApiErrorDefinition.FORBIDDEN_ROLE);
+        }
+        if (request == null || request.role() == null
+                || (!"ADMIN".equals(request.role()) && !"MEMBER".equals(request.role()))) {
+            throw new GroupException(ApiErrorDefinition.INVALID_REQUEST);
+        }
+        String currentRole = repository.memberRole(conversationId, userId);
+        if (currentRole == null) {
+            throw new GroupException(ApiErrorDefinition.NOT_MEMBER);
+        }
+        if ("OWNER".equals(currentRole)) {
+            throw new GroupException(ApiErrorDefinition.FORBIDDEN_ROLE);
+        }
+        if (currentRole.equals(request.role())) {
+            return new GroupRoleChangeResponse(1, conversationId, userId, currentRole);
+        }
+        if (repository.updateMemberRole(conversationId, userId, request.role()) != 1) {
+            throw new GroupException(ApiErrorDefinition.CONFLICT);
+        }
+        groupMessageService.recordRoleChanged(
+                conversationId,
+                actorId,
+                userId,
+                request.role());
+        recordAudit(
+                SecurityAuditEventType.GROUP_ROLE_CHANGE,
+                actorId,
+                conversationId,
+                AuditOutcome.SUCCEEDED);
+        return new GroupRoleChangeResponse(1, conversationId, userId, request.role());
+    }
+
+    @Transactional
+    public GroupOwnerTransferResponse transferOwner(
+            String authorization,
+            UUID conversationId,
+            GroupOwnerTransferRequest request
+    ) {
+        UUID actorId = authService.requireUserId(authorization);
+        GroupRepository.GroupActor actor = repository.lockActor(conversationId, actorId);
+        if (actor == null) {
+            throw new GroupException(ApiErrorDefinition.FORBIDDEN);
+        }
+        if (!"OWNER".equals(actor.role())) {
+            throw new GroupException(ApiErrorDefinition.FORBIDDEN_ROLE);
+        }
+        if (request == null || request.userId() == null || actorId.equals(request.userId())) {
+            throw new GroupException(ApiErrorDefinition.INVALID_REQUEST);
+        }
+        String targetRole = repository.memberRole(conversationId, request.userId());
+        if (targetRole == null) {
+            throw new GroupException(ApiErrorDefinition.NOT_MEMBER);
+        }
+        if (repository.transferOwnership(conversationId, actorId, request.userId()) != 1) {
+            throw new GroupException(ApiErrorDefinition.CONFLICT);
+        }
+        groupMessageService.recordOwnerTransferred(
+                conversationId,
+                actorId,
+                request.userId());
+        recordAudit(
+                SecurityAuditEventType.GROUP_ROLE_CHANGE,
+                actorId,
+                conversationId,
+                AuditOutcome.SUCCEEDED);
+        return new GroupOwnerTransferResponse(
+                1,
+                conversationId,
+                actorId,
+                request.userId());
+    }
+
+    @Transactional
+    public GroupSummary updateProfile(
+            String authorization,
+            UUID conversationId,
+            GroupProfileUpdateRequest request
+    ) {
+        UUID actorId = authService.requireUserId(authorization);
+        GroupRepository.GroupActor actor = repository.lockActor(conversationId, actorId);
+        if (actor == null) {
+            throw new GroupException(ApiErrorDefinition.FORBIDDEN);
+        }
+        if (request == null || request.name() == null || request.visibility() == null) {
+            throw new GroupException(ApiErrorDefinition.INVALID_REQUEST);
+        }
+        String name = request.name().trim();
+        String description = request.description() == null ? "" : request.description().trim();
+        GroupVisibility visibility = GroupVisibility.parse(request.visibility());
+        if (name.isEmpty()
+                || name.codePointCount(0, name.length()) > 128
+                || description.codePointCount(0, description.length()) > 1000
+                || visibility == null) {
+            throw new GroupException(ApiErrorDefinition.INVALID_REQUEST);
+        }
+        repository.updateGroupProfile(conversationId, name, description, visibility);
+        groupMessageService.recordGroupProfileUpdated(conversationId, actorId);
+        recordAudit(
+                SecurityAuditEventType.GROUP_PROFILE_CHANGE,
+                actorId,
+                conversationId,
+                AuditOutcome.SUCCEEDED);
+        GroupRepository.GroupRecord updated = repository.findGroupForUser(conversationId, actorId);
+        if (updated == null) {
+            throw new GroupException(ApiErrorDefinition.RESOURCE_NOT_FOUND);
+        }
+        return toSummary(updated);
     }
 
     @Transactional
@@ -462,7 +585,9 @@ public class GroupService {
             throw new GroupException(ApiErrorDefinition.FORBIDDEN);
         }
         String targetRole = repository.memberRole(conversationId, userId);
-        if (targetRole != null && !"MEMBER".equals(targetRole)) {
+        if (targetRole != null
+                && !"MEMBER".equals(targetRole)
+                && !("OWNER".equals(actor.role()) && "ADMIN".equals(targetRole))) {
             throw new GroupException(ApiErrorDefinition.FORBIDDEN);
         }
         if (!repository.isActiveMember(conversationId, userId)

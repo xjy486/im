@@ -553,7 +553,9 @@ private fun GroupConversationScreen(
                 Card(Modifier.fillMaxWidth()) {
                     Column(Modifier.padding(14.dp)) {
                         when {
-                            message.type == "SYSTEM" -> Text("群系统事件")
+                            message.type == "SYSTEM" -> Text(
+                                "群系统事件：${message.systemEventType ?: "UNKNOWN"}",
+                            )
                             message.state == "RECALLED" -> Text("消息已撤回")
                             message.state == "MODERATED" -> Text("消息已被治理")
                             message.type == "IMAGE" -> ImageMessageContent(message) { item, thumbnail ->

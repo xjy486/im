@@ -66,6 +66,43 @@ record GroupMemberAddResponse(
 ) {
 }
 
+record GroupRoleChangeRequest(
+        @Pattern(regexp = "ADMIN|MEMBER")
+        String role
+) {
+}
+
+record GroupRoleChangeResponse(
+        int version,
+        UUID conversationId,
+        UUID userId,
+        String role
+) {
+}
+
+record GroupOwnerTransferRequest(
+        UUID userId
+) {
+}
+
+record GroupOwnerTransferResponse(
+        int version,
+        UUID conversationId,
+        UUID previousOwnerUserId,
+        UUID ownerUserId
+) {
+}
+
+record GroupProfileUpdateRequest(
+        @Size(min = 1, max = 128)
+        String name,
+        @Size(max = 1000)
+        String description,
+        @Pattern(regexp = "PUBLIC|UNLISTED|PRIVATE")
+        String visibility
+) {
+}
+
 record GroupInviteCreateRequest(
         @Min(1)
         @Max(10000)

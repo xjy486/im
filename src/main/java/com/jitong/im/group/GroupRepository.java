@@ -231,6 +231,92 @@ class GroupRepository {
                 .orElse(null);
     }
 
+    int updateMemberRole(UUID conversationId, UUID userId, String role) {
+        return jdbc.sql("""
+                        UPDATE conversation_members
+                        SET role = :role,
+                            membership_version = membership_version + 1
+                        WHERE conversation_id = :conversationId
+                          AND user_id = :userId
+                          AND status = 'ACTIVE'
+                          AND role <> 'OWNER'
+                        """)
+                .param("conversationId", conversationId)
+                .param("userId", userId)
+                .param("role", role)
+                .update();
+    }
+
+    int transferOwnership(UUID conversationId, UUID previousOwnerUserId, UUID newOwnerUserId) {
+        int demoted = jdbc.sql("""
+                        UPDATE conversation_members
+                        SET role = 'ADMIN',
+                            membership_version = membership_version + 1
+                        WHERE conversation_id = :conversationId
+                          AND user_id = :previousOwnerUserId
+                          AND role = 'OWNER'
+                          AND status = 'ACTIVE'
+                        """)
+                .param("conversationId", conversationId)
+                .param("previousOwnerUserId", previousOwnerUserId)
+                .update();
+        if (demoted != 1) {
+            return 0;
+        }
+        int promoted = jdbc.sql("""
+                        UPDATE conversation_members
+                        SET role = 'OWNER',
+                            membership_version = membership_version + 1
+                        WHERE conversation_id = :conversationId
+                          AND user_id = :newOwnerUserId
+                          AND status = 'ACTIVE'
+                          AND role <> 'OWNER'
+                        """)
+                .param("conversationId", conversationId)
+                .param("newOwnerUserId", newOwnerUserId)
+                .update();
+        if (promoted != 1) {
+            throw new IllegalStateException("New owner is not an active non-owner member");
+        }
+        jdbc.sql("""
+                        UPDATE groups
+                        SET owner_user_id = :newOwnerUserId
+                        WHERE conversation_id = :conversationId
+                          AND owner_user_id = :previousOwnerUserId
+                          AND status = 'ACTIVE'
+                        """)
+                .param("conversationId", conversationId)
+                .param("previousOwnerUserId", previousOwnerUserId)
+                .param("newOwnerUserId", newOwnerUserId)
+                .update();
+        return 1;
+    }
+
+    void updateGroupProfile(
+            UUID conversationId,
+            String name,
+            String description,
+            GroupVisibility visibility
+    ) {
+        jdbc.sql("""
+                        UPDATE groups
+                        SET name = :name,
+                            description = :description,
+                            name_normalized = :nameNormalized,
+                            description_normalized = :descriptionNormalized,
+                            visibility = :visibility
+                        WHERE conversation_id = :conversationId
+                          AND status = 'ACTIVE'
+                        """)
+                .param("conversationId", conversationId)
+                .param("name", name)
+                .param("description", description)
+                .param("nameNormalized", GroupText.normalize(name))
+                .param("descriptionNormalized", GroupText.normalize(description))
+                .param("visibility", visibility.name())
+                .update();
+    }
+
     void removeMember(UUID conversationId, UUID userId, Instant leftAt) {
         jdbc.sql("""
                         UPDATE conversation_members

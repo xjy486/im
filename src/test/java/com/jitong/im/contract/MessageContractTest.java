@@ -179,6 +179,93 @@ class MessageContractTest extends ContractTestEnvironment {
     }
 
     @Test
+    void owner_or_admin_moderation_replaces_group_content_with_a_tombstone_for_all_members()
+            throws Exception {
+        TestUser owner = createUser("Moderation owner");
+        TestUser administrator = createUser("Moderation administrator");
+        TestUser member = createUser("Moderation member");
+        String ownerToken = login(owner.accountNo(), "moderation-owner");
+        String administratorToken = login(administrator.accountNo(), "moderation-administrator");
+        String memberToken = login(member.accountNo(), "moderation-member");
+
+        JsonNode group = exchange(
+                HttpMethod.POST,
+                "/api/v1/groups",
+                ownerToken,
+                Map.of("name", "Moderation Lounge", "description", "", "visibility", "PRIVATE"))
+                .getBody();
+        UUID conversationId = UUID.fromString(group.get("conversationId").asText());
+        assertThat(exchange(
+                HttpMethod.POST,
+                "/api/v1/groups/" + conversationId + "/members",
+                ownerToken,
+                Map.of("accountNo", administrator.accountNo())).getStatusCode())
+                .isEqualTo(HttpStatus.OK);
+        assertThat(exchange(
+                HttpMethod.POST,
+                "/api/v1/groups/" + conversationId + "/members",
+                ownerToken,
+                Map.of("accountNo", member.accountNo())).getStatusCode())
+                .isEqualTo(HttpStatus.OK);
+        assertThat(exchange(
+                HttpMethod.PUT,
+                "/api/v1/groups/" + conversationId + "/members/" + administrator.userId() + "/role",
+                ownerToken,
+                Map.of("role", "ADMIN")).getStatusCode())
+                .isEqualTo(HttpStatus.OK);
+
+        JsonNode sent = exchange(
+                HttpMethod.POST,
+                "/api/v1/conversations/" + conversationId + "/messages",
+                ownerToken,
+                Map.of("clientMsgId", UUID.randomUUID(), "text", "remove this content"))
+                .getBody();
+        UUID messageId = UUID.fromString(sent.get("messageId").asText());
+
+        assertThat(exchange(
+                HttpMethod.POST,
+                "/api/v1/messages/" + messageId + "/moderate",
+                memberToken,
+                Map.of("reason", "policy violation")).getStatusCode())
+                .isEqualTo(HttpStatus.FORBIDDEN);
+
+        JsonNode moderated = exchange(
+                HttpMethod.POST,
+                "/api/v1/messages/" + messageId + "/moderate",
+                administratorToken,
+                Map.of("reason", "policy violation")).getBody();
+        assertThat(moderated.get("state").asText()).isEqualTo("MODERATED");
+        assertThat(moderated.get("text").isNull()).isTrue();
+        assertThat(moderated.get("mediaId").isNull()).isTrue();
+
+        JsonNode memberHistory = exchange(
+                HttpMethod.GET,
+                "/api/v1/conversations/" + conversationId + "/messages?afterSeq=0&limit=200",
+                memberToken,
+                null).getBody();
+        JsonNode tombstone = null;
+        for (JsonNode node : memberHistory.get("messages")) {
+            if (messageId.toString().equals(node.get("messageId").asText())) {
+                tombstone = node;
+                break;
+            }
+        }
+        assertThat(tombstone).isNotNull();
+        assertThat(tombstone.get("state").asText()).isEqualTo("MODERATED");
+        assertThat(tombstone.get("text").isNull()).isTrue();
+        assertThat(tombstone.get("mediaId").isNull()).isTrue();
+
+        JsonNode sync = exchange(
+                HttpMethod.GET,
+                "/api/v1/sync?after=0&limit=200",
+                memberToken,
+                null).getBody();
+        assertThat(sync.get("events"))
+                .extracting(node -> node.get("eventType").asText())
+                .contains("MESSAGE_MODERATED");
+    }
+
+    @Test
     void keeps_each_device_cursor_independent_while_syncing_the_same_message_stream() throws Exception {
         TestUser alice = createUser("Alice");
         TestUser bob = createUser("Bob");

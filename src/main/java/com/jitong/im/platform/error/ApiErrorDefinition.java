@@ -10,6 +10,7 @@ public enum ApiErrorDefinition {
     DEVICE_REPLACEMENT_REQUIRED(HttpStatus.CONFLICT, "Device replacement confirmation is required"),
     SYNC_RESET_REQUIRED(HttpStatus.CONFLICT, "The synchronization cursor is outside the retained window"),
     FORBIDDEN(HttpStatus.FORBIDDEN, "Access is forbidden"),
+    FORBIDDEN_ROLE(HttpStatus.FORBIDDEN, "The user's group role cannot perform this operation"),
     NOT_MEMBER(HttpStatus.FORBIDDEN, "The user is not an active group member"),
     NOT_CONTACT(HttpStatus.FORBIDDEN, "The conversation is not available"),
     IDEMPOTENCY_CONFLICT(HttpStatus.CONFLICT, "The client message identifier is already in use"),

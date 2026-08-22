@@ -33,7 +33,7 @@ class AccountDatabaseMigrationTest {
     }
 
     @Test
-    fun migrates_v9_search_schema_through_v14_and_rebuilds_legacy_messages() {
+    fun migrates_v9_search_schema_through_v15_and_rebuilds_legacy_messages() {
         helper.createDatabase(TEST_DB, 9).apply {
             execSQL(
                 """
@@ -65,13 +65,14 @@ class AccountDatabaseMigrationTest {
 
         helper.runMigrationsAndValidate(
             TEST_DB,
-            14,
+            15,
             true,
             AccountDatabase.MIGRATION_9_10,
             AccountDatabase.MIGRATION_10_11,
             AccountDatabase.MIGRATION_11_12,
             AccountDatabase.MIGRATION_12_13,
             AccountDatabase.MIGRATION_13_14,
+            AccountDatabase.MIGRATION_14_15,
         ).close()
 
         migratedDatabase = Room.databaseBuilder(
@@ -85,6 +86,7 @@ class AccountDatabaseMigrationTest {
                 AccountDatabase.MIGRATION_11_12,
                 AccountDatabase.MIGRATION_12_13,
                 AccountDatabase.MIGRATION_13_14,
+                AccountDatabase.MIGRATION_14_15,
             )
             .build()
 

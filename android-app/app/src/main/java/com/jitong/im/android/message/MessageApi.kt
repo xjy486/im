@@ -45,6 +45,12 @@ internal data class MessageResponse(
     val mediaId: UUID? = null,
     val serverAcceptedAt: String,
     val recalledAt: String? = null,
+    val systemEventType: String? = null,
+    val systemTargetUserId: UUID? = null,
+    val systemRole: String? = null,
+    val moderatedByUserId: UUID? = null,
+    val moderatedReason: String? = null,
+    val moderatedAt: String? = null,
 )
 
 internal data class MessagePageResponse(

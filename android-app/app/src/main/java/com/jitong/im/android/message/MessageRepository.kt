@@ -1006,6 +1006,12 @@ internal class MessageRepository(
                             localMediaPath = null,
                             serverAcceptedAt = body.serverAcceptedAt ?: existing?.serverAcceptedAt,
                             recalledAt = body.recalledAt,
+                            systemEventType = body.systemEventType,
+                            systemTargetUserId = body.systemTargetUserId?.toString(),
+                            systemRole = body.systemRole,
+                            moderatedByUserId = body.moderatedByUserId?.toString(),
+                            moderatedReason = body.moderatedReason,
+                            moderatedAt = body.moderatedAt,
                             createdAt = existing?.createdAt ?: System.currentTimeMillis(),
                         ),
                     )
@@ -1102,6 +1108,12 @@ internal class MessageRepository(
                         localMediaPath = existing?.localMediaPath,
                         serverAcceptedAt = body.serverAcceptedAt,
                         recalledAt = body.recalledAt,
+                        systemEventType = body.systemEventType,
+                        systemTargetUserId = body.systemTargetUserId?.toString(),
+                        systemRole = body.systemRole,
+                        moderatedByUserId = body.moderatedByUserId?.toString(),
+                        moderatedReason = body.moderatedReason,
+                        moderatedAt = body.moderatedAt,
                         createdAt = existing?.createdAt ?: System.currentTimeMillis(),
                     ),
                 )
@@ -1120,6 +1132,12 @@ internal class MessageRepository(
                 mediaId = body.mediaId,
                 serverAcceptedAt = body.serverAcceptedAt.orEmpty(),
                 recalledAt = body.recalledAt,
+                systemEventType = body.systemEventType,
+                systemTargetUserId = body.systemTargetUserId,
+                systemRole = body.systemRole,
+                moderatedByUserId = body.moderatedByUserId,
+                moderatedReason = body.moderatedReason,
+                moderatedAt = body.moderatedAt,
             ),
         )
     }
@@ -1247,6 +1265,12 @@ internal class MessageRepository(
         localMediaPath = localMediaPath,
         serverAcceptedAt = serverAcceptedAt,
         recalledAt = recalledAt,
+        systemEventType = systemEventType,
+        systemTargetUserId = systemTargetUserId?.toString(),
+        systemRole = systemRole,
+        moderatedByUserId = moderatedByUserId?.toString(),
+        moderatedReason = moderatedReason,
+        moderatedAt = moderatedAt,
         createdAt = System.currentTimeMillis(),
     )
 
