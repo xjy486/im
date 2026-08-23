@@ -775,11 +775,6 @@ class ConversationClient(
         local: LocalDatabase,
         conversationId: String,
     ) {
-        if (local.listConversations().any {
-                it.conversationId == conversationId && it.kind == "GROUP"
-            }) {
-            return
-        }
         readStates(accessToken, conversationId).states.forEach {
             applyReadState(local, it)
         }

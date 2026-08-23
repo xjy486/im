@@ -587,6 +587,72 @@ class GroupContractTest extends ContractTestEnvironment {
     }
 
     @Test
+    void group_read_progress_is_user_level_without_exposing_other_members() throws Exception {
+        TestUser owner = createUser("Read owner");
+        TestUser member = createUser("Read member");
+        TestUser outsider = createUser("Read outsider");
+        String ownerToken = login(owner.accountNo(), "read-owner");
+        String memberToken = login(member.accountNo(), "read-member");
+        String outsiderToken = login(outsider.accountNo(), "read-outsider");
+        JsonNode group = createGroup(ownerToken, "Read Lounge", "", "PRIVATE");
+        UUID conversationId = UUID.fromString(group.get("conversationId").asText());
+        assertThat(addMember(ownerToken, conversationId, member.accountNo()).getStatusCode())
+                .isEqualTo(HttpStatus.OK);
+        long latestSequence = postMessage(ownerToken, conversationId, "read me")
+                .get("conversationSeq").asLong();
+
+        JsonNode beforeRead = exchange(
+                HttpMethod.GET,
+                "/api/v1/conversations/" + conversationId + "/read",
+                memberToken,
+                null).getBody();
+        assertThat(beforeRead.get("states")).hasSize(1);
+        assertThat(readSeqFor(beforeRead, member.userId())).isZero();
+        long ownerWatermark = highWatermark(ownerToken);
+        long memberWatermark = highWatermark(memberToken);
+
+        JsonNode marked = exchange(
+                HttpMethod.POST,
+                "/api/v1/conversations/" + conversationId + "/read",
+                memberToken,
+                Map.of("readSeq", latestSequence)).getBody();
+        assertThat(readSeqFor(marked, member.userId())).isEqualTo(latestSequence);
+
+        JsonNode memberView = exchange(
+                HttpMethod.GET,
+                "/api/v1/conversations/" + conversationId + "/read",
+                memberToken,
+                null).getBody();
+        JsonNode ownerView = exchange(
+                HttpMethod.GET,
+                "/api/v1/conversations/" + conversationId + "/read",
+                ownerToken,
+                null).getBody();
+        assertThat(readSeqFor(memberView, member.userId())).isEqualTo(latestSequence);
+        assertThat(ownerView.get("states")).hasSize(1);
+        assertThat(readSeqFor(ownerView, owner.userId())).isZero();
+        assertThat(exchange(
+                HttpMethod.GET,
+                "/api/v1/sync?after=" + memberWatermark + "&limit=200",
+                memberToken,
+                null).getBody().get("events"))
+                .extracting(event -> event.get("eventType").asText())
+                .contains("CONVERSATION_READ");
+        assertThat(exchange(
+                HttpMethod.GET,
+                "/api/v1/sync?after=" + ownerWatermark + "&limit=200",
+                ownerToken,
+                null).getBody().get("events"))
+                .extracting(event -> event.get("eventType").asText())
+                .doesNotContain("CONVERSATION_READ");
+        assertThat(exchange(
+                HttpMethod.GET,
+                "/api/v1/conversations/" + conversationId + "/read",
+                outsiderToken,
+                null).getStatusCode()).isEqualTo(HttpStatus.FORBIDDEN);
+    }
+
+    @Test
     void owner_dissolution_revokes_access_retires_group_number_and_emits_a_dissolution_event()
             throws Exception {
         TestUser owner = createUser("Dissolution owner");
@@ -759,6 +825,15 @@ class GroupContractTest extends ContractTestEnvironment {
             }
         });
         return sequences;
+    }
+
+    private long readSeqFor(JsonNode page, UUID userId) {
+        for (JsonNode state : page.get("states")) {
+            if (state.get("userId").asText().equals(userId.toString())) {
+                return state.get("readSeq").asLong();
+            }
+        }
+        throw new AssertionError("Missing read state for " + userId);
     }
 
     private JsonNode postMessage(String token, UUID conversationId, String text) {

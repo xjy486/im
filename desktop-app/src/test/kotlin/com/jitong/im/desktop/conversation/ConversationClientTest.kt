@@ -23,9 +23,11 @@ import java.util.UUID
 
 class ConversationClientTest {
     @Test
-    fun restoring_a_group_never_calls_the_c2c_read_state_contract() {
+    fun restoring_a_group_applies_the_current_users_server_read_progress() {
         val server = MockWebServer()
-        server.enqueue(MockResponse().setResponseCode(404))
+        server.enqueue(
+            MockResponse().setBody(
+                """{"version":1,"conversationId":"conversation-1","states":[{"conversationId":"conversation-1","userId":"user-1","readSeq":5}]}"""))
         server.start()
         val manager = LocalDatabaseManager(
             createTempDirectory("jitong-group-read-state"),
@@ -51,7 +53,10 @@ class ConversationClientTest {
 
             client.restoreReadStates("access", local, "conversation-1")
 
-            assertEquals(0, server.requestCount)
+            assertEquals(5, local.listConversations().single().readSeq)
+            assertEquals(
+                "/api/v1/conversations/conversation-1/read",
+                server.takeRequest().path)
             local.close()
         } finally {
             server.shutdown()

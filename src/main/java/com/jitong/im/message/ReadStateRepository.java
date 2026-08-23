@@ -30,20 +30,42 @@ class ReadStateRepository {
     ) {
         String lockClause = lock ? " FOR UPDATE OF c" : "";
         return jdbc.sql("""
-                        SELECT c.id, c.last_seq, cc.user_low_id, cc.user_high_id
+                        SELECT c.id, c.type, c.last_seq,
+                               cc.user_low_id, cc.user_high_id
                         FROM conversations c
-                        JOIN c2c_conversations cc ON cc.conversation_id = c.id
+                        LEFT JOIN c2c_conversations cc
+                          ON cc.conversation_id = c.id
+                        LEFT JOIN groups group_chat
+                          ON group_chat.conversation_id = c.id
+                        LEFT JOIN conversation_members member
+                          ON member.conversation_id = c.id
+                         AND member.user_id = :userId
                         WHERE c.id = :conversationId
-                          AND (cc.user_low_id = :userId OR cc.user_high_id = :userId)
+                          AND (
+                              (c.type = 'C2C'
+                                  AND (cc.user_low_id = :userId
+                                      OR cc.user_high_id = :userId))
+                              OR (c.type = 'GROUP'
+                                  AND c.status = 'ACTIVE'
+                                  AND group_chat.status = 'ACTIVE'
+                                  AND member.status = 'ACTIVE')
+                          )
                         """ + lockClause)
                 .param("conversationId", conversationId)
                 .param("userId", userId)
-                .query((row, rowNum) -> new ConversationTarget(
-                        row.getObject("id", UUID.class),
-                        row.getLong("last_seq"),
-                        List.of(
-                                row.getObject("user_low_id", UUID.class),
-                                row.getObject("user_high_id", UUID.class))))
+                .query((row, rowNum) -> {
+                    ConversationKind kind = ConversationKind.valueOf(row.getString("type"));
+                    List<UUID> readEventRecipients = kind == ConversationKind.GROUP
+                            ? List.of(userId)
+                            : List.of(
+                                    row.getObject("user_low_id", UUID.class),
+                                    row.getObject("user_high_id", UUID.class));
+                    return new ConversationTarget(
+                            row.getObject("id", UUID.class),
+                            row.getLong("last_seq"),
+                            kind,
+                            readEventRecipients);
+                })
                 .optional()
                 .orElse(null);
     }
@@ -82,7 +104,14 @@ class ReadStateRepository {
                 .update();
     }
 
-    List<ConversationReadState> listStates(UUID conversationId) {
+    List<ConversationReadState> listStates(
+            ConversationTarget target,
+            UUID requestingUserId
+    ) {
+        if (target.kind() == ConversationKind.GROUP) {
+            return List.of(findState(target.conversationId(), requestingUserId));
+        }
+        UUID conversationId = target.conversationId();
         return jdbc.sql("""
                         SELECT participants.user_id,
                                COALESCE(states.read_seq, 0) AS read_seq
@@ -118,7 +147,13 @@ class ReadStateRepository {
     record ConversationTarget(
             UUID conversationId,
             long lastSequence,
-            List<UUID> participants
+            ConversationKind kind,
+            List<UUID> readEventRecipients
     ) {
+    }
+
+    enum ConversationKind {
+        C2C,
+        GROUP
     }
 }

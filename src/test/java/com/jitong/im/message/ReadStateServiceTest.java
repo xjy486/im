@@ -26,11 +26,14 @@ class ReadStateServiceTest {
         ReadStateService service = new ReadStateService(repository, syncService);
         when(repository.lockConversation(CONVERSATION_ID, READER_ID))
                 .thenReturn(new ReadStateRepository.ConversationTarget(
-                        CONVERSATION_ID, 7L, List.of(READER_ID, PEER_ID)));
+                        CONVERSATION_ID,
+                        7L,
+                        ReadStateRepository.ConversationKind.C2C,
+                        List.of(READER_ID, PEER_ID)));
         when(repository.currentReadSeq(CONVERSATION_ID, READER_ID)).thenReturn(2L);
         when(syncService.allocateSequence(READER_ID)).thenReturn(11L);
         when(syncService.allocateSequence(PEER_ID)).thenReturn(13L);
-        when(repository.listStates(CONVERSATION_ID)).thenReturn(List.of(
+        when(repository.listStates(any(), eq(READER_ID))).thenReturn(List.of(
                 new ConversationReadState(CONVERSATION_ID, READER_ID, 7L),
                 new ConversationReadState(CONVERSATION_ID, PEER_ID, 0L)));
 
@@ -53,9 +56,12 @@ class ReadStateServiceTest {
         ReadStateService service = new ReadStateService(repository, syncService);
         when(repository.lockConversation(CONVERSATION_ID, READER_ID))
                 .thenReturn(new ReadStateRepository.ConversationTarget(
-                        CONVERSATION_ID, 7L, List.of(READER_ID, PEER_ID)));
+                        CONVERSATION_ID,
+                        7L,
+                        ReadStateRepository.ConversationKind.C2C,
+                        List.of(READER_ID, PEER_ID)));
         when(repository.currentReadSeq(CONVERSATION_ID, READER_ID)).thenReturn(7L);
-        when(repository.listStates(CONVERSATION_ID)).thenReturn(List.of(
+        when(repository.listStates(any(), eq(READER_ID))).thenReturn(List.of(
                 new ConversationReadState(CONVERSATION_ID, READER_ID, 7L),
                 new ConversationReadState(CONVERSATION_ID, PEER_ID, 0L)));
 
@@ -73,7 +79,10 @@ class ReadStateServiceTest {
         ReadStateService service = new ReadStateService(repository, syncService);
         when(repository.lockConversation(CONVERSATION_ID, READER_ID))
                 .thenReturn(new ReadStateRepository.ConversationTarget(
-                        CONVERSATION_ID, 7L, List.of(READER_ID, PEER_ID)));
+                        CONVERSATION_ID,
+                        7L,
+                        ReadStateRepository.ConversationKind.C2C,
+                        List.of(READER_ID, PEER_ID)));
 
         assertThatThrownBy(() -> service.markRead(READER_ID, CONVERSATION_ID, 8L))
                 .isInstanceOf(MessageException.class)

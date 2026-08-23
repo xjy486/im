@@ -961,7 +961,7 @@ paths:
         - { $ref: '#/components/parameters/ConversationId' }
       responses:
         '200':
-          description: User-level read state for both C2C participants
+          description: User-level read state for both C2C participants or the requesting group member
           content:
             application/json:
               schema: { $ref: '#/components/schemas/ConversationReadStatePage' }
@@ -986,7 +986,7 @@ paths:
                 readSeq: { type: integer, format: int64, minimum: 0 }
       responses:
         '200':
-          description: Monotonically advanced user-level read state
+          description: Monotonically advanced user-level read state; groups return only the requester
           content:
             application/json:
               schema: { $ref: '#/components/schemas/ConversationReadStatePage' }
@@ -1841,8 +1841,9 @@ components:
         conversationId: { type: string, format: uuid }
         states:
           type: array
-          minItems: 2
+          minItems: 1
           maxItems: 2
+          description: Both C2C participants, or only the requesting group member
           items: { $ref: '#/components/schemas/ConversationReadState' }
     SendTextMessageRequest:
       type: object

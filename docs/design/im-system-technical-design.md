@@ -442,6 +442,8 @@ outbox 与同步事件不复制消息正文，只保存实体引用。Dispatcher
 - `user_sync_events(user_id, sync_seq, event_type, entity_id, created_at)`；
 - `device_sync_states(device_id, last_acked_seq, updated_at)`。
 
+`conversation_read_states` 按用户维护 C2C 与群聊的 `readSeq`。C2C 查询返回双方进度；群聊查询与 `CONVERSATION_READ` 同步只返回/投递当前用户，供其设备恢复未读边界，不暴露群成员已读列表。
+
 手机推进游标不会替 PC 确认消费。
 
 ### 13.2 高水位屏障

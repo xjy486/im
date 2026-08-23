@@ -43,7 +43,7 @@ public class ReadStateService {
         long currentReadSeq = repository.currentReadSeq(conversationId, userId);
         if (readSeq > currentReadSeq) {
             repository.upsertReadSeq(conversationId, userId, readSeq);
-            for (UUID participantId : target.participants().stream().sorted().toList()) {
+            for (UUID participantId : target.readEventRecipients().stream().sorted().toList()) {
                 long syncSeq = syncService.allocateSequence(participantId);
                 syncService.recordEvent(
                         participantId,
@@ -53,7 +53,7 @@ public class ReadStateService {
                         conversationId);
             }
         }
-        return statePage(conversationId);
+        return statePage(target, userId);
     }
 
     @Transactional(readOnly = true)
@@ -63,13 +63,16 @@ public class ReadStateService {
         if (target == null) {
             throw new MessageException(ApiErrorDefinition.NOT_CONTACT);
         }
-        return statePage(conversationId);
+        return statePage(target, userId);
     }
 
-    private ConversationReadStatePage statePage(UUID conversationId) {
+    private ConversationReadStatePage statePage(
+            ReadStateRepository.ConversationTarget target,
+            UUID userId
+    ) {
         return new ConversationReadStatePage(
                 1,
-                conversationId,
-                List.copyOf(repository.listStates(conversationId)));
+                target.conversationId(),
+                List.copyOf(repository.listStates(target, userId)));
     }
 }
