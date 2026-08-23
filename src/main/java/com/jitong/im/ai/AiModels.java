@@ -107,6 +107,7 @@ record AiJobRecord(
         String contextDigest,
         String contextJson,
         long aiPolicyVersion,
+        long membershipVersion,
         String cacheKey,
         LocalDate budgetDate,
         long reservedTokens,
@@ -135,14 +136,14 @@ record AiConversation(
         UUID conversationId,
         UUID ownerUserId,
         UUID peerUserId,
+        String type,
         String status,
         long lastSeq,
         long ownerReadSeq,
         long policyVersion,
-        boolean ownerConsent,
-        boolean peerConsent
+        long membershipVersion,
+        long historyVisibleAfterSeq,
+        boolean aiEnabled,
+        boolean ownerConsent
 ) {
-    boolean enabledForBoth() {
-        return ownerConsent && peerConsent;
-    }
 }

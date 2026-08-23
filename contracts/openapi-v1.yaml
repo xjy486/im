@@ -253,6 +253,46 @@ paths:
           $ref: '#/components/responses/ApiError'
         '401':
           $ref: '#/components/responses/ApiError'
+  /api/v1/groups/{conversationId}/ai-policy:
+    get:
+      operationId: getGroupAiPolicy
+      summary: Read the persistent private AI policy for an active group member
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { $ref: '#/components/parameters/ConversationId' }
+      responses:
+        '200':
+          description: Current group AI policy
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/GroupAiPolicyResponse' }
+        '401':
+          $ref: '#/components/responses/ApiError'
+        '403':
+          $ref: '#/components/responses/ApiError'
+    patch:
+      operationId: updateGroupAiPolicy
+      summary: Enable or disable private AI for the group as its OWNER
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { $ref: '#/components/parameters/ConversationId' }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/GroupAiPolicyUpdate' }
+      responses:
+        '200':
+          description: Updated group AI policy
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/GroupAiPolicyResponse' }
+        '400':
+          $ref: '#/components/responses/ApiError'
+        '401':
+          $ref: '#/components/responses/ApiError'
+        '403':
+          $ref: '#/components/responses/ApiError'
   /api/v1/groups/search:
     get:
       operationId: searchGroups
@@ -1584,7 +1624,8 @@ components:
       additionalProperties: false
       required:
         [version, conversationId, groupNo, name, description, visibility,
-         ownerUserId, role, avatarUrl, avatarVersion, memberCount]
+         ownerUserId, role, avatarUrl, avatarVersion, memberCount,
+         aiEnabled, aiPolicyVersion]
       properties:
         version: { const: 1 }
         conversationId: { type: string, format: uuid }
@@ -1597,12 +1638,14 @@ components:
         avatarUrl: { type: [string, 'null'] }
         avatarVersion: { type: integer, format: int64, minimum: 0 }
         memberCount: { type: integer, minimum: 1, maximum: 100 }
+        aiEnabled: { type: boolean }
+        aiPolicyVersion: { type: integer, format: int64, minimum: 1 }
     GroupSummary:
       type: object
       additionalProperties: false
       required:
         [version, conversationId, groupNo, name, description, visibility,
-         role, avatarUrl, avatarVersion, memberCount]
+         role, avatarUrl, avatarVersion, memberCount, aiEnabled, aiPolicyVersion]
       properties:
         version: { const: 1 }
         conversationId: { type: string, format: uuid }
@@ -1614,6 +1657,23 @@ components:
         avatarUrl: { type: [string, 'null'] }
         avatarVersion: { type: integer, format: int64, minimum: 0 }
         memberCount: { type: integer, minimum: 1, maximum: 100 }
+        aiEnabled: { type: boolean }
+        aiPolicyVersion: { type: integer, format: int64, minimum: 1 }
+    GroupAiPolicyUpdate:
+      type: object
+      additionalProperties: false
+      required: [enabled]
+      properties:
+        enabled: { type: boolean }
+    GroupAiPolicyResponse:
+      type: object
+      additionalProperties: false
+      required: [version, conversationId, enabled, policyVersion]
+      properties:
+        version: { const: 1 }
+        conversationId: { type: string, format: uuid }
+        enabled: { type: boolean }
+        policyVersion: { type: integer, format: int64, minimum: 1 }
     GroupSearchResult:
       type: object
       additionalProperties: false

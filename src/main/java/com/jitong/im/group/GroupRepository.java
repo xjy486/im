@@ -98,6 +98,8 @@ class GroupRepository {
                         SELECT g.conversation_id, g.group_no, g.name, g.description,
                                g.visibility, g.owner_user_id, g.avatar_media_id,
                                g.avatar_version, member.role,
+                               COALESCE(ai.enabled, FALSE) AS ai_enabled,
+                               COALESCE(ai.policy_version, 1) AS ai_policy_version,
                                (
                                    SELECT COUNT(*)
                                    FROM conversation_members active_member
@@ -109,6 +111,8 @@ class GroupRepository {
                           ON member.conversation_id = g.conversation_id
                          AND member.user_id = :userId
                          AND member.status = 'ACTIVE'
+                        LEFT JOIN conversation_ai_settings ai
+                          ON ai.conversation_id = g.conversation_id
                         WHERE g.conversation_id = :conversationId
                           AND g.status = 'ACTIVE'
                         """)
@@ -124,6 +128,8 @@ class GroupRepository {
                         SELECT g.conversation_id, g.group_no, g.name, g.description,
                                g.visibility, g.owner_user_id, g.avatar_media_id,
                                g.avatar_version, member.role,
+                               COALESCE(ai.enabled, FALSE) AS ai_enabled,
+                               COALESCE(ai.policy_version, 1) AS ai_policy_version,
                                COUNT(active_member.user_id) AS member_count
                         FROM groups g
                         JOIN conversation_members member
@@ -133,10 +139,12 @@ class GroupRepository {
                         LEFT JOIN conversation_members active_member
                           ON active_member.conversation_id = g.conversation_id
                          AND active_member.status = 'ACTIVE'
+                        LEFT JOIN conversation_ai_settings ai
+                          ON ai.conversation_id = g.conversation_id
                         WHERE g.status = 'ACTIVE'
                         GROUP BY g.conversation_id, g.group_no, g.name, g.description,
                                  g.visibility, g.owner_user_id, g.avatar_media_id,
-                                 g.avatar_version, member.role
+                                 g.avatar_version, member.role, ai.enabled, ai.policy_version
                         ORDER BY g.created_at DESC
                         """)
                 .param("userId", userId)
@@ -540,6 +548,8 @@ class GroupRepository {
                         SELECT g.conversation_id, g.group_no, g.name, g.description,
                                g.visibility, g.owner_user_id, g.avatar_media_id,
                                g.avatar_version,
+                               COALESCE(ai.enabled, FALSE) AS ai_enabled,
+                               COALESCE(ai.policy_version, 1) AS ai_policy_version,
                                (
                                    SELECT COUNT(*)
                                    FROM conversation_members active_member
@@ -547,6 +557,8 @@ class GroupRepository {
                                      AND active_member.status = 'ACTIVE'
                                ) AS member_count
                         FROM groups g
+                        LEFT JOIN conversation_ai_settings ai
+                          ON ai.conversation_id = g.conversation_id
                         WHERE g.conversation_id = :conversationId
                           AND g.status = 'ACTIVE'
                         """)
@@ -561,7 +573,9 @@ class GroupRepository {
                         row.getObject("avatar_media_id", UUID.class),
                         row.getLong("avatar_version"),
                         null,
-                        row.getInt("member_count")))
+                        row.getInt("member_count"),
+                        row.getBoolean("ai_enabled"),
+                        row.getLong("ai_policy_version")))
                 .optional()
                 .orElse(null);
     }
@@ -571,6 +585,8 @@ class GroupRepository {
                         SELECT g.conversation_id, g.group_no, g.name, g.description,
                                g.visibility, g.owner_user_id, g.avatar_media_id,
                                g.avatar_version,
+                               COALESCE(ai.enabled, FALSE) AS ai_enabled,
+                               COALESCE(ai.policy_version, 1) AS ai_policy_version,
                                (
                                    SELECT COUNT(*)
                                    FROM conversation_members active_member
@@ -578,9 +594,11 @@ class GroupRepository {
                                      AND active_member.status = 'ACTIVE'
                                ) AS member_count
                         FROM groups g
+                        LEFT JOIN conversation_ai_settings ai
+                          ON ai.conversation_id = g.conversation_id
                         WHERE g.conversation_id = :conversationId
                           AND g.status = 'ACTIVE'
-                        FOR UPDATE
+                        FOR UPDATE OF g
                         """)
                 .param("conversationId", conversationId)
                 .query((row, rowNum) -> new GroupRecord(
@@ -593,7 +611,9 @@ class GroupRepository {
                         row.getObject("avatar_media_id", UUID.class),
                         row.getLong("avatar_version"),
                         null,
-                        row.getInt("member_count")))
+                        row.getInt("member_count"),
+                        row.getBoolean("ai_enabled"),
+                        row.getLong("ai_policy_version")))
                 .optional()
                 .orElse(null);
     }
@@ -929,6 +949,8 @@ class GroupRepository {
                         SELECT g.conversation_id, g.group_no, g.name, g.description,
                                g.visibility, g.owner_user_id, g.avatar_media_id,
                                g.avatar_version,
+                               COALESCE(ai.enabled, FALSE) AS ai_enabled,
+                               COALESCE(ai.policy_version, 1) AS ai_policy_version,
                                (
                                    SELECT COUNT(*)
                                    FROM conversation_members active_member
@@ -936,9 +958,11 @@ class GroupRepository {
                                      AND active_member.status = 'ACTIVE'
                                ) AS member_count
                         FROM groups g
+                        LEFT JOIN conversation_ai_settings ai
+                          ON ai.conversation_id = g.conversation_id
                         WHERE g.group_no = :groupNo
                           AND g.status = 'ACTIVE'
-                        FOR UPDATE
+                        FOR UPDATE OF g
                         """)
                 .param("groupNo", groupNo)
                 .query((row, rowNum) -> new GroupRecord(
@@ -951,7 +975,9 @@ class GroupRepository {
                         row.getObject("avatar_media_id", UUID.class),
                         row.getLong("avatar_version"),
                         null,
-                        row.getInt("member_count")))
+                        row.getInt("member_count"),
+                        row.getBoolean("ai_enabled"),
+                        row.getLong("ai_policy_version")))
                 .optional()
                 .orElse(null);
     }
@@ -1096,7 +1122,9 @@ class GroupRepository {
                 row.getObject("avatar_media_id", UUID.class),
                 row.getLong("avatar_version"),
                 row.getString("role"),
-                row.getInt("member_count"));
+                row.getInt("member_count"),
+                row.getBoolean("ai_enabled"),
+                row.getLong("ai_policy_version"));
     }
 
     private SearchGroupRecord mapSearchGroup(
@@ -1122,7 +1150,9 @@ class GroupRepository {
             UUID avatarMediaId,
             long avatarVersion,
             String role,
-            int memberCount
+            int memberCount,
+            boolean aiEnabled,
+            long aiPolicyVersion
     ) {
     }
 

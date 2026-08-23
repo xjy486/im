@@ -369,9 +369,9 @@ class GroupContractTest extends ContractTestEnvironment {
                 administratorToken,
                 null).getBody();
         assertThat(systemSequences(ownerHistory))
-                .containsExactly(1L, 2L, 3L, 4L, 5L, 6L);
+                .containsExactly(1L, 2L, 3L, 4L, 5L, 6L, 7L);
         assertThat(systemSequences(administratorHistory))
-                .containsExactly(2L, 3L, 4L, 5L, 6L);
+                .containsExactly(2L, 3L, 4L, 5L, 6L, 7L);
         assertThat(ownerHistory.get("messages"))
                 .extracting(node -> node.get("systemEventType").asText())
                 .containsExactly(
@@ -380,7 +380,8 @@ class GroupContractTest extends ContractTestEnvironment {
                         "MEMBER_JOINED",
                         "ROLE_CHANGED",
                         "ROLE_CHANGED",
-                        "ROLE_CHANGED");
+                        "ROLE_CHANGED",
+                        "AI_POLICY_CHANGED");
         assertThat(memberToken).isNotBlank();
     }
 

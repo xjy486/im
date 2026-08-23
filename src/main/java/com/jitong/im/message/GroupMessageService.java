@@ -180,6 +180,10 @@ public class GroupMessageService {
         recordSystemMessage(conversationId, actorId, "GROUP_PROFILE_UPDATED", null, null);
     }
 
+    public void recordAiPolicyChanged(UUID conversationId, UUID actorId) {
+        recordSystemMessage(conversationId, actorId, "AI_POLICY_CHANGED", null, null);
+    }
+
     public void recordGroupDissolved(
             UUID conversationId,
             UUID actorId,

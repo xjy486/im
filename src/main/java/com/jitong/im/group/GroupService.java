@@ -1,5 +1,6 @@
 package com.jitong.im.group;
 
+import com.jitong.im.ai.AiService;
 import com.jitong.im.auth.AuthService;
 import com.jitong.im.auth.PublicNumberGenerator;
 import com.jitong.im.audit.AuditOutcome;
@@ -34,6 +35,7 @@ public class GroupService {
     private final GroupInviteProperties inviteProperties;
     private final SecurityAuditSink auditSink;
     private final GroupMessageService groupMessageService;
+    private final AiService aiService;
     private final Clock clock;
 
     @Autowired
@@ -44,7 +46,8 @@ public class GroupService {
             GroupRateLimiter rateLimiter,
             GroupInviteProperties inviteProperties,
             SecurityAuditSink auditSink,
-            GroupMessageService groupMessageService
+            GroupMessageService groupMessageService,
+            AiService aiService
     ) {
         this(
                 repository,
@@ -54,6 +57,7 @@ public class GroupService {
                 inviteProperties,
                 auditSink,
                 groupMessageService,
+                aiService,
                 Clock.systemUTC());
     }
 
@@ -65,6 +69,7 @@ public class GroupService {
             GroupInviteProperties inviteProperties,
             SecurityAuditSink auditSink,
             GroupMessageService groupMessageService,
+            AiService aiService,
             Clock clock
     ) {
         this.repository = repository;
@@ -74,6 +79,7 @@ public class GroupService {
         this.inviteProperties = inviteProperties;
         this.auditSink = auditSink;
         this.groupMessageService = groupMessageService;
+        this.aiService = aiService;
         this.clock = clock;
     }
 
@@ -120,6 +126,53 @@ public class GroupService {
         return repository.listGroupsForUser(userId).stream()
                 .map(this::toSummary)
                 .toList();
+    }
+
+    @Transactional(readOnly = true)
+    public GroupAiPolicyResponse aiPolicy(String authorization, UUID conversationId) {
+        UUID userId = authService.requireUserId(authorization);
+        GroupRepository.GroupRecord group = repository.findGroupForUser(conversationId, userId);
+        if (group == null) {
+            throw new GroupException(ApiErrorDefinition.NOT_MEMBER);
+        }
+        return new GroupAiPolicyResponse(
+                1,
+                conversationId,
+                group.aiEnabled(),
+                group.aiPolicyVersion());
+    }
+
+    @Transactional
+    public GroupAiPolicyResponse updateAiPolicy(
+            String authorization,
+            UUID conversationId,
+            GroupAiPolicyUpdate request
+    ) {
+        UUID ownerUserId = authService.requireUserId(authorization);
+        if (request == null || request.enabled() == null) {
+            throw new GroupException(ApiErrorDefinition.INVALID_REQUEST);
+        }
+        GroupRepository.GroupActor actor = repository.lockActor(conversationId, ownerUserId);
+        if (actor == null || !"OWNER".equals(actor.role())) {
+            throw new GroupException(ApiErrorDefinition.FORBIDDEN_ROLE);
+        }
+        AiService.GroupPolicyUpdateResult result = aiService.updateGroupPolicy(
+                ownerUserId,
+                conversationId,
+                request.enabled());
+        if (result.changed()) {
+            groupMessageService.recordAiPolicyChanged(conversationId, ownerUserId);
+            recordAudit(
+                    SecurityAuditEventType.GROUP_AI_POLICY_CHANGE,
+                    ownerUserId,
+                    conversationId,
+                    AuditOutcome.SUCCEEDED);
+        }
+        return new GroupAiPolicyResponse(
+                1,
+                conversationId,
+                request.enabled(),
+                result.policyVersion());
     }
 
     @Transactional
@@ -196,6 +249,7 @@ public class GroupService {
         }
         repository.removeMember(conversationId, userId, clock.instant());
         groupMessageService.recordMemberRemoved(conversationId, actorId, userId);
+        aiService.invalidateGroupMemberJobs(conversationId, userId);
         recordAudit(
                 SecurityAuditEventType.GROUP_MEMBERSHIP_CHANGE,
                 actorId,
@@ -272,12 +326,19 @@ public class GroupService {
         if (repository.transferOwnership(conversationId, actorId, request.userId()) != 1) {
             throw new GroupException(ApiErrorDefinition.CONFLICT);
         }
+        aiService.resetGroupPolicyForOwnershipTransfer(actorId, conversationId);
         groupMessageService.recordOwnerTransferred(
                 conversationId,
                 actorId,
                 request.userId());
+        groupMessageService.recordAiPolicyChanged(conversationId, actorId);
         recordAudit(
                 SecurityAuditEventType.GROUP_ROLE_CHANGE,
+                actorId,
+                conversationId,
+                AuditOutcome.SUCCEEDED);
+        recordAudit(
+                SecurityAuditEventType.GROUP_AI_POLICY_CHANGE,
                 actorId,
                 conversationId,
                 AuditOutcome.SUCCEEDED);
@@ -681,6 +742,7 @@ public class GroupService {
         if (repository.isActiveMember(conversationId, userId)) {
             repository.removeMember(conversationId, userId, clock.instant());
             groupMessageService.recordMemberRemoved(conversationId, actorId, userId);
+            aiService.invalidateGroupMemberJobs(conversationId, userId);
         }
     }
 
@@ -696,6 +758,7 @@ public class GroupService {
         }
         groupMessageService.recordMemberLeft(conversationId, userId);
         repository.removeMember(conversationId, userId, clock.instant());
+        aiService.invalidateGroupMemberJobs(conversationId, userId);
         recordAudit(
                 SecurityAuditEventType.GROUP_MEMBERSHIP_CHANGE,
                 userId,
@@ -792,7 +855,9 @@ public class GroupService {
                 group.role(),
                 avatarUrl(group.conversationId(), group.avatarMediaId(), group.avatarVersion()),
                 group.avatarVersion(),
-                group.memberCount());
+                group.memberCount(),
+                group.aiEnabled(),
+                group.aiPolicyVersion());
     }
 
     private GroupSummary toSummary(GroupRepository.GroupRecord group) {
@@ -806,7 +871,9 @@ public class GroupService {
                 group.role(),
                 avatarUrl(group.conversationId(), group.avatarMediaId(), group.avatarVersion()),
                 group.avatarVersion(),
-                group.memberCount());
+                group.memberCount(),
+                group.aiEnabled(),
+                group.aiPolicyVersion());
     }
 
     private GroupSearchResult toSearchResult(GroupRepository.SearchGroupRecord group) {

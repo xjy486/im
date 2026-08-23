@@ -54,12 +54,15 @@ class AiServiceTest {
                         CONVERSATION_ID,
                         USER_ID,
                         UUID.randomUUID(),
+                        "C2C",
                         "ACTIVE",
                         3,
                         0,
                         1,
-                        true,
-                        false));
+                        0,
+                        0,
+                        false,
+                        true));
 
         assertThatThrownBy(() -> service.enqueueSummary(
                 new AuthenticatedDevice(USER_ID, DEVICE_ID, "MOBILE"),
@@ -95,10 +98,13 @@ class AiServiceTest {
                         CONVERSATION_ID,
                         USER_ID,
                         UUID.randomUUID(),
+                        "C2C",
                         "ACTIVE",
                         4,
                         0,
                         2,
+                        0,
+                        0,
                         true,
                         true));
         when(repository.listContext(CONVERSATION_ID, 0, 4, 100))
@@ -126,6 +132,7 @@ class AiServiceTest {
                         "digest",
                         "[]",
                         2,
+                        0,
                         "cache-key",
                         LocalDate.of(2026, 8, 23),
                         0,
@@ -158,6 +165,7 @@ class AiServiceTest {
                 any(),
                 any(),
                 eq(2L),
+                eq(0L),
                 any(),
                 eq(LocalDate.of(2026, 8, 23)),
                 anyLong(),
@@ -271,6 +279,7 @@ class AiServiceTest {
                 "digest",
                 null,
                 1,
+                0,
                 "cache-key",
                 LocalDate.of(1970, 1, 1),
                 0,

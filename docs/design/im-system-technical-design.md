@@ -255,7 +255,7 @@ challenge 保存 `replaced_device_id`、`new_installation_id_hash`、`device_cla
 
 | 角色 | 权限 |
 |---|---|
-| OWNER | 唯一；转让群主、设置管理员、管理成员、修改群资料、解散群 |
+| OWNER | 唯一；转让群主、设置管理员、管理成员、修改群资料、开关群 AI、解散群 |
 | ADMIN | 邀请/移除普通成员、审批入群、修改群资料 |
 | MEMBER | 发送消息、撤回自己一分钟内消息、主动退群 |
 
@@ -592,7 +592,7 @@ Android 搜索使用 Room FTS4。英文使用规范化词项，中文使用二�
 | user_blocks | blocker_id、blocked_id；有方向 |
 | conversations | id、type、status、last_seq |
 | c2c_conversations | conversation_id、user_low_id、user_high_id；用户对唯一 |
-| groups | conversation_id、group_no、name、description、visibility、owner_user_id、ai_enabled、ai_policy_version、status |
+| groups | conversation_id、group_no、name、description、visibility、owner_user_id、status |
 | conversation_members | conversation_id、user_id、role、status、history_visible_after_seq、read_seq、membership_version |
 | group_membership_audit | 角色与成员生命周期审计 |
 | group_invites | token_hash、expires_at、max_uses、use_count、status |
@@ -949,6 +949,8 @@ PostgreSQL 与 MinIO 使用独立持久卷、分别备份、加密存储，并�
 - `POST /groups/{id}/members`
 - `DELETE /groups/{id}/members/{userId}`
 - `PUT /groups/{id}/members/{userId}/role`
+- `GET /groups/{id}/ai-policy`
+- `PATCH /groups/{id}/ai-policy`
 - `POST /groups/{id}/owner-transfer`
 - `DELETE /groups/{id}`
 

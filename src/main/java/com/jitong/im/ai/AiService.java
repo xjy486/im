@@ -68,17 +68,16 @@ public class AiService {
             boolean enabled
     ) {
         AiConversation conversation = repository.findConversationForUpdate(conversationId, userId);
-        if (conversation == null) {
+        if (conversation == null || !"C2C".equals(conversation.type())) {
             throw new AiException(ApiErrorDefinition.NOT_CONTACT);
         }
-        AiConsentResponse response = repository.updateConsent(conversationId, userId, enabled);
-        return response;
+        return repository.updateConsent(conversationId, userId, enabled);
     }
 
     @Transactional(readOnly = true)
     public AiConsentResponse consent(UUID userId, UUID conversationId) {
         AiConversation conversation = repository.findConversation(conversationId, userId);
-        if (conversation == null) {
+        if (conversation == null || !"C2C".equals(conversation.type())) {
             throw new AiException(ApiErrorDefinition.NOT_CONTACT);
         }
         return new AiConsentResponse(
@@ -86,7 +85,7 @@ public class AiService {
                 conversationId,
                 userId,
                 conversation.ownerConsent(),
-                conversation.enabledForBoth(),
+                conversation.aiEnabled(),
                 conversation.policyVersion());
     }
 
@@ -118,7 +117,7 @@ public class AiService {
         if (previous != null) {
             return response(previous);
         }
-        if (!conversation.enabledForBoth()) {
+        if (!conversation.aiEnabled()) {
             throw new AiException(ApiErrorDefinition.AI_CONSENT_REQUIRED);
         }
 
@@ -129,6 +128,10 @@ public class AiService {
         if (requestedAfter < 0
                 || requestedUntil < requestedAfter
                 || requestedUntil > conversation.lastSeq()) {
+            throw new AiException(ApiErrorDefinition.INVALID_REQUEST);
+        }
+        requestedAfter = Math.max(requestedAfter, conversation.historyVisibleAfterSeq());
+        if (requestedUntil < requestedAfter) {
             throw new AiException(ApiErrorDefinition.INVALID_REQUEST);
         }
 
@@ -170,6 +173,7 @@ public class AiService {
                     toSeq,
                     contextDigest,
                     conversation.policyVersion(),
+                    conversation.membershipVersion(),
                     cacheKey,
                     budgetDate,
                     properties.provider().model(),
@@ -219,6 +223,7 @@ public class AiService {
                 contextDigest,
                 contextJson,
                 conversation.policyVersion(),
+                conversation.membershipVersion(),
                 cacheKey,
                 budgetDate,
                 reservedTokens,
@@ -257,13 +262,13 @@ public class AiService {
         if (previous != null) {
             return response(previous);
         }
-        if (!conversation.enabledForBoth()) {
+        if (!conversation.aiEnabled()) {
             throw new AiException(ApiErrorDefinition.AI_CONSENT_REQUIRED);
         }
 
         List<AiContextMessage> context = repository.listContext(
                 conversationId,
-                0,
+                conversation.historyVisibleAfterSeq(),
                 conversation.lastSeq(),
                 MAX_SMART_REPLY_MESSAGES);
         if (context.isEmpty()) {
@@ -315,6 +320,7 @@ public class AiService {
                 contextDigest,
                 contextJson,
                 conversation.policyVersion(),
+                conversation.membershipVersion(),
                 cacheKey,
                 budgetDate,
                 reservedTokens,
@@ -359,13 +365,14 @@ public class AiService {
         if (previous != null) {
             return response(previous);
         }
-        if (!conversation.enabledForBoth()) {
+        if (!conversation.aiEnabled()) {
             throw new AiException(ApiErrorDefinition.AI_CONSENT_REQUIRED);
         }
 
         List<AiContextMessage> context = repository.listContextByMessageIds(
                 conversationId,
                 request.messageIds(),
+                conversation.historyVisibleAfterSeq(),
                 MAX_EXTRACTION_MESSAGES);
         if (context.size() != request.messageIds().size()) {
             throw new AiException(ApiErrorDefinition.INVALID_REQUEST);
@@ -416,6 +423,7 @@ public class AiService {
                 contextDigest,
                 contextJson,
                 conversation.policyVersion(),
+                conversation.membershipVersion(),
                 cacheKey,
                 budgetDate,
                 reservedTokens,
@@ -428,6 +436,55 @@ public class AiService {
                 jobId,
                 conversationId);
         return response(repository.findJob(device.userId(), jobId));
+    }
+
+    @Transactional
+    public GroupPolicyUpdateResult updateGroupPolicy(
+            UUID actorUserId,
+            UUID conversationId,
+            boolean enabled
+    ) {
+        return applyGroupPolicy(actorUserId, conversationId, enabled, false);
+    }
+
+    @Transactional
+    public long resetGroupPolicyForOwnershipTransfer(
+            UUID actorUserId,
+            UUID conversationId
+    ) {
+        return applyGroupPolicy(actorUserId, conversationId, false, true).policyVersion();
+    }
+
+    private GroupPolicyUpdateResult applyGroupPolicy(
+            UUID actorUserId,
+            UUID conversationId,
+            boolean enabled,
+            boolean force
+    ) {
+        AiConversation conversation = repository.findConversationForUpdate(
+                conversationId,
+                actorUserId);
+        if (conversation == null || !"GROUP".equals(conversation.type())) {
+            throw new AiException(ApiErrorDefinition.NOT_MEMBER);
+        }
+        if (!force && conversation.aiEnabled() == enabled) {
+            return new GroupPolicyUpdateResult(conversation.policyVersion(), false);
+        }
+        long policyVersion = repository.updateGroupPolicy(conversationId, enabled);
+        terminateJobs(
+                repository.findActiveJobsForConversationForUpdate(conversationId),
+                "CANCELLED");
+        return new GroupPolicyUpdateResult(policyVersion, true);
+    }
+
+    @Transactional
+    public void invalidateGroupMemberJobs(UUID conversationId, UUID ownerUserId) {
+        repository.lockConversationForUpdate(conversationId);
+        terminateJobs(
+                repository.findActiveJobsForOwnerInConversationForUpdate(
+                        conversationId,
+                        ownerUserId),
+                "FAILED");
     }
 
     @Transactional(readOnly = true)
@@ -569,6 +626,28 @@ public class AiService {
                 "AI_JOB_DELETED",
                 jobId,
                 job.conversationId());
+    }
+
+    private void terminateJobs(List<AiJobRecord> jobs, String status) {
+        Instant finishedAt = clock.instant();
+        for (AiJobRecord job : jobs) {
+            repository.releaseBudget(job);
+            if (repository.terminateActiveJob(
+                    job,
+                    status,
+                    ApiErrorDefinition.CONTEXT_CHANGED.code(),
+                    finishedAt) == 0) {
+                throw new IllegalStateException("Active AI job could not be terminated");
+            }
+            syncService.recordEventForUsers(
+                    List.of(job.ownerUserId()),
+                    "AI_JOB_FAILED",
+                    job.jobId(),
+                    job.conversationId());
+        }
+    }
+
+    public record GroupPolicyUpdateResult(long policyVersion, boolean changed) {
     }
 
     private AiArtifactResponse artifactResponse(AiRepository.AiArtifactRecord record) {

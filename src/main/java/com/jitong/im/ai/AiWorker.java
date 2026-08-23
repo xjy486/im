@@ -65,7 +65,7 @@ class AiWorker {
                     job.conversationId(),
                     job.ownerUserId());
             if (!contextStillAuthorized(job, conversation, messages)) {
-                lifecycle.fail(job, ApiErrorDefinition.AI_CONTEXT_CHANGED.code(), clock.instant());
+                lifecycle.fail(job, ApiErrorDefinition.CONTEXT_CHANGED.code(), clock.instant());
                 return;
             }
             AiSummaryContext context = new AiSummaryContext(job.conversationId(), messages);
@@ -80,7 +80,7 @@ class AiWorker {
                     job.conversationId(),
                     job.ownerUserId());
             if (!contextStillAuthorized(job, current, messages)) {
-                lifecycle.fail(job, ApiErrorDefinition.AI_CONTEXT_CHANGED.code(), clock.instant());
+                lifecycle.fail(job, ApiErrorDefinition.CONTEXT_CHANGED.code(), clock.instant());
                 return;
             }
             Instant finishedAt = clock.instant();
@@ -135,19 +135,23 @@ class AiWorker {
         if (conversation == null) {
             return false;
         }
+        if (!conversation.aiEnabled()
+                || conversation.policyVersion() != job.aiPolicyVersion()
+                || conversation.membershipVersion() != job.membershipVersion()
+                || conversation.lastSeq() < job.toSeq()) {
+            return false;
+        }
         List<AiContextMessage> currentContext = "EXTRACTION".equals(job.kind())
                 ? repository.listContextByMessageIds(
                         job.conversationId(),
                         originalContext.stream().map(AiContextMessage::messageId).toList(),
+                        conversation.historyVisibleAfterSeq(),
                         200)
                 : repository.listContext(
                         job.conversationId(),
-                        job.fromSeq() - 1,
+                        Math.max(job.fromSeq() - 1, conversation.historyVisibleAfterSeq()),
                         job.toSeq(),
                         "SMART_REPLY".equals(job.kind()) ? 20 : 100);
-        return conversation.enabledForBoth()
-                && conversation.policyVersion() == job.aiPolicyVersion()
-                && conversation.lastSeq() >= job.toSeq()
-                && AiContextDigest.sha256(currentContext).equals(job.contextDigest());
+        return AiContextDigest.sha256(currentContext).equals(job.contextDigest());
     }
 }

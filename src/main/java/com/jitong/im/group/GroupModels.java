@@ -19,7 +19,9 @@ record GroupCreateResponse(
         String role,
         String avatarUrl,
         long avatarVersion,
-        int memberCount
+        int memberCount,
+        boolean aiEnabled,
+        long aiPolicyVersion
 ) {
 }
 
@@ -33,7 +35,22 @@ record GroupSummary(
         String role,
         String avatarUrl,
         long avatarVersion,
-        int memberCount
+        int memberCount,
+        boolean aiEnabled,
+        long aiPolicyVersion
+) {
+}
+
+record GroupAiPolicyUpdate(
+        Boolean enabled
+) {
+}
+
+record GroupAiPolicyResponse(
+        int version,
+        UUID conversationId,
+        boolean enabled,
+        long policyVersion
 ) {
 }
 

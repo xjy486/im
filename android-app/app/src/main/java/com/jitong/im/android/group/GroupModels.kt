@@ -20,6 +20,8 @@ internal data class GroupCreateResponse(
     val avatarUrl: String?,
     val avatarVersion: Long,
     val memberCount: Int,
+    val aiEnabled: Boolean = false,
+    val aiPolicyVersion: Long = 1,
 )
 
 internal data class GroupSummary(
@@ -33,6 +35,8 @@ internal data class GroupSummary(
     val avatarUrl: String?,
     val avatarVersion: Long,
     val memberCount: Int,
+    val aiEnabled: Boolean = false,
+    val aiPolicyVersion: Long = 1,
 )
 
 internal data class GroupSearchResult(

@@ -161,6 +161,8 @@ data class DesktopGroupSummary(
     val avatarUrl: String? = null,
     val avatarVersion: Long = 0,
     val memberCount: Int = 0,
+    val aiEnabled: Boolean = false,
+    val aiPolicyVersion: Long = 1,
 )
 
 @Serializable

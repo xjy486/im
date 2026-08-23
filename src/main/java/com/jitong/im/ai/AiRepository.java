@@ -40,28 +40,73 @@ class AiRepository {
     }
 
     AiConversation findConversation(UUID conversationId, UUID userId) {
+        return findAvailableConversation(conversationId, userId, false);
+    }
+
+    AiConversation findConversationForUpdate(UUID conversationId, UUID userId) {
+        return findAvailableConversation(conversationId, userId, true);
+    }
+
+    void lockConversationForUpdate(UUID conversationId) {
+        jdbc.sql("SELECT id FROM conversations WHERE id = :conversationId FOR UPDATE")
+                .param("conversationId", conversationId)
+                .query(UUID.class)
+                .single();
+    }
+
+    private AiConversation findAvailableConversation(
+            UUID conversationId,
+            UUID userId,
+            boolean forUpdate
+    ) {
+        String lockClause = forUpdate ? " FOR UPDATE OF c" : "";
         return jdbc.sql("""
                         SELECT c.id,
+                               c.type,
                                c.status,
                                c.last_seq,
                                CASE
-                                   WHEN cc.user_low_id = :userId THEN cc.user_high_id
-                                   ELSE cc.user_low_id
+                                   WHEN c.type = 'C2C' AND cc.user_low_id = :userId
+                                       THEN cc.user_high_id
+                                   WHEN c.type = 'C2C' THEN cc.user_low_id
+                                   ELSE NULL
                                END AS peer_user_id,
                                COALESCE(read_state.read_seq, 0) AS owner_read_seq,
                                COALESCE(settings.policy_version, 1) AS policy_version,
-                               COALESCE(owner_consent.enabled, FALSE) AS owner_consent,
-                               COALESCE(peer_consent.enabled, FALSE) AS peer_consent
-                        FROM c2c_conversations cc
-                        JOIN conversations c
-                          ON c.id = cc.conversation_id
+                               CASE
+                                   WHEN c.type = 'GROUP' THEN member.membership_version
+                                   ELSE 0
+                               END AS membership_version,
+                               CASE
+                                   WHEN c.type = 'GROUP' THEN member.history_visible_after_seq
+                                   ELSE 0
+                               END AS history_visible_after_seq,
+                               CASE
+                                   WHEN c.type = 'C2C' THEN
+                                       COALESCE(settings.enabled, FALSE)
+                                       AND COALESCE(owner_consent.enabled, FALSE)
+                                       AND COALESCE(peer_consent.enabled, FALSE)
+                                   WHEN c.type = 'GROUP' THEN COALESCE(settings.enabled, FALSE)
+                                   ELSE FALSE
+                               END AS ai_enabled,
+                               COALESCE(owner_consent.enabled, FALSE) AS owner_consent
+                        FROM conversations c
                         JOIN users owner_user
                           ON owner_user.id = :userId
                          AND owner_user.status = 'ACTIVE'
-                        JOIN contacts contact
+                        LEFT JOIN c2c_conversations cc
+                          ON cc.conversation_id = c.id
+                        LEFT JOIN contacts contact
                           ON contact.user_low_id = cc.user_low_id
                          AND contact.user_high_id = cc.user_high_id
                          AND contact.status = 'ACTIVE'
+                        LEFT JOIN groups group_chat
+                          ON group_chat.conversation_id = c.id
+                         AND group_chat.status = 'ACTIVE'
+                        LEFT JOIN conversation_members member
+                          ON member.conversation_id = c.id
+                         AND member.user_id = :userId
+                         AND member.status = 'ACTIVE'
                         LEFT JOIN conversation_read_states read_state
                           ON read_state.conversation_id = c.id
                          AND read_state.user_id = :userId
@@ -76,82 +121,51 @@ class AiRepository {
                              WHEN cc.user_low_id = :userId THEN cc.user_high_id
                              ELSE cc.user_low_id
                          END
-                        WHERE cc.conversation_id = :conversationId
-                          AND (cc.user_low_id = :userId OR cc.user_high_id = :userId)
+                        WHERE c.id = :conversationId
                           AND c.status = 'ACTIVE'
-                        """)
+                          AND (
+                              (c.type = 'C2C'
+                                  AND contact.status = 'ACTIVE'
+                                  AND (cc.user_low_id = :userId OR cc.user_high_id = :userId))
+                              OR (c.type = 'GROUP'
+                                  AND group_chat.status = 'ACTIVE'
+                                  AND member.status = 'ACTIVE')
+                          )
+                        """ + lockClause)
                 .param("conversationId", conversationId)
                 .param("userId", userId)
                 .query((row, rowNum) -> new AiConversation(
                         row.getObject("id", UUID.class),
                         userId,
                         row.getObject("peer_user_id", UUID.class),
+                        row.getString("type"),
                         row.getString("status"),
                         row.getLong("last_seq"),
                         row.getLong("owner_read_seq"),
                         row.getLong("policy_version"),
-                        row.getBoolean("owner_consent"),
-                        row.getBoolean("peer_consent")))
+                        row.getLong("membership_version"),
+                        row.getLong("history_visible_after_seq"),
+                        row.getBoolean("ai_enabled"),
+                        row.getBoolean("owner_consent")))
                 .optional()
                 .orElse(null);
     }
 
-    AiConversation findConversationForUpdate(UUID conversationId, UUID userId) {
+    long updateGroupPolicy(UUID conversationId, boolean enabled) {
         return jdbc.sql("""
-                        SELECT c.id,
-                               c.status,
-                               c.last_seq,
-                               CASE
-                                   WHEN cc.user_low_id = :userId THEN cc.user_high_id
-                                   ELSE cc.user_low_id
-                               END AS peer_user_id,
-                               COALESCE(read_state.read_seq, 0) AS owner_read_seq,
-                               COALESCE(settings.policy_version, 1) AS policy_version,
-                               COALESCE(owner_consent.enabled, FALSE) AS owner_consent,
-                               COALESCE(peer_consent.enabled, FALSE) AS peer_consent
-                        FROM c2c_conversations cc
-                        JOIN conversations c
-                          ON c.id = cc.conversation_id
-                        JOIN users owner_user
-                          ON owner_user.id = :userId
-                         AND owner_user.status = 'ACTIVE'
-                        JOIN contacts contact
-                          ON contact.user_low_id = cc.user_low_id
-                         AND contact.user_high_id = cc.user_high_id
-                         AND contact.status = 'ACTIVE'
-                        LEFT JOIN conversation_read_states read_state
-                          ON read_state.conversation_id = c.id
-                         AND read_state.user_id = :userId
-                        LEFT JOIN conversation_ai_settings settings
-                          ON settings.conversation_id = c.id
-                        LEFT JOIN conversation_ai_consents owner_consent
-                          ON owner_consent.conversation_id = c.id
-                         AND owner_consent.user_id = :userId
-                        LEFT JOIN conversation_ai_consents peer_consent
-                          ON peer_consent.conversation_id = c.id
-                         AND peer_consent.user_id = CASE
-                             WHEN cc.user_low_id = :userId THEN cc.user_high_id
-                             ELSE cc.user_low_id
-                         END
-                        WHERE cc.conversation_id = :conversationId
-                          AND (cc.user_low_id = :userId OR cc.user_high_id = :userId)
-                          AND c.status = 'ACTIVE'
-                        FOR UPDATE OF c
+                        INSERT INTO conversation_ai_settings (
+                            conversation_id, enabled, policy_version, updated_at
+                        ) VALUES (:conversationId, :enabled, 2, CURRENT_TIMESTAMP)
+                        ON CONFLICT (conversation_id)
+                        DO UPDATE SET enabled = EXCLUDED.enabled,
+                                      policy_version = conversation_ai_settings.policy_version + 1,
+                                      updated_at = EXCLUDED.updated_at
+                        RETURNING policy_version
                         """)
                 .param("conversationId", conversationId)
-                .param("userId", userId)
-                .query((row, rowNum) -> new AiConversation(
-                        row.getObject("id", UUID.class),
-                        userId,
-                        row.getObject("peer_user_id", UUID.class),
-                        row.getString("status"),
-                        row.getLong("last_seq"),
-                        row.getLong("owner_read_seq"),
-                        row.getLong("policy_version"),
-                        row.getBoolean("owner_consent"),
-                        row.getBoolean("peer_consent")))
-                .optional()
-                .orElse(null);
+                .param("enabled", enabled)
+                .query(Long.class)
+                .single();
     }
 
     AiConsentResponse updateConsent(UUID conversationId, UUID userId, boolean enabled) {
@@ -195,7 +209,7 @@ class AiRepository {
                 conversationId,
                 userId,
                 enabled,
-                conversation != null && conversation.enabledForBoth(),
+                conversation != null && conversation.aiEnabled(),
                 conversation == null ? 1 : conversation.policyVersion());
     }
 
@@ -233,6 +247,7 @@ class AiRepository {
     List<AiContextMessage> listContextByMessageIds(
             UUID conversationId,
             List<UUID> messageIds,
+            long afterSeq,
             int limit
     ) {
         return jdbc.sql("""
@@ -240,6 +255,7 @@ class AiRepository {
                         FROM messages
                         WHERE conversation_id = :conversationId
                           AND id IN (:messageIds)
+                          AND conversation_seq > :afterSeq
                           AND type = 'TEXT'
                           AND state = 'ACTIVE'
                           AND text_content IS NOT NULL
@@ -248,6 +264,7 @@ class AiRepository {
                         """)
                 .param("conversationId", conversationId)
                 .param("messageIds", messageIds)
+                .param("afterSeq", afterSeq)
                 .param("limit", limit)
                 .query((row, rowNum) -> new AiContextMessage(
                         row.getObject("id", UUID.class),
@@ -306,6 +323,7 @@ class AiRepository {
             String contextDigest,
             String contextJson,
             long policyVersion,
+            long membershipVersion,
             String cacheKey,
             LocalDate budgetDate,
             long reservedTokens,
@@ -317,13 +335,13 @@ class AiRepository {
                         INSERT INTO ai_jobs (
                             id, owner_user_id, requesting_device_id, conversation_id,
                             request_id, kind, status, from_seq, to_seq,
-                            context_digest, context_json, ai_policy_version,
+                            context_digest, context_json, ai_policy_version, membership_version,
                             cache_key, budget_date, reserved_tokens,
                             model, prompt_version, expires_at
                         ) VALUES (
                             :id, :ownerUserId, :requestingDeviceId, :conversationId,
                             :requestId, :kind, 'QUEUED', :fromSeq, :toSeq,
-                            :contextDigest, CAST(:contextJson AS jsonb), :policyVersion,
+                            :contextDigest, CAST(:contextJson AS jsonb), :policyVersion, :membershipVersion,
                             :cacheKey, :budgetDate, :reservedTokens,
                             :model, :promptVersion, :expiresAt
                         )
@@ -339,6 +357,7 @@ class AiRepository {
                 .param("contextDigest", contextDigest)
                 .param("contextJson", contextJson)
                 .param("policyVersion", policyVersion)
+                .param("membershipVersion", membershipVersion)
                 .param("cacheKey", cacheKey)
                 .param("budgetDate", budgetDate)
                 .param("reservedTokens", reservedTokens)
@@ -360,6 +379,7 @@ class AiRepository {
             long toSeq,
             String contextDigest,
             long policyVersion,
+            long membershipVersion,
             String cacheKey,
             LocalDate budgetDate,
             String model,
@@ -372,14 +392,14 @@ class AiRepository {
                         INSERT INTO ai_jobs (
                             id, owner_user_id, requesting_device_id, conversation_id,
                             request_id, kind, status, from_seq, to_seq,
-                            context_digest, context_json, ai_policy_version,
+                            context_digest, context_json, ai_policy_version, membership_version,
                             cache_key, budget_date, reserved_tokens,
                             model, prompt_version, result_json,
                             started_at, finished_at, expires_at
                         ) VALUES (
                             :id, :ownerUserId, :requestingDeviceId, :conversationId,
                             :requestId, :kind, 'SUCCEEDED', :fromSeq, :toSeq,
-                            :contextDigest, NULL, :policyVersion,
+                            :contextDigest, NULL, :policyVersion, :membershipVersion,
                             :cacheKey, :budgetDate, 0,
                             :model, :promptVersion, CAST(:resultJson AS jsonb),
                             :finishedAt, :finishedAt, :expiresAt
@@ -395,6 +415,7 @@ class AiRepository {
                 .param("toSeq", toSeq)
                 .param("contextDigest", contextDigest)
                 .param("policyVersion", policyVersion)
+                .param("membershipVersion", membershipVersion)
                 .param("cacheKey", cacheKey)
                 .param("budgetDate", budgetDate)
                 .param("model", model)
@@ -542,6 +563,7 @@ class AiRepository {
                                   job.conversation_id, job.request_id, job.kind, job.status,
                                   job.from_seq, job.to_seq, job.context_digest,
                                   job.context_json::text, job.ai_policy_version,
+                                  job.membership_version,
                                   job.cache_key, job.budget_date, job.reserved_tokens,
                                   job.attempt_count, job.input_tokens, job.output_tokens,
                                   job.model, job.prompt_version, job.result_json::text,
@@ -552,6 +574,35 @@ class AiRepository {
                 .query(this::mapJob)
                 .optional()
                 .orElse(null);
+    }
+
+    List<AiJobRecord> findActiveJobsForConversationForUpdate(UUID conversationId) {
+        return jdbc.sql(selectJobSql() + """
+                         WHERE conversation_id = :conversationId
+                           AND status IN ('QUEUED', 'RUNNING')
+                         ORDER BY owner_user_id, created_at, id
+                         FOR UPDATE
+                        """)
+                .param("conversationId", conversationId)
+                .query(this::mapJob)
+                .list();
+    }
+
+    List<AiJobRecord> findActiveJobsForOwnerInConversationForUpdate(
+            UUID conversationId,
+            UUID ownerUserId
+    ) {
+        return jdbc.sql(selectJobSql() + """
+                         WHERE conversation_id = :conversationId
+                           AND owner_user_id = :ownerUserId
+                           AND status IN ('QUEUED', 'RUNNING')
+                         ORDER BY created_at, id
+                         FOR UPDATE
+                        """)
+                .param("conversationId", conversationId)
+                .param("ownerUserId", ownerUserId)
+                .query(this::mapJob)
+                .list();
     }
 
     List<AiJobRecord> findExpiredActiveJobsForUpdate(Instant now, int limit) {
@@ -760,6 +811,32 @@ class AiRepository {
                 .param("jobId", jobId)
                 .param("ownerUserId", ownerUserId)
                 .param("expectedAttemptCount", expectedAttemptCount)
+                .param("errorCode", errorCode)
+                .param("finishedAt", utc(finishedAt), Types.TIMESTAMP_WITH_TIMEZONE)
+                .update();
+    }
+
+    int terminateActiveJob(
+            AiJobRecord job,
+            String status,
+            String errorCode,
+            Instant finishedAt
+    ) {
+        return jdbc.sql("""
+                        UPDATE ai_jobs
+                        SET status = :status,
+                            result_json = NULL,
+                            context_json = NULL,
+                            error_code = :errorCode,
+                            reserved_tokens = 0,
+                            finished_at = :finishedAt
+                        WHERE id = :jobId
+                          AND owner_user_id = :ownerUserId
+                          AND status IN ('QUEUED', 'RUNNING')
+                        """)
+                .param("jobId", job.jobId())
+                .param("ownerUserId", job.ownerUserId())
+                .param("status", status)
                 .param("errorCode", errorCode)
                 .param("finishedAt", utc(finishedAt), Types.TIMESTAMP_WITH_TIMEZONE)
                 .update();
@@ -1154,7 +1231,7 @@ class AiRepository {
         return """
                 SELECT id, owner_user_id, requesting_device_id, conversation_id,
                        request_id, kind, status, from_seq, to_seq,
-                       context_digest, context_json::text, ai_policy_version,
+                       context_digest, context_json::text, ai_policy_version, membership_version,
                        cache_key, budget_date, reserved_tokens, attempt_count,
                        input_tokens, output_tokens,
                        model, prompt_version, result_json::text, error_code,
@@ -1187,6 +1264,7 @@ class AiRepository {
                 row.getString("context_digest"),
                 row.getString("context_json"),
                 row.getLong("ai_policy_version"),
+                row.getLong("membership_version"),
                 row.getString("cache_key"),
                 row.getObject("budget_date", LocalDate.class),
                 row.getLong("reserved_tokens"),

@@ -5,6 +5,7 @@ import jakarta.validation.Valid;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.PostMapping;
+import org.springframework.web.bind.annotation.PatchMapping;
 import org.springframework.web.bind.annotation.PutMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestHeader;
@@ -38,6 +39,23 @@ class GroupController {
             @RequestHeader(value = "Authorization", required = false) String authorization
     ) {
         return service.list(authorization);
+    }
+
+    @GetMapping("/{conversationId}/ai-policy")
+    GroupAiPolicyResponse aiPolicy(
+            @RequestHeader(value = "Authorization", required = false) String authorization,
+            @PathVariable java.util.UUID conversationId
+    ) {
+        return service.aiPolicy(authorization, conversationId);
+    }
+
+    @PatchMapping("/{conversationId}/ai-policy")
+    GroupAiPolicyResponse updateAiPolicy(
+            @RequestHeader(value = "Authorization", required = false) String authorization,
+            @PathVariable java.util.UUID conversationId,
+            @Valid @RequestBody GroupAiPolicyUpdate request
+    ) {
+        return service.updateAiPolicy(authorization, conversationId, request);
     }
 
     @PostMapping("/{conversationId}/members")
