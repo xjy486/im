@@ -21,6 +21,19 @@ class AiRepository {
         this.jdbc = jdbc;
     }
 
+    boolean lockActiveOwnerForUpdate(UUID ownerUserId) {
+        return jdbc.sql("""
+                        SELECT id
+                        FROM users
+                        WHERE id = :ownerUserId AND status = 'ACTIVE'
+                        FOR UPDATE
+                        """)
+                .param("ownerUserId", ownerUserId)
+                .query(UUID.class)
+                .optional()
+                .isPresent();
+    }
+
     AiConversation findConversation(UUID conversationId, UUID userId) {
         return jdbc.sql("""
                         SELECT c.id,

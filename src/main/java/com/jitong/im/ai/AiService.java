@@ -97,6 +97,12 @@ public class AiService {
         if (request == null || request.requestId() == null) {
             throw new AiException(ApiErrorDefinition.INVALID_REQUEST);
         }
+        // Account retirement updates the same user row and keeps that lock until
+        // all private AI data has been erased. Locking the active owner first
+        // makes enqueue either commit before that erasure or reject afterwards.
+        if (!repository.lockActiveOwnerForUpdate(device.userId())) {
+            throw new AiException(ApiErrorDefinition.AUTH_INVALID);
+        }
         AiJobRecord previous = repository.findByRequest(device.userId(), request.requestId());
         if (previous != null) {
             return response(previous);

@@ -19,6 +19,7 @@ import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.inOrder;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -46,6 +47,7 @@ class AiServiceTest {
         when(repository.findByRequest(USER_ID, UUID.randomUUID())).thenReturn(null);
 
         UUID requestId = UUID.randomUUID();
+        when(repository.lockActiveOwnerForUpdate(USER_ID)).thenReturn(true);
         when(repository.findByRequest(USER_ID, requestId)).thenReturn(null);
         when(repository.findConversationForUpdate(CONVERSATION_ID, USER_ID))
                 .thenReturn(new AiConversation(
@@ -86,6 +88,7 @@ class AiServiceTest {
                 Clock.fixed(Instant.parse("2026-08-23T00:00:00Z"), ZoneOffset.UTC));
         UUID requestId = UUID.randomUUID();
         UUID firstMessage = UUID.randomUUID();
+        when(repository.lockActiveOwnerForUpdate(USER_ID)).thenReturn(true);
         when(repository.findByRequest(USER_ID, requestId)).thenReturn(null);
         when(repository.findConversationForUpdate(CONVERSATION_ID, USER_ID))
                 .thenReturn(new AiConversation(
@@ -165,6 +168,28 @@ class AiServiceTest {
                 eq("AI_JOB_QUEUED"),
                 any(),
                 eq(CONVERSATION_ID));
+        var ordered = inOrder(repository);
+        ordered.verify(repository).lockActiveOwnerForUpdate(USER_ID);
+        ordered.verify(repository).findConversationForUpdate(CONVERSATION_ID, USER_ID);
+    }
+
+    @Test
+    void refuses_to_enqueue_after_account_retirement_wins_the_owner_lock() {
+        AiRepository repository = mock(AiRepository.class);
+        SyncService syncService = mock(SyncService.class);
+        AiService service = service(repository, syncService);
+        UUID requestId = UUID.randomUUID();
+
+        assertThatThrownBy(() -> service.enqueueSummary(
+                new AuthenticatedDevice(USER_ID, DEVICE_ID, "MOBILE"),
+                CONVERSATION_ID,
+                new AiSummaryRequest(requestId, 0L, 1L)))
+                .isInstanceOf(AiException.class)
+                .extracting(exception -> ((AiException) exception).definition())
+                .isEqualTo(ApiErrorDefinition.AUTH_INVALID);
+
+        verify(repository).lockActiveOwnerForUpdate(USER_ID);
+        verify(repository, never()).findConversationForUpdate(CONVERSATION_ID, USER_ID);
     }
 
     @Test
