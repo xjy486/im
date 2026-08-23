@@ -44,6 +44,7 @@ import com.jitong.im.desktop.conversation.ConversationApiException
 import com.jitong.im.desktop.conversation.ConversationClient
 import com.jitong.im.desktop.conversation.DesktopAiConsent
 import com.jitong.im.desktop.conversation.DesktopAiDraft
+import com.jitong.im.desktop.conversation.DesktopGroupAiPolicy
 import com.jitong.im.desktop.conversation.DesktopContactRequestSummary
 import com.jitong.im.desktop.conversation.DesktopContactSearchResult
 import com.jitong.im.desktop.conversation.DesktopGroupInvite
@@ -58,6 +59,7 @@ import com.jitong.im.desktop.conversation.SyncGapException
 import com.jitong.im.desktop.local.LocalConversation
 import com.jitong.im.desktop.local.LocalAiActionItem
 import com.jitong.im.desktop.local.LocalAiArtifact
+import com.jitong.im.desktop.local.LocalAiJob
 import com.jitong.im.desktop.local.LocalDatabaseManager
 import com.jitong.im.desktop.local.LocalMessage
 import com.jitong.im.desktop.local.MacOsKeychain
@@ -128,6 +130,7 @@ private data class DesktopData(
     val groupJoinRequests: List<DesktopMyGroupJoinRequest> = emptyList(),
     val groupMembers: List<DesktopGroupMember> = emptyList(),
     val groupInvite: DesktopGroupInvite? = null,
+    val aiJobs: List<LocalAiJob> = emptyList(),
     val aiArtifacts: List<LocalAiArtifact> = emptyList(),
     val aiActionItems: List<LocalAiActionItem> = emptyList(),
 )
@@ -137,6 +140,15 @@ private data class DesktopAiKeyFact(
     val category: String,
     val content: String,
     val confidence: Double,
+    val sourceMessageIds: List<String>,
+)
+
+private data class DesktopAiSummary(
+    val artifactId: String,
+    val overview: String,
+    val keyPoints: List<String>,
+    val decisions: List<String>,
+    val openQuestions: List<String>,
     val sourceMessageIds: List<String>,
 )
 
@@ -159,7 +171,9 @@ private fun DesktopApp(
     var localSearchQuery by remember { mutableStateOf("") }
     var draft by remember { mutableStateOf("") }
     var aiConsent by remember { mutableStateOf<DesktopAiConsent?>(null) }
+    var aiGroupPolicy by remember { mutableStateOf<DesktopGroupAiPolicy?>(null) }
     var aiDrafts by remember { mutableStateOf<List<DesktopAiDraft>>(emptyList()) }
+    var aiDraftArtifactId by remember { mutableStateOf<String?>(null) }
     var selectedAiMessageIds by remember { mutableStateOf<Set<String>>(emptySet()) }
     var aiLoading by remember { mutableStateOf(false) }
     var online by remember { mutableStateOf(false) }
@@ -181,20 +195,24 @@ private fun DesktopApp(
         val generation = ++mediaLoadGeneration
         val conversations = local.listConversations()
         val messages = selectedConversationId?.let(local::listMessages).orEmpty()
+        val aiJobs = local.listAiJobs()
         val aiArtifacts = local.listAiArtifacts()
         val aiActionItems = local.listAiActionItems()
         data = data.copy(
             conversations = conversations,
             messages = messages,
+            aiJobs = aiJobs,
             aiArtifacts = aiArtifacts,
             aiActionItems = aiActionItems)
-        if (aiDrafts.isEmpty()) {
-            val latestReplies = aiArtifacts.firstOrNull {
-                it.conversationId == selectedConversationId && it.artifactType == "SMART_REPLY"
-            }
-            if (latestReplies != null) {
-                aiDrafts = parseDesktopAiDrafts(latestReplies.contentJson)
-            }
+        val latestReplies = aiArtifacts.firstOrNull {
+            it.conversationId == selectedConversationId && it.artifactType == "SMART_REPLY"
+        }
+        if (latestReplies == null) {
+            aiDraftArtifactId = null
+            aiDrafts = emptyList()
+        } else if (latestReplies.artifactId != aiDraftArtifactId) {
+            aiDraftArtifactId = latestReplies.artifactId
+            aiDrafts = parseDesktopAiDrafts(latestReplies.contentJson)
         }
         val activeMediaKeys = messages
             .filter { it.type == "IMAGE" && it.state == "ACTIVE" && it.mediaId != null }
@@ -394,6 +412,13 @@ private fun DesktopApp(
                 }
             }.onSuccess { groups ->
                 data = data.copy(groups = groups)
+                groups.firstOrNull { it.conversationId == selectedConversationId }
+                    ?.let { group ->
+                        aiGroupPolicy = DesktopGroupAiPolicy(
+                            conversationId = group.conversationId,
+                            enabled = group.aiEnabled,
+                            policyVersion = group.aiPolicyVersion)
+                    }
                 withContext(Dispatchers.IO) {
                     authStore.localDatabase()?.let { local ->
                         val existingGroupIds = local.listConversations()
@@ -663,6 +688,7 @@ private fun DesktopApp(
             groupInvite = data.groupInvite,
             draft = draft,
             aiConsent = aiConsent,
+            aiGroupPolicy = aiGroupPolicy,
             aiDrafts = aiDrafts,
             selectedAiMessageIds = selectedAiMessageIds,
             aiLoading = aiLoading,
@@ -965,10 +991,12 @@ private fun DesktopApp(
                 selectedSearchMessageId = null
                 selectedAiMessageIds = emptySet()
                 aiDrafts = emptyList()
+                aiDraftArtifactId = null
                 aiConsent = null
+                aiGroupPolicy = null
                 uiScope.launch {
                     runCatching {
-                        val consent = withContext(Dispatchers.IO) {
+                        val policy = withContext(Dispatchers.IO) {
                             val local = authStore.localDatabase()
                                 ?: error("PC local database is not open")
                             conversationClient.restoreConversation(
@@ -980,13 +1008,26 @@ private fun DesktopApp(
                                 authStore.session?.accessToken ?: session!!.accessToken,
                                 local,
                                 conversationId)
-                            conversationClient.aiConsent(
-                                authStore.session?.accessToken ?: session!!.accessToken,
-                                conversationId)
+                            val accessToken = authStore.session?.accessToken
+                                ?: session!!.accessToken
+                            val conversation = local.listConversations()
+                                .first { it.conversationId == conversationId }
+                            if (conversation.kind == "GROUP") {
+                                null to conversationClient.groupAiPolicy(
+                                    accessToken,
+                                    conversationId)
+                            } else {
+                                conversationClient.aiConsent(
+                                    accessToken,
+                                    conversationId) to null
+                            }
                         }
                         refreshLocal()
-                        consent
-                    }.onSuccess { aiConsent = it }
+                        policy
+                    }.onSuccess { (consent, groupPolicy) ->
+                        aiConsent = consent
+                        aiGroupPolicy = groupPolicy
+                    }
                         .onFailure { error = messageFor(it) }
                 }
             },
@@ -998,12 +1039,27 @@ private fun DesktopApp(
                     aiLoading = true
                     runCatching {
                         withContext(Dispatchers.IO) {
-                            conversationClient.updateAiConsent(
-                                current.accessToken,
-                                conversationId,
-                                !(aiConsent?.enabled ?: false))
+                            val conversation = authStore.localDatabase()
+                                ?.listConversations()
+                                ?.firstOrNull { it.conversationId == conversationId }
+                                ?: error("PC local conversation is not available")
+                            if (conversation.kind == "GROUP") {
+                                null to conversationClient.updateGroupAiPolicy(
+                                    current.accessToken,
+                                    conversationId,
+                                    !(aiGroupPolicy?.enabled ?: false))
+                            } else {
+                                conversationClient.updateAiConsent(
+                                    current.accessToken,
+                                    conversationId,
+                                    !(aiConsent?.enabled ?: false)) to null
+                            }
                         }
-                    }.onSuccess { aiConsent = it }
+                    }.onSuccess { (consent, groupPolicy) ->
+                        aiConsent = consent
+                        aiGroupPolicy = groupPolicy
+                        if (groupPolicy != null) refreshGroups()
+                    }
                         .onFailure { error = messageFor(it) }
                     aiLoading = false
                 }
@@ -1013,6 +1069,26 @@ private fun DesktopApp(
                     if (!it.add(messageId)) it.remove(messageId)
                 }
             },
+            onRequestAiSummary = {
+                val conversationId = selectedConversationId ?: return@MainScreen
+                val current = authStore.session ?: session ?: return@MainScreen
+                uiScope.launch {
+                    aiLoading = true
+                    runCatching {
+                        withContext(Dispatchers.IO) {
+                            val local = authStore.localDatabase()
+                                ?: error("PC local database is not open")
+                            conversationClient.requestSummary(
+                                current.accessToken,
+                                conversationId,
+                                onJobUpdate = { conversationClient.applyAiJob(local, it) })
+                            conversationClient.refreshAiData(current.accessToken, local)
+                        }
+                    }.onSuccess { refreshLocal() }
+                        .onFailure { error = messageFor(it) }
+                    aiLoading = false
+                }
+            },
             onRequestSmartReplies = {
                 val conversationId = selectedConversationId ?: return@MainScreen
                 val current = authStore.session ?: session ?: return@MainScreen
@@ -1020,11 +1096,12 @@ private fun DesktopApp(
                     aiLoading = true
                     runCatching {
                         withContext(Dispatchers.IO) {
-                            val replies = conversationClient.requestSmartReplies(
-                                current.accessToken,
-                                conversationId)
                             val local = authStore.localDatabase()
                                 ?: error("PC local database is not open")
+                            val replies = conversationClient.requestSmartReplies(
+                                current.accessToken,
+                                conversationId,
+                                onJobUpdate = { conversationClient.applyAiJob(local, it) })
                             conversationClient.refreshAiData(current.accessToken, local)
                             replies
                         }
@@ -1049,12 +1126,13 @@ private fun DesktopApp(
                     aiLoading = true
                     runCatching {
                         withContext(Dispatchers.IO) {
+                            val local = authStore.localDatabase()
+                                ?: error("PC local database is not open")
                             conversationClient.extractInformation(
                                 current.accessToken,
                                 conversationId,
-                                selectedAiMessageIds.toList())
-                            val local = authStore.localDatabase()
-                                ?: error("PC local database is not open")
+                                selectedAiMessageIds.toList(),
+                                onJobUpdate = { conversationClient.applyAiJob(local, it) })
                             conversationClient.refreshAiData(current.accessToken, local)
                         }
                     }.onSuccess {
@@ -1074,6 +1152,21 @@ private fun DesktopApp(
                                 current.accessToken,
                                 authStore.localDatabase()
                                     ?: error("PC local database is not open"))
+                        }
+                        refreshLocal()
+                    }.onFailure { error = messageFor(it) }
+                }
+            },
+            onDeleteAiJob = { jobId ->
+                val current = authStore.session ?: session ?: return@MainScreen
+                uiScope.launch {
+                    runCatching {
+                        withContext(Dispatchers.IO) {
+                            conversationClient.deleteAiJob(current.accessToken, jobId)
+                            val local = authStore.localDatabase()
+                                ?: error("PC local database is not open")
+                            local.deleteAiJob(jobId)
+                            conversationClient.refreshAiData(current.accessToken, local)
                         }
                         refreshLocal()
                     }.onFailure { error = messageFor(it) }
@@ -1383,6 +1476,7 @@ private fun MainScreen(
     groupInvite: DesktopGroupInvite?,
     draft: String,
     aiConsent: DesktopAiConsent?,
+    aiGroupPolicy: DesktopGroupAiPolicy?,
     aiDrafts: List<DesktopAiDraft>,
     selectedAiMessageIds: Set<String>,
     aiLoading: Boolean,
@@ -1418,11 +1512,13 @@ private fun MainScreen(
     onDraftChange: (String) -> Unit,
     onToggleAiConsent: () -> Unit,
     onToggleAiMessage: (String) -> Unit,
+    onRequestAiSummary: () -> Unit,
     onRequestSmartReplies: () -> Unit,
     onEditAiDraft: (Int, String) -> Unit,
     onUseAiDraft: (String) -> Unit,
     onExtractAiInformation: () -> Unit,
     onDeleteAiArtifact: (String) -> Unit,
+    onDeleteAiJob: (String) -> Unit,
     onSetAiActionItemStatus: (String, String) -> Unit,
     onDeleteAiActionItem: (String) -> Unit,
     onSend: () -> Unit,
@@ -1647,7 +1743,11 @@ private fun MainScreen(
                 draft = draft,
                 online = online,
                 aiConsent = aiConsent,
+                aiGroupPolicy = aiGroupPolicy,
                 aiDrafts = aiDrafts,
+                aiJobs = data.aiJobs.filter {
+                    it.conversationId == selectedConversationId
+                },
                 aiArtifacts = data.aiArtifacts.filter {
                     it.conversationId == selectedConversationId
                 },
@@ -1660,11 +1760,13 @@ private fun MainScreen(
                 onDraftChange = onDraftChange,
                 onToggleAiConsent = onToggleAiConsent,
                 onToggleAiMessage = onToggleAiMessage,
+                onRequestAiSummary = onRequestAiSummary,
                 onRequestSmartReplies = onRequestSmartReplies,
                 onEditAiDraft = onEditAiDraft,
                 onUseAiDraft = onUseAiDraft,
                 onExtractAiInformation = onExtractAiInformation,
                 onDeleteAiArtifact = onDeleteAiArtifact,
+                onDeleteAiJob = onDeleteAiJob,
                 onSetAiActionItemStatus = onSetAiActionItemStatus,
                 onDeleteAiActionItem = onDeleteAiActionItem,
                 onSend = onSend,
@@ -1850,7 +1952,9 @@ private fun ConversationPane(
     draft: String,
     online: Boolean,
     aiConsent: DesktopAiConsent?,
+    aiGroupPolicy: DesktopGroupAiPolicy?,
     aiDrafts: List<DesktopAiDraft>,
+    aiJobs: List<LocalAiJob>,
     aiArtifacts: List<LocalAiArtifact>,
     aiActionItems: List<LocalAiActionItem>,
     selectedAiMessageIds: Set<String>,
@@ -1859,11 +1963,13 @@ private fun ConversationPane(
     onDraftChange: (String) -> Unit,
     onToggleAiConsent: () -> Unit,
     onToggleAiMessage: (String) -> Unit,
+    onRequestAiSummary: () -> Unit,
     onRequestSmartReplies: () -> Unit,
     onEditAiDraft: (Int, String) -> Unit,
     onUseAiDraft: (String) -> Unit,
     onExtractAiInformation: () -> Unit,
     onDeleteAiArtifact: (String) -> Unit,
+    onDeleteAiJob: (String) -> Unit,
     onSetAiActionItemStatus: (String, String) -> Unit,
     onDeleteAiActionItem: (String) -> Unit,
     onSend: () -> Unit,
@@ -1978,19 +2084,24 @@ private fun ConversationPane(
         }
         AiAssistantPanel(
             conversationKind = selectedConversation.kind,
+            conversationRole = selectedConversation.relationship,
             online = online,
             consent = aiConsent,
+            groupPolicy = aiGroupPolicy,
             drafts = aiDrafts,
+            jobs = aiJobs,
             artifacts = aiArtifacts,
             actionItems = aiActionItems,
             selectedMessageCount = selectedAiMessageIds.size,
             loading = aiLoading,
             onToggleConsent = onToggleAiConsent,
+            onRequestSummary = onRequestAiSummary,
             onRequestSmartReplies = onRequestSmartReplies,
             onEditDraft = onEditAiDraft,
             onUseDraft = onUseAiDraft,
             onExtractInformation = onExtractAiInformation,
             onDeleteArtifact = onDeleteAiArtifact,
+            onDeleteJob = onDeleteAiJob,
             onSetActionItemStatus = onSetAiActionItemStatus,
             onDeleteActionItem = onDeleteAiActionItem)
         if (!online) {
@@ -2033,49 +2144,87 @@ private fun ConversationPane(
 @Composable
 private fun AiAssistantPanel(
     conversationKind: String,
+    conversationRole: String,
     online: Boolean,
     consent: DesktopAiConsent?,
+    groupPolicy: DesktopGroupAiPolicy?,
     drafts: List<DesktopAiDraft>,
+    jobs: List<LocalAiJob>,
     artifacts: List<LocalAiArtifact>,
     actionItems: List<LocalAiActionItem>,
     selectedMessageCount: Int,
     loading: Boolean,
     onToggleConsent: () -> Unit,
+    onRequestSummary: () -> Unit,
     onRequestSmartReplies: () -> Unit,
     onEditDraft: (Int, String) -> Unit,
     onUseDraft: (String) -> Unit,
     onExtractInformation: () -> Unit,
     onDeleteArtifact: (String) -> Unit,
+    onDeleteJob: (String) -> Unit,
     onSetActionItemStatus: (String, String) -> Unit,
     onDeleteActionItem: (String) -> Unit,
 ) {
-    if (conversationKind != "C2C") return
-    val enabledForBoth = consent?.enabledForBoth == true
+    if (conversationKind != "C2C" && conversationKind != "GROUP") return
+    val aiEnabled = if (conversationKind == "GROUP") {
+        groupPolicy?.enabled == true
+    } else {
+        consent?.enabledForBoth == true
+    }
+    val policyLoaded = if (conversationKind == "GROUP") groupPolicy != null else consent != null
+    val canManagePolicy = conversationKind == "C2C" || conversationRole == "OWNER"
+    val summaries = artifacts.mapNotNull(::parseDesktopAiSummary)
     val facts = artifacts.flatMap(::parseDesktopAiFacts)
+    val draftArtifactId = artifacts.firstOrNull { it.artifactType == "SMART_REPLY" }?.artifactId
     Card(Modifier.fillMaxWidth().padding(top = 8.dp)) {
         LazyColumn(
-            modifier = Modifier.fillMaxWidth().heightIn(max = 320.dp).padding(12.dp),
+            modifier = Modifier.fillMaxWidth().heightIn(max = 440.dp).padding(12.dp),
             verticalArrangement = Arrangement.spacedBy(8.dp),
         ) {
             item {
                 Text("Private AI assistant", style = MaterialTheme.typography.titleMedium)
                 Text(
-                    when {
-                        consent == null -> "Loading consent…"
-                        enabledForBoth -> "Enabled by both participants"
-                        consent.enabled -> "You enabled AI; waiting for the other participant"
-                        else -> "Disabled for you"
+                    if (conversationKind == "GROUP") {
+                        when {
+                            groupPolicy == null -> "Loading group AI policy…"
+                            groupPolicy.enabled -> "Enabled for this group by its owner"
+                            else -> "Disabled for this group"
+                        }
+                    } else {
+                        when {
+                            consent == null -> "Loading conversation consent…"
+                            consent.enabledForBoth -> "Enabled by both participants"
+                            consent.enabled -> "You enabled AI; waiting for the other participant"
+                            else -> "Disabled for you"
+                        }
                     })
-                OutlinedButton(
-                    enabled = online && consent != null && !loading,
-                    onClick = onToggleConsent,
-                ) {
-                    Text(if (consent?.enabled == true) "Disable AI" else "Enable AI")
+                Text(
+                    "Results stay private. Images are included only when the server and model " +
+                        "allow it; a reply is copied to the composer and is never sent automatically.")
+                if (canManagePolicy) {
+                    OutlinedButton(
+                        enabled = online && policyLoaded && !loading,
+                        onClick = onToggleConsent,
+                    ) {
+                        val enabledByActor = if (conversationKind == "GROUP") {
+                            groupPolicy?.enabled == true
+                        } else {
+                            consent?.enabled == true
+                        }
+                        Text(if (enabledByActor) "Disable AI" else "Enable AI")
+                    }
                 }
             }
-            if (enabledForBoth) {
+            if (loading) {
+                item { Text("AI task queued or running…") }
+            }
+            if (aiEnabled) {
                 item {
                     Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        Button(
+                            enabled = online && !loading,
+                            onClick = onRequestSummary,
+                        ) { Text("Summarize unread") }
                         Button(
                             enabled = online && !loading,
                             onClick = onRequestSmartReplies,
@@ -2095,7 +2244,56 @@ private fun AiAssistantPanel(
                             onValueChange = { onEditDraft(index, it) },
                             label = { Text("Reply ${index + 1} · ${reply.tone}") },
                             singleLine = true)
-                        Button(onClick = { onUseDraft(reply.text) }) { Text("Use") }
+                        Button(onClick = { onUseDraft(reply.text) }) { Text("Copy to composer") }
+                    }
+                }
+                if (drafts.isNotEmpty() && draftArtifactId != null) {
+                    item {
+                        OutlinedButton(onClick = { onDeleteArtifact(draftArtifactId) }) {
+                            Text("Delete reply drafts")
+                        }
+                    }
+                }
+            }
+            if (jobs.isNotEmpty()) {
+                item { Text("AI tasks", style = MaterialTheme.typography.titleSmall) }
+                items(jobs, key = { it.jobId }) { job ->
+                    Card(Modifier.fillMaxWidth()) {
+                        Row(
+                            Modifier.fillMaxWidth().padding(8.dp),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                        ) {
+                            Column(Modifier.weight(1f)) {
+                                Text("${job.kind} · ${job.status}")
+                                job.errorCode?.let { Text("Error: $it") }
+                            }
+                            OutlinedButton(onClick = { onDeleteJob(job.jobId) }) {
+                                Text("Delete task")
+                            }
+                        }
+                    }
+                }
+            }
+            if (summaries.isNotEmpty()) {
+                item { Text("Summaries", style = MaterialTheme.typography.titleSmall) }
+                items(summaries, key = { it.artifactId }) { summary ->
+                    Card(Modifier.fillMaxWidth()) {
+                        Column(Modifier.padding(8.dp)) {
+                            Text(summary.overview)
+                            if (summary.keyPoints.isNotEmpty()) {
+                                Text("Key points: ${summary.keyPoints.joinToString()}")
+                            }
+                            if (summary.decisions.isNotEmpty()) {
+                                Text("Decisions: ${summary.decisions.joinToString()}")
+                            }
+                            if (summary.openQuestions.isNotEmpty()) {
+                                Text("Open questions: ${summary.openQuestions.joinToString()}")
+                            }
+                            Text("Evidence: ${summary.sourceMessageIds.joinToString()}")
+                            OutlinedButton(onClick = { onDeleteArtifact(summary.artifactId) }) {
+                                Text("Delete summary")
+                            }
+                        }
                     }
                 }
             }
@@ -2142,6 +2340,24 @@ private fun AiAssistantPanel(
             }
         }
     }
+}
+
+private fun parseDesktopAiSummary(artifact: LocalAiArtifact): DesktopAiSummary? {
+    if (artifact.artifactType != "SUMMARY") return null
+    return runCatching {
+        val summary = Json.parseToJsonElement(artifact.contentJson).jsonObject
+        DesktopAiSummary(
+            artifactId = artifact.artifactId,
+            overview = summary.getValue("overview").jsonPrimitive.content,
+            keyPoints = summary.getValue("keyPoints").jsonArray.map { it.jsonPrimitive.content },
+            decisions = summary.getValue("decisions").jsonArray.map { it.jsonPrimitive.content },
+            openQuestions = summary.getValue("openQuestions").jsonArray.map {
+                it.jsonPrimitive.content
+            },
+            sourceMessageIds = summary.getValue("sourceMessageIds").jsonArray.map {
+                it.jsonPrimitive.content
+            })
+    }.getOrNull()
 }
 
 private fun parseDesktopAiDrafts(contentJson: String): List<DesktopAiDraft> = runCatching {

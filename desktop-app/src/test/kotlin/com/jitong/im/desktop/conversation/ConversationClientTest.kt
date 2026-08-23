@@ -10,6 +10,7 @@ import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
 import kotlin.test.assertNull
+import kotlin.test.assertTrue
 import okhttp3.OkHttpClient
 import okhttp3.mockwebserver.MockResponse
 import okhttp3.mockwebserver.MockWebServer
@@ -20,6 +21,73 @@ import javax.imageio.ImageIO
 import java.util.UUID
 
 class ConversationClientTest {
+    @Test
+    fun private_ai_summary_and_group_policy_use_the_shared_v1_contract() {
+        val server = MockWebServer()
+        server.enqueue(
+            MockResponse().setBody(
+                """{"version":1,"jobId":"job-1","conversationId":"conversation-1","kind":"SUMMARY","status":"SUCCEEDED","errorCode":null,"result":{"overview":"Release ready","keyPoints":[],"decisions":[],"openQuestions":[],"sourceMessageIds":[]},"createdAt":"2026-08-23T00:00:00Z","expiresAt":"2026-09-22T00:00:00Z"}"""))
+        server.enqueue(
+            MockResponse().setBody(
+                """{"version":1,"conversationId":"conversation-1","enabled":true,"policyVersion":3}"""))
+        server.enqueue(
+            MockResponse().setBody(
+                """{"version":1,"conversationId":"conversation-1","enabled":false,"policyVersion":4}"""))
+        server.start()
+        try {
+            val client = ConversationClient(
+                baseUrl = server.url("/").toString(),
+                httpClient = OkHttpClient())
+
+            val summary = client.requestSummary("access", "conversation-1")
+            val policy = client.groupAiPolicy("access", "conversation-1")
+            val disabled = client.updateGroupAiPolicy("access", "conversation-1", false)
+
+            assertEquals("SUCCEEDED", summary.status)
+            assertTrue(policy.enabled)
+            assertFalse(disabled.enabled)
+            val recorded = (1..3).map { server.takeRequest() }
+            assertEquals(
+                listOf(
+                    "/api/v1/conversations/conversation-1/ai/summary",
+                    "/api/v1/groups/conversation-1/ai-policy",
+                    "/api/v1/groups/conversation-1/ai-policy"),
+                recorded.map { it.path })
+            assertEquals("POST", recorded[0].method)
+            assertTrue(recorded[0].body.readUtf8().contains("\"requestId\""))
+            assertEquals("GET", recorded[1].method)
+            assertEquals("PATCH", recorded[2].method)
+            assertEquals("{\"enabled\":false}", recorded[2].body.readUtf8())
+            recorded.forEach { assertEquals("Bearer access", it.getHeader("Authorization")) }
+        } finally {
+            server.shutdown()
+        }
+    }
+
+    @Test
+    fun requesting_private_ai_drafts_never_posts_a_conversation_message() {
+        val server = MockWebServer()
+        server.enqueue(
+            MockResponse().setBody(
+                """{"version":1,"jobId":"job-2","conversationId":"conversation-1","kind":"SMART_REPLY","status":"SUCCEEDED","errorCode":null,"result":{"replies":[{"text":"One","tone":"neutral"},{"text":"Two","tone":"warm"},{"text":"Three","tone":"brief"}]},"createdAt":"2026-08-23T00:00:00Z","expiresAt":"2026-08-23T00:10:00Z"}"""))
+        server.start()
+        try {
+            val client = ConversationClient(
+                baseUrl = server.url("/").toString(),
+                httpClient = OkHttpClient())
+
+            val drafts = client.requestSmartReplies("access", "conversation-1")
+
+            assertEquals(listOf("One", "Two", "Three"), drafts.map { it.text })
+            assertEquals(1, server.requestCount)
+            assertEquals(
+                "/api/v1/conversations/conversation-1/ai/smart-replies",
+                server.takeRequest().path)
+        } finally {
+            server.shutdown()
+        }
+    }
+
     @Test
     fun group_discovery_join_request_and_member_listing_use_the_v1_contract() {
         val server = MockWebServer()

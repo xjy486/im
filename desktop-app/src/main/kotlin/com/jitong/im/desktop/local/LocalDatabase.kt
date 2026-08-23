@@ -203,6 +203,23 @@ class LocalDatabaseManager(
                         "ALTER TABLE local_conversations ADD COLUMN IF NOT EXISTS search_visible_after_seq BIGINT NOT NULL DEFAULT 0")
                     statement.executeUpdate(
                         """
+                        CREATE TABLE IF NOT EXISTS local_ai_jobs (
+                            job_id VARCHAR(36) PRIMARY KEY,
+                            conversation_id VARCHAR(36) NOT NULL,
+                            kind VARCHAR(32) NOT NULL,
+                            status VARCHAR(16) NOT NULL,
+                            error_code VARCHAR(80),
+                            created_at VARCHAR(64) NOT NULL,
+                            expires_at VARCHAR(64) NOT NULL
+                        )
+                        """.trimIndent())
+                    statement.executeUpdate(
+                        """
+                        CREATE INDEX IF NOT EXISTS local_ai_jobs_conversation_idx
+                        ON local_ai_jobs (conversation_id, created_at)
+                        """.trimIndent())
+                    statement.executeUpdate(
+                        """
                         CREATE TABLE IF NOT EXISTS local_ai_artifacts (
                             artifact_id VARCHAR(36) PRIMARY KEY,
                             job_id VARCHAR(36) NOT NULL,
@@ -417,6 +434,77 @@ class LocalDatabase internal constructor(
                     statement.setLong(1, syncSeq)
                     statement.executeUpdate()
                 }
+        }
+    }
+
+    fun upsertAiJob(job: LocalAiJob) {
+        pool.connection.use { connection ->
+            connection.prepareStatement(
+                """
+                MERGE INTO local_ai_jobs (
+                    job_id, conversation_id, kind, status, error_code, created_at, expires_at
+                ) KEY(job_id) VALUES (?, ?, ?, ?, ?, ?, ?)
+                """.trimIndent()).use { statement ->
+                    statement.setString(1, job.jobId)
+                    statement.setString(2, job.conversationId)
+                    statement.setString(3, job.kind)
+                    statement.setString(4, job.status)
+                    statement.setString(5, job.errorCode)
+                    statement.setString(6, job.createdAt)
+                    statement.setString(7, job.expiresAt)
+                    statement.executeUpdate()
+                }
+        }
+    }
+
+    fun listAiJobs(now: String = java.time.Instant.now().toString()): List<LocalAiJob> {
+        pool.connection.use { connection ->
+            connection.prepareStatement(
+                "DELETE FROM local_ai_jobs WHERE expires_at <= ?").use { statement ->
+                    statement.setString(1, now)
+                    statement.executeUpdate()
+                }
+            connection.prepareStatement(
+                """
+                SELECT job_id, conversation_id, kind, status, error_code, created_at, expires_at
+                FROM local_ai_jobs
+                WHERE expires_at > ?
+                ORDER BY created_at DESC, job_id
+                """.trimIndent()).use { statement ->
+                    statement.setString(1, now)
+                    statement.executeQuery().use { result ->
+                        return buildList {
+                            while (result.next()) {
+                                add(LocalAiJob(
+                                    jobId = result.getString("job_id"),
+                                    conversationId = result.getString("conversation_id"),
+                                    kind = result.getString("kind"),
+                                    status = result.getString("status"),
+                                    errorCode = result.getString("error_code"),
+                                    createdAt = result.getString("created_at"),
+                                    expiresAt = result.getString("expires_at")))
+                            }
+                        }
+                    }
+                }
+        }
+    }
+
+    fun deleteAiJob(jobId: String) {
+        pool.connection.use { connection ->
+            connection.prepareStatement(
+                "DELETE FROM local_ai_jobs WHERE job_id = ?").use { statement ->
+                    statement.setString(1, jobId)
+                    statement.executeUpdate()
+                }
+        }
+    }
+
+    fun clearAiJobs() {
+        pool.connection.use { connection ->
+            connection.createStatement().use { statement ->
+                statement.executeUpdate("DELETE FROM local_ai_jobs")
+            }
         }
     }
 
@@ -1176,6 +1264,7 @@ class LocalDatabase internal constructor(
                     statement.executeUpdate("DELETE FROM local_conversations")
                     statement.executeUpdate("DELETE FROM local_read_states")
                     statement.executeUpdate("DELETE FROM local_group_profiles")
+                    statement.executeUpdate("DELETE FROM local_ai_jobs")
                     statement.executeUpdate("DELETE FROM local_ai_artifacts")
                     statement.executeUpdate("DELETE FROM local_ai_action_items")
                 }
@@ -1720,6 +1809,16 @@ data class LocalAiArtifact(
     val conversationId: String,
     val artifactType: String,
     val contentJson: String,
+    val createdAt: String,
+    val expiresAt: String,
+)
+
+data class LocalAiJob(
+    val jobId: String,
+    val conversationId: String,
+    val kind: String,
+    val status: String,
+    val errorCode: String?,
     val createdAt: String,
     val expiresAt: String,
 )

@@ -7,6 +7,7 @@ import com.jitong.im.desktop.local.LocalReadState
 import com.jitong.im.desktop.local.LocalGroupProfile
 import com.jitong.im.desktop.local.LocalAiArtifact
 import com.jitong.im.desktop.local.LocalAiActionItem
+import com.jitong.im.desktop.local.LocalAiJob
 import com.jitong.im.desktop.media.ImageNormalizer
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.encodeToString
@@ -166,6 +167,17 @@ data class DesktopGroupSummary(
 )
 
 @Serializable
+data class DesktopGroupAiPolicy(
+    val version: Int = 1,
+    val conversationId: String,
+    val enabled: Boolean,
+    val policyVersion: Long,
+)
+
+@Serializable
+data class DesktopGroupAiPolicyUpdate(val enabled: Boolean)
+
+@Serializable
 data class DesktopGroupSearchResult(
     val name: String,
     val avatarUrl: String? = null,
@@ -322,6 +334,8 @@ data class DesktopAiJob(
     val status: String,
     val errorCode: String?,
     val result: JsonElement?,
+    val createdAt: String? = null,
+    val expiresAt: String? = null,
 )
 
 @Serializable
@@ -329,6 +343,13 @@ data class DesktopAiConsentUpdate(val enabled: Boolean)
 
 @Serializable
 data class DesktopAiRequest(val requestId: String = UUID.randomUUID().toString())
+
+@Serializable
+data class DesktopAiSummaryRequest(
+    val requestId: String = UUID.randomUUID().toString(),
+    val afterSeq: Long? = null,
+    val untilSeq: Long? = null,
+)
 
 @Serializable
 data class DesktopAiExtractionRequest(
@@ -824,6 +845,19 @@ class ConversationClient(
     fun listAiActionItems(accessToken: String): List<DesktopAiActionItem> =
         requestJson(get("/api/v1/ai/action-items", accessToken))
 
+    fun groupAiPolicy(accessToken: String, conversationId: String): DesktopGroupAiPolicy =
+        requestJson(get("/api/v1/groups/$conversationId/ai-policy", accessToken))
+
+    fun updateGroupAiPolicy(
+        accessToken: String,
+        conversationId: String,
+        enabled: Boolean,
+    ): DesktopGroupAiPolicy = requestJson(
+        patch(
+            "/api/v1/groups/$conversationId/ai-policy",
+            accessToken,
+            DesktopGroupAiPolicyUpdate(enabled)))
+
     fun aiConsent(accessToken: String, conversationId: String): DesktopAiConsent =
         requestJson(get("/api/v1/conversations/$conversationId/ai/consent", accessToken))
 
@@ -837,14 +871,34 @@ class ConversationClient(
             accessToken,
             DesktopAiConsentUpdate(enabled)))
 
-    fun requestSmartReplies(accessToken: String, conversationId: String): List<DesktopAiDraft> {
+    fun requestSummary(
+        accessToken: String,
+        conversationId: String,
+        afterSeq: Long? = null,
+        untilSeq: Long? = null,
+        onJobUpdate: (DesktopAiJob) -> Unit = {},
+    ): DesktopAiJob = awaitAiJob(
+        accessToken,
+        requestJson(
+            post(
+                "/api/v1/conversations/$conversationId/ai/summary",
+                accessToken,
+                DesktopAiSummaryRequest(afterSeq = afterSeq, untilSeq = untilSeq))),
+        onJobUpdate)
+
+    fun requestSmartReplies(
+        accessToken: String,
+        conversationId: String,
+        onJobUpdate: (DesktopAiJob) -> Unit = {},
+    ): List<DesktopAiDraft> {
         val completed = awaitAiJob(
             accessToken,
             requestJson(
                 post(
                     "/api/v1/conversations/$conversationId/ai/smart-replies",
                     accessToken,
-                    DesktopAiRequest())))
+                    DesktopAiRequest())),
+            onJobUpdate)
         return completed.result?.jsonObject?.get("replies")?.jsonArray?.map { value ->
             val draft = value.jsonObject
             DesktopAiDraft(
@@ -857,6 +911,7 @@ class ConversationClient(
         accessToken: String,
         conversationId: String,
         messageIds: List<String>,
+        onJobUpdate: (DesktopAiJob) -> Unit = {},
     ): DesktopAiJob {
         require(messageIds.isNotEmpty() && messageIds.size <= 200)
         return awaitAiJob(
@@ -865,7 +920,12 @@ class ConversationClient(
                 post(
                     "/api/v1/conversations/$conversationId/ai/extract",
                     accessToken,
-                    DesktopAiExtractionRequest(messageIds = messageIds))))
+                    DesktopAiExtractionRequest(messageIds = messageIds))),
+            onJobUpdate)
+    }
+
+    fun deleteAiJob(accessToken: String, jobId: String) {
+        execute(requestWithoutBody("/api/v1/ai/jobs/$jobId", accessToken, "DELETE"))
     }
 
     fun deleteAiArtifact(accessToken: String, artifactId: String) {
@@ -900,9 +960,37 @@ class ConversationClient(
         local: LocalDatabase,
         events: List<DesktopSyncEvent>,
     ) {
-        if (events.any { it.eventType.startsWith("AI_") }) {
-            refreshAiData(accessToken, local)
-        }
+        val aiEvents = events.filter { it.eventType.startsWith("AI_") }
+        aiEvents
+            .filter { it.eventType == "AI_JOB_DELETED" }
+            .forEach { local.deleteAiJob(it.entityId) }
+        aiEvents
+            .filter {
+                it.eventType == "AI_JOB_QUEUED"
+                    || it.eventType == "AI_JOB_STARTED"
+                    || it.eventType == "AI_JOB_COMPLETED"
+                    || it.eventType == "AI_JOB_FAILED"
+            }
+            .map { it.entityId }
+            .distinct()
+            .forEach { jobId ->
+                try {
+                    applyAiJob(
+                        local,
+                        requestJson(get("/api/v1/ai/jobs/$jobId", accessToken)))
+                } catch (exception: ConversationApiException) {
+                    if (exception.statusCode == 404) {
+                        local.deleteAiJob(jobId)
+                    } else {
+                        throw exception
+                    }
+                }
+            }
+        if (aiEvents.isNotEmpty()) refreshAiData(accessToken, local)
+    }
+
+    fun applyAiJob(local: LocalDatabase, job: DesktopAiJob) {
+        local.upsertAiJob(job.toLocal())
     }
 
     private fun DesktopAiArtifact.toLocal() = LocalAiArtifact(
@@ -932,9 +1020,24 @@ class ConversationClient(
         completedAt = completedAt,
     )
 
-    private fun awaitAiJob(accessToken: String, initial: DesktopAiJob): DesktopAiJob {
+    private fun DesktopAiJob.toLocal() = LocalAiJob(
+        jobId = jobId,
+        conversationId = conversationId,
+        kind = kind,
+        status = status,
+        errorCode = errorCode,
+        createdAt = createdAt ?: "1970-01-01T00:00:00Z",
+        expiresAt = expiresAt ?: "9999-12-31T23:59:59Z",
+    )
+
+    private fun awaitAiJob(
+        accessToken: String,
+        initial: DesktopAiJob,
+        onJobUpdate: (DesktopAiJob) -> Unit,
+    ): DesktopAiJob {
         var current = initial
         repeat(120) {
+            onJobUpdate(current)
             if (current.status == "SUCCEEDED") return current
             if (current.status in setOf("FAILED", "CANCELLED", "EXPIRED")) {
                 throw IllegalStateException(current.errorCode ?: "AI request failed")
