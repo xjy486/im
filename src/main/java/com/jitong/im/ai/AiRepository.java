@@ -37,6 +37,9 @@ class AiRepository {
                         FROM c2c_conversations cc
                         JOIN conversations c
                           ON c.id = cc.conversation_id
+                        JOIN users owner_user
+                          ON owner_user.id = :userId
+                         AND owner_user.status = 'ACTIVE'
                         JOIN contacts contact
                           ON contact.user_low_id = cc.user_low_id
                          AND contact.user_high_id = cc.user_high_id
@@ -91,6 +94,9 @@ class AiRepository {
                         FROM c2c_conversations cc
                         JOIN conversations c
                           ON c.id = cc.conversation_id
+                        JOIN users owner_user
+                          ON owner_user.id = :userId
+                         AND owner_user.status = 'ACTIVE'
                         JOIN contacts contact
                           ON contact.user_low_id = cc.user_low_id
                          AND contact.user_high_id = cc.user_high_id
@@ -305,7 +311,6 @@ class AiRepository {
             long fromSeq,
             long toSeq,
             String contextDigest,
-            String contextJson,
             long policyVersion,
             String cacheKey,
             LocalDate budgetDate,
@@ -326,7 +331,7 @@ class AiRepository {
                         ) VALUES (
                             :id, :ownerUserId, :requestingDeviceId, :conversationId,
                             :requestId, 'SUMMARY', 'SUCCEEDED', :fromSeq, :toSeq,
-                            :contextDigest, CAST(:contextJson AS jsonb), :policyVersion,
+                            :contextDigest, NULL, :policyVersion,
                             :cacheKey, :budgetDate, 0,
                             :model, :promptVersion, CAST(:resultJson AS jsonb),
                             :finishedAt, :finishedAt, :expiresAt
@@ -340,7 +345,6 @@ class AiRepository {
                 .param("fromSeq", fromSeq)
                 .param("toSeq", toSeq)
                 .param("contextDigest", contextDigest)
-                .param("contextJson", contextJson)
                 .param("policyVersion", policyVersion)
                 .param("cacheKey", cacheKey)
                 .param("budgetDate", budgetDate)
@@ -503,7 +507,21 @@ class AiRepository {
                 .list();
     }
 
-    int requeue(UUID jobId, UUID ownerUserId) {
+    List<AiJobRecord> findStaleRunningJobsForUpdate(Instant cutoff, int limit) {
+        return jdbc.sql(selectJobSql() + """
+                         WHERE status = 'RUNNING'
+                           AND started_at <= :cutoff
+                         ORDER BY started_at, id
+                         FOR UPDATE SKIP LOCKED
+                         LIMIT :limit
+                        """)
+                .param("cutoff", utc(cutoff), Types.TIMESTAMP_WITH_TIMEZONE)
+                .param("limit", limit)
+                .query(this::mapJob)
+                .list();
+    }
+
+    int requeue(UUID jobId, UUID ownerUserId, int expectedAttemptCount) {
         return jdbc.sql("""
                         UPDATE ai_jobs
                         SET status = 'QUEUED',
@@ -513,9 +531,11 @@ class AiRepository {
                           AND owner_user_id = :ownerUserId
                           AND status = 'RUNNING'
                           AND attempt_count < 2
+                          AND attempt_count = :expectedAttemptCount
                         """)
                 .param("jobId", jobId)
                 .param("ownerUserId", ownerUserId)
+                .param("expectedAttemptCount", expectedAttemptCount)
                 .update();
     }
 
@@ -525,6 +545,7 @@ class AiRepository {
             String resultJson,
             int inputTokens,
             int outputTokens,
+            int expectedAttemptCount,
             Instant finishedAt,
             Instant expiresAt
     ) {
@@ -536,17 +557,20 @@ class AiRepository {
                             reserved_tokens = 0,
                             input_tokens = :inputTokens,
                             output_tokens = :outputTokens,
+                            context_json = NULL,
                             finished_at = :finishedAt,
                             expires_at = :expiresAt
                         WHERE id = :jobId
                           AND owner_user_id = :ownerUserId
                           AND status = 'RUNNING'
+                          AND attempt_count = :expectedAttemptCount
                         """)
                 .param("jobId", jobId)
                 .param("ownerUserId", ownerUserId)
                 .param("resultJson", resultJson)
                 .param("inputTokens", inputTokens)
                 .param("outputTokens", outputTokens)
+                .param("expectedAttemptCount", expectedAttemptCount)
                 .param("finishedAt", utc(finishedAt), Types.TIMESTAMP_WITH_TIMEZONE)
                 .param("expiresAt", utc(expiresAt), Types.TIMESTAMP_WITH_TIMEZONE)
                 .update();
@@ -622,26 +646,41 @@ class AiRepository {
         return 1;
     }
 
-    int fail(UUID jobId, UUID ownerUserId, String errorCode, Instant finishedAt) {
+    int fail(
+            UUID jobId,
+            UUID ownerUserId,
+            int expectedAttemptCount,
+            String errorCode,
+            Instant finishedAt
+    ) {
         return jdbc.sql("""
                         UPDATE ai_jobs
                         SET status = 'FAILED',
                             result_json = NULL,
+                            context_json = NULL,
                             error_code = :errorCode,
                             reserved_tokens = 0,
                             finished_at = :finishedAt
                         WHERE id = :jobId
                           AND owner_user_id = :ownerUserId
                           AND status = 'RUNNING'
+                          AND attempt_count = :expectedAttemptCount
                         """)
                 .param("jobId", jobId)
                 .param("ownerUserId", ownerUserId)
+                .param("expectedAttemptCount", expectedAttemptCount)
                 .param("errorCode", errorCode)
                 .param("finishedAt", utc(finishedAt), Types.TIMESTAMP_WITH_TIMEZONE)
                 .update();
     }
 
-    int expire(UUID jobId, UUID ownerUserId, String errorCode, Instant finishedAt) {
+    int expire(
+            UUID jobId,
+            UUID ownerUserId,
+            int expectedAttemptCount,
+            String errorCode,
+            Instant finishedAt
+    ) {
         return jdbc.sql("""
                         UPDATE ai_jobs
                         SET status = 'EXPIRED',
@@ -653,9 +692,11 @@ class AiRepository {
                         WHERE id = :jobId
                           AND owner_user_id = :ownerUserId
                           AND status IN ('QUEUED', 'RUNNING')
+                          AND attempt_count = :expectedAttemptCount
                         """)
                 .param("jobId", jobId)
                 .param("ownerUserId", ownerUserId)
+                .param("expectedAttemptCount", expectedAttemptCount)
                 .param("errorCode", errorCode)
                 .param("finishedAt", utc(finishedAt), Types.TIMESTAMP_WITH_TIMEZONE)
                 .update();
@@ -682,6 +723,52 @@ class AiRepository {
                         """)
                 .param("now", utc(now), Types.TIMESTAMP_WITH_TIMEZONE)
                 .param("expiredMetadataCutoff", utc(expiredMetadataCutoff), Types.TIMESTAMP_WITH_TIMEZONE)
+                .update();
+    }
+
+    void eraseForRetirement(UUID ownerUserId) {
+        jdbc.sql("""
+                        UPDATE conversation_ai_settings
+                        SET enabled = FALSE,
+                            policy_version = policy_version + 1,
+                            updated_at = CURRENT_TIMESTAMP
+                        WHERE conversation_id IN (
+                            SELECT conversation_id
+                            FROM conversation_ai_consents
+                            WHERE user_id = :ownerUserId
+                        )
+                        """)
+                .param("ownerUserId", ownerUserId)
+                .update();
+        jdbc.sql("DELETE FROM conversation_ai_consents WHERE user_id = :ownerUserId")
+                .param("ownerUserId", ownerUserId)
+                .update();
+        jdbc.sql("""
+                        DELETE FROM outbox
+                        WHERE event_type LIKE 'AI_%'
+                          AND target_device_id IN (
+                              SELECT id FROM devices WHERE user_id = :ownerUserId
+                          )
+                        """)
+                .param("ownerUserId", ownerUserId)
+                .update();
+        jdbc.sql("""
+                        DELETE FROM user_sync_events
+                        WHERE user_id = :ownerUserId AND event_type LIKE 'AI_%'
+                        """)
+                .param("ownerUserId", ownerUserId)
+                .update();
+        jdbc.sql("DELETE FROM ai_artifacts WHERE owner_user_id = :ownerUserId")
+                .param("ownerUserId", ownerUserId)
+                .update();
+        jdbc.sql("DELETE FROM ai_cache_entries WHERE owner_user_id = :ownerUserId")
+                .param("ownerUserId", ownerUserId)
+                .update();
+        jdbc.sql("DELETE FROM ai_jobs WHERE owner_user_id = :ownerUserId")
+                .param("ownerUserId", ownerUserId)
+                .update();
+        jdbc.sql("DELETE FROM ai_daily_budgets WHERE owner_user_id = :ownerUserId")
+                .param("ownerUserId", ownerUserId)
                 .update();
     }
 

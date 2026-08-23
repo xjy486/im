@@ -56,5 +56,38 @@ class OpenAiCompatibleAiProviderTest {
         assertThat(result.summary().sourceMessageIds()).containsExactly(messageId);
         assertThat(result.inputTokens()).isEqualTo(37);
         assertThat(result.outputTokens()).isEqualTo(5);
+        assertThat(result.usageReported()).isTrue();
+    }
+
+    @Test
+    void marks_missing_provider_usage_for_conservative_budget_settlement() {
+        UUID messageId = UUID.randomUUID();
+        ChatModel chatModel = mock(ChatModel.class);
+        when(chatModel.call(any(Prompt.class))).thenReturn(new ChatResponse(List.of(
+                new Generation(new AssistantMessage("""
+                        {
+                          "overview": "A concise overview",
+                          "keyPoints": [],
+                          "decisions": [],
+                          "openQuestions": [],
+                          "sourceMessageIds": ["%s"]
+                        }
+                        """.formatted(messageId))))));
+        AiProperties properties = new AiProperties(
+                "summary-v1",
+                new AiProperties.Provider(true, "http://provider.test/v1", "secret", "test-model"),
+                new AiProperties.Worker(250),
+                null);
+        OpenAiCompatibleAiProvider provider = new OpenAiCompatibleAiProvider(
+                properties,
+                new ObjectMapper().findAndRegisterModules(),
+                chatModel);
+
+        AiProviderResult result = provider.summarize(new AiSummaryContext(
+                UUID.randomUUID(),
+                List.of(new AiContextMessage(messageId, 1, UUID.randomUUID(), "hello"))));
+
+        assertThat(result.usageReported()).isFalse();
+        assertThat(result.totalTokens()).isZero();
     }
 }

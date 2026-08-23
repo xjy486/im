@@ -46,12 +46,16 @@ class AiJobLifecycle {
                 resultJson,
                 providerResult.inputTokens(),
                 providerResult.outputTokens(),
+                job.attemptCount(),
                 finishedAt,
                 expiresAt);
         if (updated == 0) {
             return;
         }
-        repository.settleSucceededBudget(job, providerResult.totalTokens());
+        long tokensToSettle = providerResult.usageReported()
+                ? providerResult.totalTokens()
+                : job.reservedTokens();
+        repository.settleSucceededBudget(job, tokensToSettle);
         repository.createCacheEntry(job, resultJson, expiresAt);
         repository.createArtifact(job.jobId(), job.ownerUserId(), resultJson, expiresAt);
         syncService.recordEventForUsers(
@@ -63,12 +67,17 @@ class AiJobLifecycle {
 
     @Transactional
     void retry(AiJobRecord job) {
-        repository.requeue(job.jobId(), job.ownerUserId());
+        repository.requeue(job.jobId(), job.ownerUserId(), job.attemptCount());
     }
 
     @Transactional
     void fail(AiJobRecord job, String errorCode, Instant finishedAt) {
-        if (repository.fail(job.jobId(), job.ownerUserId(), errorCode, finishedAt) == 0) {
+        if (repository.fail(
+                job.jobId(),
+                job.ownerUserId(),
+                job.attemptCount(),
+                errorCode,
+                finishedAt) == 0) {
             return;
         }
         repository.releaseBudget(job);
@@ -84,6 +93,7 @@ class AiJobLifecycle {
         if (repository.expire(
                 job.jobId(),
                 job.ownerUserId(),
+                job.attemptCount(),
                 ApiErrorDefinition.AI_EXPIRED.code(),
                 finishedAt) == 0) {
             return;

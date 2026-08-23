@@ -75,10 +75,17 @@ class OpenAiCompatibleAiProvider implements AiProvider {
             AiSummary summary = outputConverter.convert(content);
             AiSummaryValidator.validate(summary, context);
             Usage usage = response.getMetadata() == null ? null : response.getMetadata().getUsage();
+            int inputTokens = tokenCount(usage == null ? null : usage.getPromptTokens());
+            int outputTokens = tokenCount(usage == null ? null : usage.getCompletionTokens());
+            boolean usageReported = usage != null
+                    && usage.getPromptTokens() != null
+                    && usage.getCompletionTokens() != null
+                    && (inputTokens > 0 || outputTokens > 0);
             return new AiProviderResult(
                     summary,
-                    tokenCount(usage == null ? null : usage.getPromptTokens()),
-                    tokenCount(usage == null ? null : usage.getCompletionTokens()));
+                    inputTokens,
+                    outputTokens,
+                    usageReported);
         } catch (AiProviderException exception) {
             throw exception;
         } catch (RuntimeException exception) {

@@ -31,6 +31,7 @@ import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicInteger;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
@@ -503,6 +504,50 @@ class AiSummaryContractTest extends ContractTestEnvironment {
     }
 
     @Test
+    void successful_job_without_provider_usage_conservatively_consumes_its_reservation() throws Exception {
+        TestUser alice = createUser("Unknown Usage Alice");
+        TestUser bob = createUser("Unknown Usage Bob");
+        String aliceToken = login(alice.accountNo(), "unknown-usage-alice", "PC");
+        String bobToken = login(bob.accountNo(), "unknown-usage-bob", "MOBILE");
+        UUID conversationId = acceptContact(aliceToken, bob, bobToken);
+        enableAi(aliceToken, bobToken, conversationId);
+        post(
+                "/api/v1/conversations/" + conversationId + "/messages",
+                bobToken,
+                Map.of("clientMsgId", UUID.randomUUID(), "text", "Settle conservatively without usage."));
+        CountDownLatch providerStarted = new CountDownLatch(1);
+        CountDownLatch releaseProvider = new CountDownLatch(1);
+        when(provider.summarize(any(AiSummaryContext.class))).thenAnswer(invocation -> {
+            AiSummaryContext context = invocation.getArgument(0);
+            providerStarted.countDown();
+            if (!releaseProvider.await(5, TimeUnit.SECONDS)) {
+                throw new AssertionError("provider was not released");
+            }
+            return new AiProviderResult(new AiSummary(
+                    "Conservatively settled summary.",
+                    List.of(),
+                    List.of(),
+                    List.of(),
+                    context.messages().stream().map(AiContextMessage::messageId).toList()), 0, 0, false);
+        });
+
+        JsonNode queued = requestSummary(aliceToken, conversationId).getBody();
+        UUID jobId = UUID.fromString(queued.get("jobId").asText());
+        long reservation;
+        try {
+            assertThat(providerStarted.await(5, TimeUnit.SECONDS)).isTrue();
+            reservation = budgetFor(alice.userId()).get("reserved");
+        } finally {
+            releaseProvider.countDown();
+        }
+        awaitJob(aliceToken, jobId);
+
+        Map<String, Long> budget = budgetFor(alice.userId());
+        assertThat(budget.get("reserved")).isZero();
+        assertThat(budget.get("used")).isEqualTo(reservation);
+    }
+
+    @Test
     void failed_job_releases_its_entire_reservation_without_recording_usage() {
         TestUser alice = createUser("Failure Budget Alice");
         TestUser bob = createUser("Failure Budget Bob");
@@ -523,6 +568,120 @@ class AiSummaryContractTest extends ContractTestEnvironment {
         Map<String, Long> budget = budgetFor(alice.userId());
         assertThat(budget.get("reserved")).isZero();
         assertThat(budget.get("used")).isZero();
+        assertThat(jdbc.sql("SELECT context_json IS NULL FROM ai_jobs WHERE id = :jobId")
+                .param("jobId", UUID.fromString(queued.get("jobId").asText()))
+                .query(Boolean.class)
+                .single()).isTrue();
+    }
+
+    @Test
+    void stale_running_job_is_fenced_requeued_once_and_does_not_block_the_owner() throws Exception {
+        TestUser alice = createUser("Lease Alice");
+        TestUser bob = createUser("Lease Bob");
+        String aliceToken = login(alice.accountNo(), "lease-alice", "PC");
+        String bobToken = login(bob.accountNo(), "lease-bob", "MOBILE");
+        UUID conversationId = acceptContact(aliceToken, bob, bobToken);
+        enableAi(aliceToken, bobToken, conversationId);
+        post(
+                "/api/v1/conversations/" + conversationId + "/messages",
+                bobToken,
+                Map.of("clientMsgId", UUID.randomUUID(), "text", "Recover this stale worker claim."));
+
+        AtomicInteger calls = new AtomicInteger();
+        CountDownLatch firstCallStarted = new CountDownLatch(1);
+        CountDownLatch releaseFirstCall = new CountDownLatch(1);
+        when(provider.summarize(any(AiSummaryContext.class))).thenAnswer(invocation -> {
+            AiSummaryContext context = invocation.getArgument(0);
+            if (context.conversationId().equals(conversationId) && calls.incrementAndGet() == 1) {
+                firstCallStarted.countDown();
+                if (!releaseFirstCall.await(5, TimeUnit.SECONDS)) {
+                    throw new AssertionError("stale provider call was not released");
+                }
+            }
+            return withUsage(new AiSummary(
+                    "Recovered summary.",
+                    List.of(),
+                    List.of(),
+                    List.of(),
+                    context.messages().stream().map(AiContextMessage::messageId).toList()));
+        });
+
+        JsonNode queued = requestSummary(aliceToken, conversationId).getBody();
+        UUID jobId = UUID.fromString(queued.get("jobId").asText());
+        try {
+            assertThat(firstCallStarted.await(5, TimeUnit.SECONDS)).isTrue();
+            jdbc.sql("UPDATE ai_jobs SET started_at = CURRENT_TIMESTAMP - INTERVAL '10 minutes' WHERE id = :jobId")
+                    .param("jobId", jobId)
+                    .update();
+            org.awaitility.Awaitility.await()
+                    .atMost(java.time.Duration.ofSeconds(5))
+                    .untilAsserted(() -> assertThat(jdbc.sql("SELECT status FROM ai_jobs WHERE id = :jobId")
+                            .param("jobId", jobId)
+                            .query(String.class)
+                            .single()).isEqualTo("QUEUED"));
+        } finally {
+            releaseFirstCall.countDown();
+        }
+
+        awaitJob(aliceToken, jobId);
+        assertThat(jdbc.sql("SELECT attempt_count FROM ai_jobs WHERE id = :jobId")
+                .param("jobId", jobId)
+                .query(Integer.class)
+                .single()).isEqualTo(2);
+        assertThat(calls).hasValue(2);
+        Map<String, Long> budget = budgetFor(alice.userId());
+        assertThat(budget.get("reserved")).isZero();
+        assertThat(budget.get("used")).isEqualTo(42);
+    }
+
+    @Test
+    void retiring_an_account_cancels_writeback_and_erases_all_owner_linked_ai_data() throws Exception {
+        TestUser alice = createUser("Retirement AI Alice");
+        TestUser bob = createUser("Retirement AI Bob");
+        String aliceToken = login(alice.accountNo(), "retirement-ai-alice", "PC");
+        String bobToken = login(bob.accountNo(), "retirement-ai-bob", "MOBILE");
+        UUID conversationId = acceptContact(aliceToken, bob, bobToken);
+        enableAi(aliceToken, bobToken, conversationId);
+        post(
+                "/api/v1/conversations/" + conversationId + "/messages",
+                bobToken,
+                Map.of("clientMsgId", UUID.randomUUID(), "text", "Erase this AI work on retirement."));
+
+        CountDownLatch providerStarted = new CountDownLatch(1);
+        CountDownLatch releaseProvider = new CountDownLatch(1);
+        when(provider.summarize(any(AiSummaryContext.class))).thenAnswer(invocation -> {
+            AiSummaryContext context = invocation.getArgument(0);
+            providerStarted.countDown();
+            if (!releaseProvider.await(5, TimeUnit.SECONDS)) {
+                throw new AssertionError("provider was not released");
+            }
+            return withUsage(new AiSummary(
+                    "Retired summary.",
+                    List.of(),
+                    List.of(),
+                    List.of(),
+                    context.messages().stream().map(AiContextMessage::messageId).toList()));
+        });
+
+        requestSummary(aliceToken, conversationId);
+        try {
+            assertThat(providerStarted.await(5, TimeUnit.SECONDS)).isTrue();
+            HttpHeaders headers = jsonHeaders();
+            headers.set("X-Admin-Api-Key", ContractDependencies.ADMIN_API_KEY);
+            assertThat(http.exchange(
+                    "/api/v1/admin/users/" + alice.userId() + "/retire",
+                    HttpMethod.POST,
+                    new HttpEntity<>(null, headers),
+                    Void.class).getStatusCode()).isEqualTo(HttpStatus.NO_CONTENT);
+
+            assertOwnerAiDataErased(alice.userId());
+        } finally {
+            releaseProvider.countDown();
+        }
+
+        org.awaitility.Awaitility.await()
+                .atMost(java.time.Duration.ofSeconds(2))
+                .untilAsserted(() -> assertOwnerAiDataErased(alice.userId()));
     }
 
     @Test
@@ -693,6 +852,37 @@ class AiSummaryContractTest extends ContractTestEnvironment {
 
     private void awaitJob(String token, UUID jobId) {
         awaitStatus(token, jobId, "SUCCEEDED");
+    }
+
+    private void assertOwnerAiDataErased(UUID ownerUserId) {
+        assertThat(jdbc.sql("SELECT COUNT(*) FROM ai_jobs WHERE owner_user_id = :ownerUserId")
+                .param("ownerUserId", ownerUserId)
+                .query(Long.class)
+                .single()).isZero();
+        assertThat(jdbc.sql("SELECT COUNT(*) FROM ai_artifacts WHERE owner_user_id = :ownerUserId")
+                .param("ownerUserId", ownerUserId)
+                .query(Long.class)
+                .single()).isZero();
+        assertThat(jdbc.sql("SELECT COUNT(*) FROM ai_cache_entries WHERE owner_user_id = :ownerUserId")
+                .param("ownerUserId", ownerUserId)
+                .query(Long.class)
+                .single()).isZero();
+        assertThat(jdbc.sql("SELECT COUNT(*) FROM ai_daily_budgets WHERE owner_user_id = :ownerUserId")
+                .param("ownerUserId", ownerUserId)
+                .query(Long.class)
+                .single()).isZero();
+        assertThat(jdbc.sql("SELECT COUNT(*) FROM conversation_ai_consents WHERE user_id = :ownerUserId")
+                .param("ownerUserId", ownerUserId)
+                .query(Long.class)
+                .single()).isZero();
+        assertThat(jdbc.sql("""
+                        SELECT COUNT(*)
+                        FROM user_sync_events
+                        WHERE user_id = :ownerUserId AND event_type LIKE 'AI_%'
+                        """)
+                .param("ownerUserId", ownerUserId)
+                .query(Long.class)
+                .single()).isZero();
     }
 
     private void awaitStatus(String token, UUID jobId, String expectedStatus) {

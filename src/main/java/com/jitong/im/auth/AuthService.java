@@ -25,6 +25,7 @@ public class AuthService {
     private final AuthProperties properties;
     private final LoginRateLimiter rateLimiter;
     private final SecurityAuditSink auditSink;
+    private final PrivateAiDataEraser privateAiDataEraser;
     private final Clock clock;
 
     @Autowired
@@ -34,7 +35,8 @@ public class AuthService {
             PublicNumberGenerator publicNumberGenerator,
             AuthProperties properties,
             LoginRateLimiter rateLimiter,
-            SecurityAuditSink auditSink
+            SecurityAuditSink auditSink,
+            PrivateAiDataEraser privateAiDataEraser
     ) {
         this(
                 repository,
@@ -43,6 +45,7 @@ public class AuthService {
                 properties,
                 rateLimiter,
                 auditSink,
+                privateAiDataEraser,
                 Clock.systemUTC());
     }
 
@@ -53,6 +56,7 @@ public class AuthService {
             AuthProperties properties,
             LoginRateLimiter rateLimiter,
             SecurityAuditSink auditSink,
+            PrivateAiDataEraser privateAiDataEraser,
             Clock clock
     ) {
         this.repository = repository;
@@ -61,6 +65,7 @@ public class AuthService {
         this.properties = properties;
         this.rateLimiter = rateLimiter;
         this.auditSink = auditSink;
+        this.privateAiDataEraser = privateAiDataEraser;
         this.clock = clock;
     }
 
@@ -309,6 +314,7 @@ public class AuthService {
             recordRetirement(userId, requestId, AuditOutcome.REJECTED, error);
             throw new UserRetirementException(result);
         }
+        privateAiDataEraser.eraseForRetirement(userId);
         recordRetirement(userId, requestId, AuditOutcome.SUCCEEDED, null);
     }
 

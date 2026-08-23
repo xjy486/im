@@ -35,6 +35,7 @@ public enum ApiErrorDefinition {
     AI_BUSY(HttpStatus.TOO_MANY_REQUESTS, "The user's private AI queue is full"),
     AI_NOT_FOUND(HttpStatus.NOT_FOUND, "The private AI resource was not found"),
     AI_EXPIRED(HttpStatus.GONE, "The private AI job expired before it completed"),
+    AI_WORKER_LEASE_EXPIRED(HttpStatus.SERVICE_UNAVAILABLE, "The private AI worker lease expired"),
     AI_CONTEXT_CHANGED(HttpStatus.CONFLICT, "The authorized AI context changed before the result was saved"),
     AI_PROVIDER_UNAVAILABLE(HttpStatus.SERVICE_UNAVAILABLE, "The AI provider is unavailable"),
     AI_INVALID_RESULT(HttpStatus.BAD_GATEWAY, "The AI provider returned an invalid structured result"),

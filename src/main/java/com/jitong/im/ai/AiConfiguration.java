@@ -9,7 +9,11 @@ import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.boot.context.properties.EnableConfigurationProperties;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
+import org.springframework.http.client.JdkClientHttpRequestFactory;
+import org.springframework.web.client.RestClient;
 import org.springframework.retry.support.RetryTemplate;
+
+import java.net.http.HttpClient;
 
 @Configuration(proxyBeanMethods = false)
 @EnableConfigurationProperties(AiProperties.class)
@@ -26,9 +30,15 @@ class AiConfiguration {
             name = "enabled",
             havingValue = "true")
     OpenAiApi aiOpenAiApi(AiProperties properties) {
+        HttpClient httpClient = HttpClient.newBuilder()
+                .connectTimeout(properties.provider().requestTimeout())
+                .build();
+        JdkClientHttpRequestFactory requestFactory = new JdkClientHttpRequestFactory(httpClient);
+        requestFactory.setReadTimeout(properties.provider().requestTimeout());
         return OpenAiApi.builder()
                 .baseUrl(normalizeBaseUrl(properties.provider().baseUrl()))
                 .apiKey(properties.provider().apiKey())
+                .restClientBuilder(RestClient.builder().requestFactory(requestFactory))
                 .build();
     }
 

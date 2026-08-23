@@ -160,7 +160,6 @@ public class AiService {
                     fromSeq,
                     toSeq,
                     contextDigest,
-                    contextJson,
                     conversation.policyVersion(),
                     cacheKey,
                     budgetDate,

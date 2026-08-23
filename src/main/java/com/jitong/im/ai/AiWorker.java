@@ -70,7 +70,8 @@ class AiWorker {
                     objectMapper.getTypeFactory().constructCollectionType(List.class, AiContextMessage.class));
             AiSummaryContext context = new AiSummaryContext(job.conversationId(), messages);
             providerResult = provider.summarize(context);
-            if (providerResult.totalTokens() > job.reservedTokens()) {
+            if (providerResult.usageReported()
+                    && providerResult.totalTokens() > job.reservedTokens()) {
                 throw new AiProviderException(
                         "AI_PROVIDER_USAGE_EXCEEDED",
                         "The AI provider reported more tokens than were reserved");

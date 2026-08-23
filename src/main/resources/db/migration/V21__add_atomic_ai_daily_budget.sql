@@ -20,6 +20,17 @@ WHERE budget_date IS NULL;
 ALTER TABLE ai_jobs
     ALTER COLUMN budget_date SET NOT NULL;
 
+-- V20 jobs were accepted without an atomic reservation. They cannot safely be
+-- admitted into the new worker, so terminalize them instead of leaving them
+-- permanently QUEUED or allowing an unbudgeted RUNNING writeback.
+UPDATE ai_jobs
+SET status = 'CANCELLED',
+    result_json = NULL,
+    error_code = 'AI_UPGRADE_CANCELLED',
+    finished_at = CURRENT_TIMESTAMP,
+    reserved_tokens = 0
+WHERE status IN ('QUEUED', 'RUNNING');
+
 CREATE INDEX ai_jobs_owner_budget_idx
     ON ai_jobs (owner_user_id, budget_date)
     WHERE reserved_tokens > 0;
