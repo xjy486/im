@@ -29,16 +29,6 @@ internal data class DesktopAiSummaryRange(
         afterSeq = maxOf(afterSeq, minOf(sequence, untilSeq)))
 }
 
-internal data class DesktopAiPresentationPolicy(
-    val canRequestNewContent: Boolean,
-    val canManageExistingContent: Boolean,
-)
-
-internal fun desktopAiPresentationPolicy(aiEnabled: Boolean) =
-    DesktopAiPresentationPolicy(
-        canRequestNewContent = aiEnabled,
-        canManageExistingContent = true)
-
 internal fun LocalMessage.isEligibleForAiEvidence(): Boolean =
     state == "ACTIVE"
         && localState != "SENDING"

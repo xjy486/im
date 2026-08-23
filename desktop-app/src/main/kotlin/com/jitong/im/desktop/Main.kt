@@ -2203,7 +2203,6 @@ private fun AiAssistantPanel(
     } else {
         consent?.enabledForBoth == true
     }
-    val presentationPolicy = desktopAiPresentationPolicy(aiEnabled)
     val policyLoaded = if (conversationKind == "GROUP") groupPolicy != null else consent != null
     val canManagePolicy = conversationKind == "C2C" || conversationRole == "OWNER"
     val summaries = artifacts.mapNotNull(::parseDesktopAiSummary)
@@ -2251,7 +2250,7 @@ private fun AiAssistantPanel(
             if (loading) {
                 item { Text("AI task queued or running…") }
             }
-            if (presentationPolicy.canRequestNewContent) {
+            if (aiEnabled) {
                 item {
                     Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                         Button(
@@ -2269,24 +2268,22 @@ private fun AiAssistantPanel(
                     }
                 }
             }
-            if (presentationPolicy.canManageExistingContent) {
-                items(drafts.size) { index ->
-                    val reply = drafts[index]
-                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        OutlinedTextField(
-                            modifier = Modifier.weight(1f),
-                            value = reply.text,
-                            onValueChange = { onEditDraft(index, it) },
-                            label = { Text("Reply ${index + 1} · ${reply.tone}") },
-                            singleLine = true)
-                        Button(onClick = { onUseDraft(reply.text) }) { Text("Copy to composer") }
-                    }
+            items(drafts.size) { index ->
+                val reply = drafts[index]
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    OutlinedTextField(
+                        modifier = Modifier.weight(1f),
+                        value = reply.text,
+                        onValueChange = { onEditDraft(index, it) },
+                        label = { Text("Reply ${index + 1} · ${reply.tone}") },
+                        singleLine = true)
+                    Button(onClick = { onUseDraft(reply.text) }) { Text("Copy to composer") }
                 }
-                if (drafts.isNotEmpty() && draftArtifactId != null) {
-                    item {
-                        OutlinedButton(onClick = { onDeleteArtifact(draftArtifactId) }) {
-                            Text("Delete reply drafts")
-                        }
+            }
+            if (drafts.isNotEmpty() && draftArtifactId != null) {
+                item {
+                    OutlinedButton(onClick = { onDeleteArtifact(draftArtifactId) }) {
+                        Text("Delete reply drafts")
                     }
                 }
             }

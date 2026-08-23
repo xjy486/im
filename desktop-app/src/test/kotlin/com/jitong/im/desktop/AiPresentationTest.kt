@@ -49,17 +49,6 @@ class AiPresentationTest {
         assertTrue(completedAfterAnotherArrival.canRequest)
     }
 
-    @Test
-    fun disabling_ai_blocks_new_requests_but_keeps_existing_results_manageable() {
-        val disabled = desktopAiPresentationPolicy(aiEnabled = false)
-        val enabled = desktopAiPresentationPolicy(aiEnabled = true)
-
-        assertFalse(disabled.canRequestNewContent)
-        assertTrue(disabled.canManageExistingContent)
-        assertTrue(enabled.canRequestNewContent)
-        assertTrue(enabled.canManageExistingContent)
-    }
-
     private fun message(
         type: String,
         localState: String,

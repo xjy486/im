@@ -23,6 +23,42 @@ import java.util.UUID
 
 class ConversationClientTest {
     @Test
+    fun restoring_a_group_never_calls_the_c2c_read_state_contract() {
+        val server = MockWebServer()
+        server.enqueue(MockResponse().setResponseCode(404))
+        server.start()
+        val manager = LocalDatabaseManager(
+            createTempDirectory("jitong-group-read-state"),
+            InMemoryKeychain())
+        try {
+            val client = ConversationClient(
+                baseUrl = server.url("/").toString(),
+                httpClient = OkHttpClient())
+            val local = manager.open("12345678903")
+            local.upsertConversation(
+                LocalConversation(
+                    conversationId = "conversation-1",
+                    kind = "GROUP",
+                    peerUserId = "",
+                    peerAccountNo = "12345678903",
+                    peerDisplayName = "Desktop Lounge",
+                    status = "ACTIVE",
+                    relationship = "OWNER",
+                    blockedByMe = false,
+                    readSeq = 0,
+                    peerReadSeq = 0,
+                    updatedAt = 1))
+
+            client.restoreReadStates("access", local, "conversation-1")
+
+            assertEquals(0, server.requestCount)
+            local.close()
+        } finally {
+            server.shutdown()
+        }
+    }
+
+    @Test
     fun failed_authoritative_ai_refresh_does_not_advance_the_realtime_cursor() {
         val server = MockWebServer()
         server.enqueue(MockResponse().setResponseCode(503))
