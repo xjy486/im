@@ -1,61 +1,75 @@
 package com.jitong.im.ai;
 
-import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
-import org.springframework.http.MediaType;
+import org.springframework.ai.chat.client.ChatClient;
+import org.springframework.ai.chat.model.ChatModel;
+import org.springframework.ai.chat.prompt.Prompt;
+import org.springframework.ai.converter.BeanOutputConverter;
+import org.springframework.ai.openai.OpenAiChatOptions;
+import org.springframework.ai.openai.api.ResponseFormat;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.stereotype.Component;
-import org.springframework.web.client.RestClient;
 
-import java.util.ArrayList;
-import java.util.LinkedHashMap;
 import java.util.List;
-import java.util.Map;
-import java.util.UUID;
 
 @Component
+@ConditionalOnProperty(
+        prefix = "jitong.ai.provider",
+        name = "enabled",
+        havingValue = "true")
 class OpenAiCompatibleAiProvider implements AiProvider {
 
     private final AiProperties properties;
     private final ObjectMapper objectMapper;
-    private final RestClient restClient;
+    private final ChatClient chatClient;
+    private final BeanOutputConverter<AiSummary> outputConverter;
 
-    OpenAiCompatibleAiProvider(AiProperties properties, ObjectMapper objectMapper) {
+    @Autowired
+    OpenAiCompatibleAiProvider(
+            AiProperties properties,
+            ObjectMapper objectMapper,
+            ChatModel chatModel
+    ) {
         this.properties = properties;
         this.objectMapper = objectMapper;
-        this.restClient = RestClient.builder().build();
+        this.chatClient = ChatClient.create(chatModel);
+        this.outputConverter = new BeanOutputConverter<>(AiSummary.class, objectMapper);
     }
 
     @Override
     public AiSummary summarize(AiSummaryContext context) {
-        String baseUrl = properties.provider().baseUrl();
-        if (baseUrl == null || baseUrl.isBlank()) {
+        if (!properties.provider().enabled()
+                || properties.provider().baseUrl() == null
+                || properties.provider().baseUrl().isBlank()
+                || properties.provider().apiKey() == null
+                || properties.provider().apiKey().isBlank()) {
             throw new AiProviderException("AI_PROVIDER_UNAVAILABLE", "No AI provider is configured");
         }
 
-        Map<String, Object> request = new LinkedHashMap<>();
-        request.put("model", model());
-        request.put("temperature", 0);
-        request.put("messages", List.of(
-                Map.of(
-                        "role", "system",
-                        "content", "Return only a JSON object with overview, keyPoints, decisions, openQuestions and sourceMessageIds. Do not invent message IDs."),
-                Map.of("role", "user", "content", prompt(context))));
-        request.put("response_format", Map.of("type", "json_object"));
-
         try {
-            JsonNode response = restClient.post()
-                    .uri(normalizeCompletionsUrl(baseUrl))
-                    .contentType(MediaType.APPLICATION_JSON)
-                    .headers(headers -> {
-                        if (properties.provider().apiKey() != null
-                                && !properties.provider().apiKey().isBlank()) {
-                            headers.setBearerAuth(properties.provider().apiKey());
-                        }
-                    })
-                    .body(request)
-                    .retrieve()
-                    .body(JsonNode.class);
-            return parseResponse(response, context);
+            String content = chatClient.prompt(new Prompt(
+                            List.of(
+                                    new org.springframework.ai.chat.messages.SystemMessage(
+                                            "Return only JSON matching this schema. Do not invent message IDs.\\n"
+                                                    + outputConverter.getFormat()),
+                                    new org.springframework.ai.chat.messages.UserMessage(prompt(context))),
+                            OpenAiChatOptions.builder()
+                                    .model(model())
+                                    .temperature(0.0)
+                                    .responseFormat(ResponseFormat.builder()
+                                            .type(ResponseFormat.Type.JSON_SCHEMA)
+                                            .jsonSchema(outputConverter.getJsonSchema())
+                                            .build())
+                                    .build()))
+                    .call()
+                    .content();
+            if (content == null || content.isBlank()) {
+                throw new AiProviderException("AI_INVALID_RESULT", "The AI provider returned no content");
+            }
+            AiSummary summary = outputConverter.convert(content);
+            AiSummaryValidator.validate(summary, context);
+            return summary;
         } catch (AiProviderException exception) {
             throw exception;
         } catch (RuntimeException exception) {
@@ -68,32 +82,6 @@ class OpenAiCompatibleAiProvider implements AiProvider {
         return properties.provider().model();
     }
 
-    private AiSummary parseResponse(JsonNode response, AiSummaryContext context) {
-        if (response == null || !response.path("choices").isArray()
-                || response.path("choices").isEmpty()) {
-            throw new AiProviderException("AI_INVALID_RESULT", "The AI provider returned no choices");
-        }
-        JsonNode content = response.path("choices").path(0).path("message").path("content");
-        if (!content.isTextual()) {
-            throw new AiProviderException("AI_INVALID_RESULT", "The AI provider returned no JSON content");
-        }
-        try {
-            JsonNode result = objectMapper.readTree(content.asText());
-            AiSummary summary = new AiSummary(
-                    requiredText(result, "overview"),
-                    textList(result, "keyPoints"),
-                    textList(result, "decisions"),
-                    textList(result, "openQuestions"),
-                    uuidList(result, "sourceMessageIds"));
-            AiSummaryValidator.validate(summary, context);
-            return summary;
-        } catch (AiProviderException exception) {
-            throw exception;
-        } catch (Exception exception) {
-            throw new AiProviderException("AI_INVALID_RESULT", "The AI provider returned invalid JSON", exception);
-        }
-    }
-
     private String prompt(AiSummaryContext context) {
         StringBuilder prompt = new StringBuilder("Summarize this ordered C2C message context.\n");
         for (AiContextMessage message : context.messages()) {
@@ -104,49 +92,5 @@ class OpenAiCompatibleAiProvider implements AiProvider {
                     .append('\n');
         }
         return prompt.toString();
-    }
-
-    private String normalizeCompletionsUrl(String baseUrl) {
-        String normalized = baseUrl.endsWith("/") ? baseUrl.substring(0, baseUrl.length() - 1) : baseUrl;
-        return normalized.endsWith("/chat/completions") ? normalized : normalized + "/chat/completions";
-    }
-
-    private String requiredText(JsonNode parent, String field) {
-        JsonNode value = parent.get(field);
-        if (value == null || !value.isTextual() || value.asText().isBlank()) {
-            throw new AiProviderException("AI_INVALID_RESULT", "Missing summary field: " + field);
-        }
-        return value.asText();
-    }
-
-    private List<String> textList(JsonNode parent, String field) {
-        JsonNode values = parent.get(field);
-        if (values == null || !values.isArray()) {
-            throw new AiProviderException("AI_INVALID_RESULT", "Missing summary array: " + field);
-        }
-        List<String> result = new ArrayList<>();
-        for (JsonNode value : values) {
-            if (!value.isTextual() || value.asText().isBlank()) {
-                throw new AiProviderException("AI_INVALID_RESULT", "Invalid summary item: " + field);
-            }
-            result.add(value.asText());
-        }
-        return result;
-    }
-
-    private List<UUID> uuidList(JsonNode parent, String field) {
-        JsonNode values = parent.get(field);
-        if (values == null || !values.isArray()) {
-            throw new AiProviderException("AI_INVALID_RESULT", "Missing evidence array: " + field);
-        }
-        List<UUID> result = new ArrayList<>();
-        for (JsonNode value : values) {
-            try {
-                result.add(UUID.fromString(value.asText()));
-            } catch (RuntimeException exception) {
-                throw new AiProviderException("AI_INVALID_RESULT", "Invalid evidence message ID", exception);
-            }
-        }
-        return result;
     }
 }

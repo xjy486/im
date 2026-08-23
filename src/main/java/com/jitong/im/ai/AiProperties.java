@@ -11,11 +11,12 @@ public record AiProperties(
 
     public AiProperties {
         promptVersion = promptVersion == null || promptVersion.isBlank() ? "summary-v1" : promptVersion;
-        provider = provider == null ? new Provider(null, null, "gpt-4o-mini") : provider;
+        provider = provider == null ? new Provider(false, null, null, "gpt-4o-mini") : provider;
         worker = worker == null ? new Worker(250) : worker;
     }
 
     public record Provider(
+            boolean enabled,
             String baseUrl,
             String apiKey,
             String model

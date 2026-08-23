@@ -32,7 +32,7 @@ class AiServiceTest {
         SyncService syncService = mock(SyncService.class);
         AiProperties properties = new AiProperties(
                 "summary-v1",
-                new AiProperties.Provider("http://provider.test/v1", "secret", "test-model"),
+                new AiProperties.Provider(true, "http://provider.test/v1", "secret", "test-model"),
                 new AiProperties.Worker(250));
         AiService service = new AiService(
                 repository,
@@ -71,7 +71,7 @@ class AiServiceTest {
         SyncService syncService = mock(SyncService.class);
         AiProperties properties = new AiProperties(
                 "summary-v1",
-                new AiProperties.Provider("http://provider.test/v1", "secret", "test-model"),
+                new AiProperties.Provider(true, "http://provider.test/v1", "secret", "test-model"),
                 new AiProperties.Worker(250));
         ObjectMapper mapper = new ObjectMapper().findAndRegisterModules();
         AiService service = new AiService(
