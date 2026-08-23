@@ -9,6 +9,7 @@ import kotlin.io.path.readBytes
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
+import kotlin.test.assertFailsWith
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
 import okhttp3.OkHttpClient
@@ -21,6 +22,40 @@ import javax.imageio.ImageIO
 import java.util.UUID
 
 class ConversationClientTest {
+    @Test
+    fun failed_authoritative_ai_refresh_does_not_advance_the_realtime_cursor() {
+        val server = MockWebServer()
+        server.enqueue(MockResponse().setResponseCode(503))
+        server.start()
+        val manager = LocalDatabaseManager(
+            createTempDirectory("jitong-ai-realtime"),
+            InMemoryKeychain())
+        try {
+            val client = ConversationClient(
+                baseUrl = server.url("/").toString(),
+                httpClient = OkHttpClient())
+            val local = manager.open("12345678903")
+
+            assertFailsWith<ConversationApiException> {
+                client.applyRealtimeAuthoritatively(
+                    accessToken = "access",
+                    local = local,
+                    envelope = DesktopRealtimeEnvelope(
+                        version = 1,
+                        operation = "ai.job.updated",
+                        requestId = null,
+                        body = DesktopRealtimeBody(syncSeq = 1)),
+                    currentUserId = "user-1")
+            }
+
+            assertEquals(0, local.lastSyncSeq())
+            assertEquals("/api/v1/ai/jobs", server.takeRequest().path)
+            local.close()
+        } finally {
+            server.shutdown()
+        }
+    }
+
     @Test
     fun private_ai_summary_and_group_policy_use_the_shared_v1_contract() {
         val server = MockWebServer()

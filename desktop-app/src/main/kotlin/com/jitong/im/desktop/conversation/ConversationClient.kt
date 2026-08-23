@@ -1547,6 +1547,18 @@ class ConversationClient(
         syncSeq?.let(local::saveLastSyncSeq)
     }
 
+    fun applyRealtimeAuthoritatively(
+        accessToken: String,
+        local: LocalDatabase,
+        envelope: DesktopRealtimeEnvelope,
+        currentUserId: String,
+    ) {
+        if (envelope.operation.startsWith("ai.")) {
+            refreshAiData(accessToken, local)
+        }
+        applyRealtime(local, envelope, currentUserId)
+    }
+
     private fun DesktopRealtimeBody.toMessage(): DesktopMessage? {
         val messageId = messageId ?: return null
         val conversationId = conversationId ?: return null
