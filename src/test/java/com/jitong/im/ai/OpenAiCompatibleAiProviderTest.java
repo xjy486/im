@@ -5,6 +5,8 @@ import org.junit.jupiter.api.Test;
 import org.springframework.ai.chat.model.ChatModel;
 import org.springframework.ai.chat.model.ChatResponse;
 import org.springframework.ai.chat.model.Generation;
+import org.springframework.ai.chat.metadata.ChatResponseMetadata;
+import org.springframework.ai.chat.metadata.DefaultUsage;
 import org.springframework.ai.chat.messages.AssistantMessage;
 import org.springframework.ai.chat.prompt.Prompt;
 
@@ -31,22 +33,28 @@ class OpenAiCompatibleAiProviderTest {
                           "openQuestions": [],
                           "sourceMessageIds": ["%s"]
                         }
-                        """.formatted(messageId))))));
+                        """.formatted(messageId)))),
+                ChatResponseMetadata.builder()
+                        .usage(new DefaultUsage(37, 5))
+                        .build()));
 
         AiProperties properties = new AiProperties(
                 "summary-v1",
                 new AiProperties.Provider(true, "http://provider.test/v1", "secret", "test-model"),
-                new AiProperties.Worker(250));
+                new AiProperties.Worker(250),
+                null);
         OpenAiCompatibleAiProvider provider = new OpenAiCompatibleAiProvider(
                 properties,
                 new ObjectMapper().findAndRegisterModules(),
                 chatModel);
 
-        AiSummary result = provider.summarize(new AiSummaryContext(
+        AiProviderResult result = provider.summarize(new AiSummaryContext(
                 UUID.randomUUID(),
                 List.of(new AiContextMessage(messageId, 1, UUID.randomUUID(), "hello"))));
 
-        assertThat(result.overview()).isEqualTo("A concise overview");
-        assertThat(result.sourceMessageIds()).containsExactly(messageId);
+        assertThat(result.summary().overview()).isEqualTo("A concise overview");
+        assertThat(result.summary().sourceMessageIds()).containsExactly(messageId);
+        assertThat(result.inputTokens()).isEqualTo(37);
+        assertThat(result.outputTokens()).isEqualTo(5);
     }
 }

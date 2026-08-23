@@ -2,11 +2,9 @@ package com.jitong.im.ai;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.jitong.im.platform.error.ApiErrorDefinition;
-import com.jitong.im.sync.SyncService;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Component;
-import org.springframework.transaction.annotation.Transactional;
 
 import java.time.Clock;
 import java.time.Duration;
@@ -18,7 +16,7 @@ class AiWorker {
 
     private final AiRepository repository;
     private final AiProvider provider;
-    private final SyncService syncService;
+    private final AiJobLifecycle lifecycle;
     private final ObjectMapper objectMapper;
     private final Clock clock;
 
@@ -26,13 +24,13 @@ class AiWorker {
     AiWorker(
             AiRepository repository,
             AiProvider provider,
-            SyncService syncService,
+            AiJobLifecycle lifecycle,
             ObjectMapper objectMapper
     ) {
         this(
                 repository,
                 provider,
-                syncService,
+                lifecycle,
                 objectMapper,
                 Clock.systemUTC());
     }
@@ -40,93 +38,67 @@ class AiWorker {
     AiWorker(
             AiRepository repository,
             AiProvider provider,
-            SyncService syncService,
+            AiJobLifecycle lifecycle,
             ObjectMapper objectMapper,
             Clock clock
     ) {
         this.repository = repository;
         this.provider = provider;
-        this.syncService = syncService;
+        this.lifecycle = lifecycle;
         this.objectMapper = objectMapper;
         this.clock = clock;
     }
 
     @Scheduled(fixedDelayString = "${jitong.ai.worker.poll-interval:250}")
     void processOne() {
-        AiJobRecord job = claim();
+        AiJobRecord job = lifecycle.claim(clock.instant());
         if (job == null) {
             return;
         }
 
-        AiSummary summary;
+        AiProviderResult providerResult;
         try {
             AiConversation conversation = repository.findConversation(
                     job.conversationId(),
                     job.ownerUserId());
             if (!contextStillAuthorized(job, conversation)) {
-                fail(job, ApiErrorDefinition.AI_CONTEXT_CHANGED.code());
+                lifecycle.fail(job, ApiErrorDefinition.AI_CONTEXT_CHANGED.code(), clock.instant());
                 return;
             }
             List<AiContextMessage> messages = objectMapper.readValue(
                     job.contextJson(),
                     objectMapper.getTypeFactory().constructCollectionType(List.class, AiContextMessage.class));
             AiSummaryContext context = new AiSummaryContext(job.conversationId(), messages);
-            summary = provider.summarize(context);
+            providerResult = provider.summarize(context);
+            if (providerResult.totalTokens() > job.reservedTokens()) {
+                throw new AiProviderException(
+                        "AI_PROVIDER_USAGE_EXCEEDED",
+                        "The AI provider reported more tokens than were reserved");
+            }
+            AiSummary summary = providerResult.summary();
             AiSummaryValidator.validate(summary, context);
             AiConversation current = repository.findConversation(
                     job.conversationId(),
                     job.ownerUserId());
             if (!contextStillAuthorized(job, current)) {
-                fail(job, ApiErrorDefinition.AI_CONTEXT_CHANGED.code());
+                lifecycle.fail(job, ApiErrorDefinition.AI_CONTEXT_CHANGED.code(), clock.instant());
                 return;
             }
             Instant finishedAt = clock.instant();
-            int updated = repository.succeed(
-                    job.jobId(),
-                    job.ownerUserId(),
+            lifecycle.complete(
+                    job,
+                    providerResult,
                     objectMapper.writeValueAsString(summary),
                     finishedAt,
                     finishedAt.plus(Duration.ofDays(30)));
-            if (updated > 0) {
-                repository.createArtifact(
-                        job.jobId(),
-                        job.ownerUserId(),
-                        objectMapper.writeValueAsString(summary),
-                        finishedAt.plus(Duration.ofDays(30)));
-                syncService.recordEventForUsers(
-                        List.of(job.ownerUserId()),
-                        "AI_JOB_COMPLETED",
-                        job.jobId(),
-                        job.conversationId());
-            }
         } catch (AiProviderException exception) {
-            fail(job, exception.code());
+            if (job.attemptCount() < 2 && AiProviderFailures.isRetryable(exception)) {
+                lifecycle.retry(job);
+            } else {
+                lifecycle.fail(job, exception.code(), clock.instant());
+            }
         } catch (Exception exception) {
-            fail(job, ApiErrorDefinition.INTERNAL_ERROR.code());
-        }
-    }
-
-    @Transactional
-    AiJobRecord claim() {
-        AiJobRecord job = repository.claimNextQueued(clock.instant());
-        if (job != null) {
-            syncService.recordEventForUsers(
-                    List.of(job.ownerUserId()),
-                    "AI_JOB_STARTED",
-                    job.jobId(),
-                    job.conversationId());
-        }
-        return job;
-    }
-
-    @Transactional
-    void fail(AiJobRecord job, String errorCode) {
-        if (repository.fail(job.jobId(), job.ownerUserId(), errorCode, clock.instant()) > 0) {
-            syncService.recordEventForUsers(
-                    List.of(job.ownerUserId()),
-                    "AI_JOB_FAILED",
-                    job.jobId(),
-                    job.conversationId());
+            lifecycle.fail(job, ApiErrorDefinition.INTERNAL_ERROR.code(), clock.instant());
         }
     }
 

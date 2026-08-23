@@ -4,6 +4,8 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.jitong.im.ai.AiContextMessage;
 import com.jitong.im.ai.AiProvider;
+import com.jitong.im.ai.AiProviderException;
+import com.jitong.im.ai.AiProviderResult;
 import com.jitong.im.ai.AiSummary;
 import com.jitong.im.ai.AiSummaryContext;
 import org.junit.jupiter.api.Test;
@@ -15,20 +17,34 @@ import org.springframework.http.HttpMethod;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
+import org.springframework.jdbc.core.simple.JdbcClient;
+import org.springframework.ai.retry.TransientAiException;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.test.context.TestPropertySource;
 
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
+import java.util.concurrent.Callable;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.TimeUnit;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.times;
+import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 @TestPropertySource(properties = {
         "jitong.ai.provider.model=contract-summary-model",
-        "jitong.ai.worker.poll-interval=50"
+        "jitong.ai.worker.poll-interval=50",
+        "jitong.ai.retention-interval=50",
+        "jitong.ai.retention-initial-delay=0",
+        "jitong.ai.budget.daily-token-limit=100000",
+        "jitong.ai.budget.max-output-tokens=512"
 })
 class AiSummaryContractTest extends ContractTestEnvironment {
 
@@ -37,6 +53,9 @@ class AiSummaryContractTest extends ContractTestEnvironment {
 
     @Autowired
     private ObjectMapper objectMapper;
+
+    @Autowired
+    private JdbcClient jdbc;
 
     @MockitoBean
     private AiProvider provider;
@@ -72,12 +91,12 @@ class AiSummaryContractTest extends ContractTestEnvironment {
                     .extracting(AiContextMessage::messageId)
                     .containsExactly(firstMessageId)
                     .doesNotContain(recalledMessageId);
-            return new AiSummary(
+            return withUsage(new AiSummary(
                     "The participants agreed on the next step.",
                     List.of("Continue the implementation."),
                     List.of("Use the agreed API."),
                     List.of(),
-                    context.messages().stream().map(message -> message.messageId()).toList());
+                    context.messages().stream().map(message -> message.messageId()).toList()));
         });
 
         assertThat(exchange(
@@ -138,14 +157,552 @@ class AiSummaryContractTest extends ContractTestEnvironment {
         assertThat(otherUser.get("code").asText()).isEqualTo("AI_NOT_FOUND");
     }
 
+    @Test
+    void concurrent_summary_requests_never_over_reserve_the_users_daily_budget() throws Exception {
+        TestUser alice = createUser("Budget Alice");
+        TestUser bob = createUser("Budget Bob");
+        TestUser carol = createUser("Budget Carol");
+        String aliceToken = login(alice.accountNo(), "budget-alice-installation", "PC");
+        String bobToken = login(bob.accountNo(), "budget-bob-installation", "MOBILE");
+        String carolToken = login(carol.accountNo(), "budget-carol-installation", "MOBILE");
+        UUID bobConversation = acceptContact(aliceToken, bob, bobToken);
+        UUID carolConversation = acceptContact(aliceToken, carol, carolToken);
+        enableAi(aliceToken, bobToken, bobConversation);
+        enableAi(aliceToken, carolToken, carolConversation);
+        post(
+                "/api/v1/conversations/" + bobConversation + "/messages",
+                bobToken,
+                Map.of("clientMsgId", UUID.randomUUID(), "text", "Budget snapshot one."));
+        post(
+                "/api/v1/conversations/" + carolConversation + "/messages",
+                carolToken,
+                Map.of("clientMsgId", UUID.randomUUID(), "text", "Budget snapshot two."));
+        jdbc.sql("""
+                        INSERT INTO ai_daily_budgets (
+                            owner_user_id, budget_date, limit_tokens,
+                            reserved_tokens, used_tokens, version
+                        ) VALUES (
+                            :ownerUserId,
+                            (CURRENT_TIMESTAMP AT TIME ZONE 'Asia/Shanghai')::date,
+                            5000, 0, 0, 0
+                        )
+                        """)
+                .param("ownerUserId", alice.userId())
+                .update();
+
+        CountDownLatch releaseProvider = new CountDownLatch(1);
+        when(provider.summarize(any(AiSummaryContext.class))).thenAnswer(invocation -> {
+            AiSummaryContext context = invocation.getArgument(0);
+            if (!releaseProvider.await(5, TimeUnit.SECONDS)) {
+                throw new AssertionError("provider was not released");
+            }
+            return withUsage(new AiSummary(
+                    "Budgeted summary.",
+                    List.of(),
+                    List.of(),
+                    List.of(),
+                    context.messages().stream().map(AiContextMessage::messageId).toList()));
+        });
+        ExecutorService executor = Executors.newFixedThreadPool(2);
+        try {
+            List<Callable<ResponseEntity<JsonNode>>> calls = new ArrayList<>();
+            calls.add(() -> exchange(
+                    "/api/v1/conversations/" + bobConversation + "/ai/summary",
+                    HttpMethod.POST,
+                    aliceToken,
+                    Map.of("requestId", UUID.randomUUID(), "afterSeq", 0, "untilSeq", 1)));
+            calls.add(() -> exchange(
+                    "/api/v1/conversations/" + carolConversation + "/ai/summary",
+                    HttpMethod.POST,
+                    aliceToken,
+                    Map.of("requestId", UUID.randomUUID(), "afterSeq", 0, "untilSeq", 1)));
+
+            List<ResponseEntity<JsonNode>> responses = executor.invokeAll(calls).stream()
+                    .map(future -> {
+                        try {
+                            return future.get();
+                        } catch (Exception exception) {
+                            throw new AssertionError(exception);
+                        }
+                    })
+                    .toList();
+
+            assertThat(responses).filteredOn(response -> response.getStatusCode().is2xxSuccessful())
+                    .hasSize(1);
+            assertThat(responses).filteredOn(response -> response.getStatusCode() == HttpStatus.TOO_MANY_REQUESTS)
+                    .singleElement()
+                    .satisfies(response -> assertThat(response.getBody().get("code").asText())
+                            .isEqualTo("AI_BUDGET_EXCEEDED"));
+
+            Map<String, Long> budget = jdbc.sql("""
+                            SELECT limit_tokens, reserved_tokens, used_tokens
+                            FROM ai_daily_budgets
+                            WHERE owner_user_id = :ownerUserId
+                            """)
+                    .param("ownerUserId", alice.userId())
+                    .query((row, rowNumber) -> Map.of(
+                            "limit", row.getLong("limit_tokens"),
+                            "reserved", row.getLong("reserved_tokens"),
+                            "used", row.getLong("used_tokens")))
+                    .single();
+            assertThat(budget.get("reserved") + budget.get("used"))
+                    .isLessThanOrEqualTo(budget.get("limit"));
+        } finally {
+            releaseProvider.countDown();
+            executor.shutdownNow();
+        }
+    }
+
+    @Test
+    void summary_queue_is_bounded_to_one_running_and_three_waiting_jobs_per_user() throws Exception {
+        TestUser alice = createUser("Queue Alice");
+        TestUser bob = createUser("Queue Bob");
+        String aliceToken = login(alice.accountNo(), "queue-alice-installation", "PC");
+        String bobToken = login(bob.accountNo(), "queue-bob-installation", "MOBILE");
+        UUID conversationId = acceptContact(aliceToken, bob, bobToken);
+        enableAi(aliceToken, bobToken, conversationId);
+        post(
+                "/api/v1/conversations/" + conversationId + "/messages",
+                bobToken,
+                Map.of("clientMsgId", UUID.randomUUID(), "text", "Bound this summary queue."));
+
+        CountDownLatch providerStarted = new CountDownLatch(1);
+        CountDownLatch releaseProvider = new CountDownLatch(1);
+        when(provider.summarize(any(AiSummaryContext.class))).thenAnswer(invocation -> {
+            AiSummaryContext context = invocation.getArgument(0);
+            providerStarted.countDown();
+            if (!releaseProvider.await(5, TimeUnit.SECONDS)) {
+                throw new AssertionError("provider was not released");
+            }
+            return withUsage(new AiSummary(
+                    "Queued summary.",
+                    List.of(),
+                    List.of(),
+                    List.of(),
+                    context.messages().stream().map(AiContextMessage::messageId).toList()));
+        });
+
+        try {
+            ResponseEntity<JsonNode> running = requestSummary(aliceToken, conversationId);
+            assertThat(running.getStatusCode()).isEqualTo(HttpStatus.OK);
+            assertThat(providerStarted.await(5, TimeUnit.SECONDS)).isTrue();
+
+            for (int queued = 0; queued < 3; queued++) {
+                assertThat(requestSummary(aliceToken, conversationId).getStatusCode())
+                        .isEqualTo(HttpStatus.OK);
+            }
+
+            ResponseEntity<JsonNode> rejected = requestSummary(aliceToken, conversationId);
+            assertThat(rejected.getStatusCode()).isEqualTo(HttpStatus.TOO_MANY_REQUESTS);
+            assertThat(rejected.getBody().get("code").asText()).isEqualTo("AI_BUSY");
+            assertThat(jdbc.sql("""
+                            SELECT COUNT(*)
+                            FROM ai_jobs
+                            WHERE owner_user_id = :ownerUserId AND status = 'RUNNING'
+                            """)
+                    .param("ownerUserId", alice.userId())
+                    .query(Long.class)
+                    .single()).isEqualTo(1);
+            assertThat(jdbc.sql("""
+                            SELECT COUNT(*)
+                            FROM ai_jobs
+                            WHERE owner_user_id = :ownerUserId AND status = 'QUEUED'
+                            """)
+                    .param("ownerUserId", alice.userId())
+                    .query(Long.class)
+                    .single()).isEqualTo(3);
+        } finally {
+            releaseProvider.countDown();
+        }
+    }
+
+    @Test
+    void cache_hits_are_bound_to_the_requesting_user_and_identical_content_snapshot() {
+        TestUser alice = createUser("Cache Alice");
+        TestUser bob = createUser("Cache Bob");
+        String aliceToken = login(alice.accountNo(), "cache-alice-installation", "PC");
+        String bobToken = login(bob.accountNo(), "cache-bob-installation", "MOBILE");
+        UUID conversationId = acceptContact(aliceToken, bob, bobToken);
+        enableAi(aliceToken, bobToken, conversationId);
+        JsonNode message = post(
+                "/api/v1/conversations/" + conversationId + "/messages",
+                bobToken,
+                Map.of("clientMsgId", UUID.randomUUID(), "text", "Cache this exact snapshot."));
+        UUID messageId = UUID.fromString(message.get("messageId").asText());
+
+        when(provider.summarize(any(AiSummaryContext.class))).thenAnswer(invocation -> {
+            AiSummaryContext context = invocation.getArgument(0);
+            return withUsage(new AiSummary(
+                    "Content-bound summary.",
+                    List.of(),
+                    List.of(),
+                    List.of(),
+                    context.messages().stream().map(AiContextMessage::messageId).toList()));
+        });
+
+        JsonNode first = requestSummary(aliceToken, conversationId).getBody();
+        awaitJob(aliceToken, UUID.fromString(first.get("jobId").asText()));
+
+        JsonNode cached = requestSummary(aliceToken, conversationId).getBody();
+        assertThat(cached.get("status").asText()).isEqualTo("SUCCEEDED");
+        assertThat(cached.get("result").get("sourceMessageIds").get(0).asText())
+                .isEqualTo(messageId.toString());
+        verify(provider, times(1)).summarize(any(AiSummaryContext.class));
+
+        JsonNode otherOwner = requestSummary(bobToken, conversationId).getBody();
+        awaitJob(bobToken, UUID.fromString(otherOwner.get("jobId").asText()));
+        verify(provider, times(2)).summarize(any(AiSummaryContext.class));
+    }
+
+    @Test
+    void recalling_a_message_changes_the_content_digest_and_invalidates_the_old_cache() {
+        TestUser alice = createUser("Recall Cache Alice");
+        TestUser bob = createUser("Recall Cache Bob");
+        String aliceToken = login(alice.accountNo(), "recall-cache-alice", "PC");
+        String bobToken = login(bob.accountNo(), "recall-cache-bob", "MOBILE");
+        UUID conversationId = acceptContact(aliceToken, bob, bobToken);
+        enableAi(aliceToken, bobToken, conversationId);
+        post(
+                "/api/v1/conversations/" + conversationId + "/messages",
+                bobToken,
+                Map.of("clientMsgId", UUID.randomUUID(), "text", "Keep this message."));
+        JsonNode recalled = post(
+                "/api/v1/conversations/" + conversationId + "/messages",
+                bobToken,
+                Map.of("clientMsgId", UUID.randomUUID(), "text", "Recall this message."));
+
+        when(provider.summarize(any(AiSummaryContext.class))).thenAnswer(invocation -> {
+            AiSummaryContext context = invocation.getArgument(0);
+            return withUsage(new AiSummary(
+                    "Digest-bound summary.",
+                    List.of(),
+                    List.of(),
+                    List.of(),
+                    context.messages().stream().map(AiContextMessage::messageId).toList()));
+        });
+
+        JsonNode first = requestSummary(aliceToken, conversationId, 2).getBody();
+        awaitJob(aliceToken, UUID.fromString(first.get("jobId").asText()));
+        assertThat(exchange(
+                "/api/v1/messages/" + recalled.get("messageId").asText() + "/recall",
+                HttpMethod.POST,
+                bobToken,
+                null).getStatusCode()).isEqualTo(HttpStatus.OK);
+
+        JsonNode afterRecall = requestSummary(aliceToken, conversationId, 2).getBody();
+        awaitJob(aliceToken, UUID.fromString(afterRecall.get("jobId").asText()));
+        verify(provider, times(2)).summarize(any(AiSummaryContext.class));
+    }
+
+    @Test
+    void transient_provider_failure_is_retried_once_and_can_then_succeed() {
+        TestUser alice = createUser("Retry Alice");
+        TestUser bob = createUser("Retry Bob");
+        String aliceToken = login(alice.accountNo(), "retry-alice", "PC");
+        String bobToken = login(bob.accountNo(), "retry-bob", "MOBILE");
+        UUID conversationId = acceptContact(aliceToken, bob, bobToken);
+        enableAi(aliceToken, bobToken, conversationId);
+        post(
+                "/api/v1/conversations/" + conversationId + "/messages",
+                bobToken,
+                Map.of("clientMsgId", UUID.randomUUID(), "text", "Retry one transient failure."));
+
+        when(provider.summarize(any(AiSummaryContext.class)))
+                .thenThrow(new AiProviderException(
+                        "AI_PROVIDER_RATE_LIMITED",
+                        "provider returned 429",
+                        new TransientAiException("429 Too Many Requests")))
+                .thenAnswer(invocation -> {
+                    AiSummaryContext context = invocation.getArgument(0);
+                    return withUsage(new AiSummary(
+                            "Retry succeeded.",
+                            List.of(),
+                            List.of(),
+                            List.of(),
+                            context.messages().stream().map(AiContextMessage::messageId).toList()));
+                });
+
+        JsonNode queued = requestSummary(aliceToken, conversationId).getBody();
+        awaitJob(aliceToken, UUID.fromString(queued.get("jobId").asText()));
+        verify(provider, times(2)).summarize(any(AiSummaryContext.class));
+    }
+
+    @Test
+    void repeated_transient_provider_failure_stops_after_one_retry() {
+        TestUser alice = createUser("Retry Limit Alice");
+        TestUser bob = createUser("Retry Limit Bob");
+        String aliceToken = login(alice.accountNo(), "retry-limit-alice", "PC");
+        String bobToken = login(bob.accountNo(), "retry-limit-bob", "MOBILE");
+        UUID conversationId = acceptContact(aliceToken, bob, bobToken);
+        enableAi(aliceToken, bobToken, conversationId);
+        post(
+                "/api/v1/conversations/" + conversationId + "/messages",
+                bobToken,
+                Map.of("clientMsgId", UUID.randomUUID(), "text", "Stop after one retry."));
+
+        when(provider.summarize(any(AiSummaryContext.class)))
+                .thenThrow(new AiProviderException(
+                        "AI_PROVIDER_FAILURE",
+                        "provider returned 503",
+                        new TransientAiException("503 Service Unavailable")));
+
+        JsonNode queued = requestSummary(aliceToken, conversationId).getBody();
+        awaitStatus(aliceToken, UUID.fromString(queued.get("jobId").asText()), "FAILED");
+        verify(provider, times(2)).summarize(any(AiSummaryContext.class));
+    }
+
+    @Test
+    void non_transient_provider_failure_is_not_retried() {
+        TestUser alice = createUser("No Retry Alice");
+        TestUser bob = createUser("No Retry Bob");
+        String aliceToken = login(alice.accountNo(), "no-retry-alice", "PC");
+        String bobToken = login(bob.accountNo(), "no-retry-bob", "MOBILE");
+        UUID conversationId = acceptContact(aliceToken, bob, bobToken);
+        enableAi(aliceToken, bobToken, conversationId);
+        post(
+                "/api/v1/conversations/" + conversationId + "/messages",
+                bobToken,
+                Map.of("clientMsgId", UUID.randomUUID(), "text", "Do not retry invalid output."));
+
+        when(provider.summarize(any(AiSummaryContext.class)))
+                .thenThrow(new AiProviderException("AI_INVALID_RESULT", "invalid structured output"));
+
+        JsonNode queued = requestSummary(aliceToken, conversationId).getBody();
+        awaitStatus(aliceToken, UUID.fromString(queued.get("jobId").asText()), "FAILED");
+        verify(provider, times(1)).summarize(any(AiSummaryContext.class));
+    }
+
+    @Test
+    void successful_job_releases_its_reservation_and_settles_actual_token_usage() {
+        TestUser alice = createUser("Settlement Alice");
+        TestUser bob = createUser("Settlement Bob");
+        String aliceToken = login(alice.accountNo(), "settlement-alice", "PC");
+        String bobToken = login(bob.accountNo(), "settlement-bob", "MOBILE");
+        UUID conversationId = acceptContact(aliceToken, bob, bobToken);
+        enableAi(aliceToken, bobToken, conversationId);
+        post(
+                "/api/v1/conversations/" + conversationId + "/messages",
+                bobToken,
+                Map.of("clientMsgId", UUID.randomUUID(), "text", "Settle the actual usage."));
+        when(provider.summarize(any(AiSummaryContext.class))).thenAnswer(invocation -> {
+            AiSummaryContext context = invocation.getArgument(0);
+            return withUsage(new AiSummary(
+                    "Settled summary.",
+                    List.of(),
+                    List.of(),
+                    List.of(),
+                    context.messages().stream().map(AiContextMessage::messageId).toList()));
+        });
+
+        JsonNode queued = requestSummary(aliceToken, conversationId).getBody();
+        awaitJob(aliceToken, UUID.fromString(queued.get("jobId").asText()));
+
+        Map<String, Long> budget = budgetFor(alice.userId());
+        assertThat(budget.get("reserved")).isZero();
+        assertThat(budget.get("used")).isEqualTo(42);
+    }
+
+    @Test
+    void failed_job_releases_its_entire_reservation_without_recording_usage() {
+        TestUser alice = createUser("Failure Budget Alice");
+        TestUser bob = createUser("Failure Budget Bob");
+        String aliceToken = login(alice.accountNo(), "failure-budget-alice", "PC");
+        String bobToken = login(bob.accountNo(), "failure-budget-bob", "MOBILE");
+        UUID conversationId = acceptContact(aliceToken, bob, bobToken);
+        enableAi(aliceToken, bobToken, conversationId);
+        post(
+                "/api/v1/conversations/" + conversationId + "/messages",
+                bobToken,
+                Map.of("clientMsgId", UUID.randomUUID(), "text", "Release failed budget."));
+        when(provider.summarize(any(AiSummaryContext.class)))
+                .thenThrow(new AiProviderException("AI_INVALID_RESULT", "invalid structured output"));
+
+        JsonNode queued = requestSummary(aliceToken, conversationId).getBody();
+        awaitStatus(aliceToken, UUID.fromString(queued.get("jobId").asText()), "FAILED");
+
+        Map<String, Long> budget = budgetFor(alice.userId());
+        assertThat(budget.get("reserved")).isZero();
+        assertThat(budget.get("used")).isZero();
+    }
+
+    @Test
+    void deleting_a_running_job_cancels_writeback_and_releases_its_reservation() throws Exception {
+        TestUser alice = createUser("Cancellation Alice");
+        TestUser bob = createUser("Cancellation Bob");
+        String aliceToken = login(alice.accountNo(), "cancellation-alice", "PC");
+        String bobToken = login(bob.accountNo(), "cancellation-bob", "MOBILE");
+        UUID conversationId = acceptContact(aliceToken, bob, bobToken);
+        enableAi(aliceToken, bobToken, conversationId);
+        post(
+                "/api/v1/conversations/" + conversationId + "/messages",
+                bobToken,
+                Map.of("clientMsgId", UUID.randomUUID(), "text", "Cancel this running task."));
+
+        CountDownLatch providerStarted = new CountDownLatch(1);
+        CountDownLatch releaseProvider = new CountDownLatch(1);
+        when(provider.summarize(any(AiSummaryContext.class))).thenAnswer(invocation -> {
+            AiSummaryContext context = invocation.getArgument(0);
+            providerStarted.countDown();
+            if (!releaseProvider.await(5, TimeUnit.SECONDS)) {
+                throw new AssertionError("provider was not released");
+            }
+            return withUsage(new AiSummary(
+                    "Cancelled summary.",
+                    List.of(),
+                    List.of(),
+                    List.of(),
+                    context.messages().stream().map(AiContextMessage::messageId).toList()));
+        });
+
+        JsonNode queued = requestSummary(aliceToken, conversationId).getBody();
+        UUID jobId = UUID.fromString(queued.get("jobId").asText());
+        try {
+            assertThat(providerStarted.await(5, TimeUnit.SECONDS)).isTrue();
+            assertThat(exchange(
+                    "/api/v1/ai/jobs/" + jobId,
+                    HttpMethod.DELETE,
+                    aliceToken,
+                    null).getStatusCode()).isEqualTo(HttpStatus.NO_CONTENT);
+            Map<String, Long> budget = budgetFor(alice.userId());
+            assertThat(budget.get("reserved")).isZero();
+            assertThat(budget.get("used")).isZero();
+            assertThat(exchange(
+                    "/api/v1/ai/jobs/" + jobId,
+                    HttpMethod.GET,
+                    aliceToken,
+                    null).getStatusCode()).isEqualTo(HttpStatus.NOT_FOUND);
+        } finally {
+            releaseProvider.countDown();
+        }
+    }
+
+    @Test
+    void expired_running_job_releases_budget_clears_context_and_rejects_late_writeback() throws Exception {
+        TestUser alice = createUser("Expiry Alice");
+        TestUser bob = createUser("Expiry Bob");
+        String aliceToken = login(alice.accountNo(), "expiry-alice", "PC");
+        String bobToken = login(bob.accountNo(), "expiry-bob", "MOBILE");
+        UUID conversationId = acceptContact(aliceToken, bob, bobToken);
+        enableAi(aliceToken, bobToken, conversationId);
+        post(
+                "/api/v1/conversations/" + conversationId + "/messages",
+                bobToken,
+                Map.of("clientMsgId", UUID.randomUUID(), "text", "Expire this running task."));
+
+        CountDownLatch providerStarted = new CountDownLatch(1);
+        CountDownLatch releaseProvider = new CountDownLatch(1);
+        when(provider.summarize(any(AiSummaryContext.class))).thenAnswer(invocation -> {
+            AiSummaryContext context = invocation.getArgument(0);
+            providerStarted.countDown();
+            if (!releaseProvider.await(5, TimeUnit.SECONDS)) {
+                throw new AssertionError("provider was not released");
+            }
+            return withUsage(new AiSummary(
+                    "Too-late summary.",
+                    List.of(),
+                    List.of(),
+                    List.of(),
+                    context.messages().stream().map(AiContextMessage::messageId).toList()));
+        });
+
+        JsonNode queued = requestSummary(aliceToken, conversationId).getBody();
+        UUID jobId = UUID.fromString(queued.get("jobId").asText());
+        try {
+            assertThat(providerStarted.await(5, TimeUnit.SECONDS)).isTrue();
+            jdbc.sql("UPDATE ai_jobs SET expires_at = CURRENT_TIMESTAMP - INTERVAL '1 second' WHERE id = :jobId")
+                    .param("jobId", jobId)
+                    .update();
+
+            awaitStatus(aliceToken, jobId, "EXPIRED");
+            assertThat(jdbc.sql("SELECT context_json IS NULL FROM ai_jobs WHERE id = :jobId")
+                    .param("jobId", jobId)
+                    .query(Boolean.class)
+                    .single()).isTrue();
+            Map<String, Long> budget = budgetFor(alice.userId());
+            assertThat(budget.get("reserved")).isZero();
+            assertThat(budget.get("used")).isZero();
+        } finally {
+            releaseProvider.countDown();
+        }
+
+        org.awaitility.Awaitility.await()
+                .atMost(java.time.Duration.ofSeconds(2))
+                .untilAsserted(() -> {
+                    JsonNode expired = exchange(
+                            "/api/v1/ai/jobs/" + jobId,
+                            HttpMethod.GET,
+                            aliceToken,
+                            null).getBody();
+                    assertThat(expired.get("status").asText()).isEqualTo("EXPIRED");
+                    assertThat(expired.get("result").isNull()).isTrue();
+                });
+    }
+
+    @Test
+    void expired_cache_artifact_and_completed_job_content_are_physically_deleted() {
+        TestUser alice = createUser("Expiry Cleanup Alice");
+        TestUser bob = createUser("Expiry Cleanup Bob");
+        String aliceToken = login(alice.accountNo(), "expiry-cleanup-alice", "PC");
+        String bobToken = login(bob.accountNo(), "expiry-cleanup-bob", "MOBILE");
+        UUID conversationId = acceptContact(aliceToken, bob, bobToken);
+        enableAi(aliceToken, bobToken, conversationId);
+        post(
+                "/api/v1/conversations/" + conversationId + "/messages",
+                bobToken,
+                Map.of("clientMsgId", UUID.randomUUID(), "text", "Delete expired private AI content."));
+        when(provider.summarize(any(AiSummaryContext.class))).thenAnswer(invocation -> {
+            AiSummaryContext context = invocation.getArgument(0);
+            return withUsage(new AiSummary(
+                    "Ephemeral summary.",
+                    List.of(),
+                    List.of(),
+                    List.of(),
+                    context.messages().stream().map(AiContextMessage::messageId).toList()));
+        });
+
+        JsonNode queued = requestSummary(aliceToken, conversationId).getBody();
+        UUID jobId = UUID.fromString(queued.get("jobId").asText());
+        awaitJob(aliceToken, jobId);
+        jdbc.sql("UPDATE ai_jobs SET expires_at = CURRENT_TIMESTAMP - INTERVAL '1 second' WHERE id = :jobId")
+                .param("jobId", jobId)
+                .update();
+        jdbc.sql("UPDATE ai_artifacts SET expires_at = CURRENT_TIMESTAMP - INTERVAL '1 second' WHERE job_id = :jobId")
+                .param("jobId", jobId)
+                .update();
+        jdbc.sql("UPDATE ai_cache_entries SET expires_at = CURRENT_TIMESTAMP - INTERVAL '1 second' WHERE owner_user_id = :ownerUserId")
+                .param("ownerUserId", alice.userId())
+                .update();
+
+        org.awaitility.Awaitility.await()
+                .atMost(java.time.Duration.ofSeconds(5))
+                .untilAsserted(() -> {
+                    assertThat(jdbc.sql("SELECT COUNT(*) FROM ai_jobs WHERE id = :jobId")
+                            .param("jobId", jobId)
+                            .query(Long.class)
+                            .single()).isZero();
+                    assertThat(jdbc.sql("SELECT COUNT(*) FROM ai_artifacts WHERE job_id = :jobId")
+                            .param("jobId", jobId)
+                            .query(Long.class)
+                            .single()).isZero();
+                    assertThat(jdbc.sql("SELECT COUNT(*) FROM ai_cache_entries WHERE owner_user_id = :ownerUserId")
+                            .param("ownerUserId", alice.userId())
+                            .query(Long.class)
+                            .single()).isZero();
+                });
+    }
+
     private void awaitJob(String token, UUID jobId) {
+        awaitStatus(token, jobId, "SUCCEEDED");
+    }
+
+    private void awaitStatus(String token, UUID jobId, String expectedStatus) {
         org.awaitility.Awaitility.await()
                 .atMost(java.time.Duration.ofSeconds(5))
                 .untilAsserted(() -> assertThat(exchange(
                         "/api/v1/ai/jobs/" + jobId,
                         HttpMethod.GET,
                         token,
-                        null).getBody().get("status").asText()).isEqualTo("SUCCEEDED"));
+                        null).getBody().get("status").asText()).isEqualTo(expectedStatus));
     }
 
     private TestUser createUser(String displayName) {
@@ -193,6 +750,31 @@ class AiSummaryContractTest extends ContractTestEnvironment {
                 null).getBody().get("conversationId").asText());
     }
 
+    private void enableAi(String firstToken, String secondToken, UUID conversationId) {
+        exchange(
+                "/api/v1/conversations/" + conversationId + "/ai/consent",
+                HttpMethod.PATCH,
+                firstToken,
+                Map.of("enabled", true));
+        exchange(
+                "/api/v1/conversations/" + conversationId + "/ai/consent",
+                HttpMethod.PATCH,
+                secondToken,
+                Map.of("enabled", true));
+    }
+
+    private ResponseEntity<JsonNode> requestSummary(String token, UUID conversationId) {
+        return requestSummary(token, conversationId, 1);
+    }
+
+    private ResponseEntity<JsonNode> requestSummary(String token, UUID conversationId, long untilSeq) {
+        return exchange(
+                "/api/v1/conversations/" + conversationId + "/ai/summary",
+                HttpMethod.POST,
+                token,
+                Map.of("requestId", UUID.randomUUID(), "afterSeq", 0, "untilSeq", untilSeq));
+    }
+
     private JsonNode post(String path, String token, Object body) {
         return exchange(path, HttpMethod.POST, token, body).getBody();
     }
@@ -224,6 +806,24 @@ class AiSummaryContractTest extends ContractTestEnvironment {
         } catch (Exception exception) {
             throw new IllegalStateException(exception);
         }
+    }
+
+    private AiProviderResult withUsage(AiSummary summary) {
+        return new AiProviderResult(summary, 37, 5);
+    }
+
+    private Map<String, Long> budgetFor(UUID ownerUserId) {
+        return jdbc.sql("""
+                        SELECT limit_tokens, reserved_tokens, used_tokens
+                        FROM ai_daily_budgets
+                        WHERE owner_user_id = :ownerUserId
+                        """)
+                .param("ownerUserId", ownerUserId)
+                .query((row, rowNumber) -> Map.of(
+                        "limit", row.getLong("limit_tokens"),
+                        "reserved", row.getLong("reserved_tokens"),
+                        "used", row.getLong("used_tokens")))
+                .single();
     }
 
     private record TestUser(UUID userId, String accountNo) {

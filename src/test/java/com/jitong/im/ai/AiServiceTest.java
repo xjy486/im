@@ -8,6 +8,7 @@ import org.junit.jupiter.api.Test;
 
 import java.time.Clock;
 import java.time.Instant;
+import java.time.LocalDate;
 import java.time.ZoneOffset;
 import java.util.List;
 import java.util.UUID;
@@ -33,7 +34,8 @@ class AiServiceTest {
         AiProperties properties = new AiProperties(
                 "summary-v1",
                 new AiProperties.Provider(true, "http://provider.test/v1", "secret", "test-model"),
-                new AiProperties.Worker(250));
+                new AiProperties.Worker(250),
+                null);
         AiService service = new AiService(
                 repository,
                 syncService,
@@ -72,7 +74,8 @@ class AiServiceTest {
         AiProperties properties = new AiProperties(
                 "summary-v1",
                 new AiProperties.Provider(true, "http://provider.test/v1", "secret", "test-model"),
-                new AiProperties.Worker(250));
+                new AiProperties.Worker(250),
+                null);
         ObjectMapper mapper = new ObjectMapper().findAndRegisterModules();
         AiService service = new AiService(
                 repository,
@@ -100,6 +103,11 @@ class AiServiceTest {
                         2,
                         USER_ID,
                         "authorized")));
+        when(repository.reserveBudget(
+                eq(USER_ID),
+                eq(LocalDate.of(2026, 8, 23)),
+                eq(100_000L),
+                anyLong())).thenReturn(true);
         when(repository.findJob(eq(USER_ID), any(UUID.class)))
                 .thenReturn(new AiJobRecord(
                         UUID.randomUUID(),
@@ -114,6 +122,12 @@ class AiServiceTest {
                         "digest",
                         "[]",
                         2,
+                        "cache-key",
+                        LocalDate.of(2026, 8, 23),
+                        0,
+                        0,
+                        0,
+                        0,
                         "test-model",
                         "summary-v1",
                         null,
@@ -139,6 +153,9 @@ class AiServiceTest {
                 any(),
                 any(),
                 eq(2L),
+                any(),
+                eq(LocalDate.of(2026, 8, 23)),
+                anyLong(),
                 eq("test-model"),
                 eq("summary-v1"),
                 any());

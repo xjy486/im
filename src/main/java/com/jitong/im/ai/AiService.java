@@ -10,9 +10,12 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.nio.charset.StandardCharsets;
 import java.time.Clock;
 import java.time.Duration;
 import java.time.Instant;
+import java.time.LocalDate;
+import java.time.ZoneId;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.UUID;
@@ -21,7 +24,10 @@ import java.util.UUID;
 public class AiService {
 
     private static final int MAX_SUMMARY_MESSAGES = 100;
+    private static final int MAX_QUEUED_SUMMARIES_PER_USER = 3;
+    private static final int PROMPT_OVERHEAD_TOKEN_RESERVATION = 2_048;
     private static final Duration SUMMARY_RETENTION = Duration.ofDays(30);
+    private static final ZoneId BUDGET_ZONE = ZoneId.of("Asia/Shanghai");
 
     private final AiRepository repository;
     private final SyncService syncService;
@@ -100,6 +106,10 @@ public class AiService {
         if (conversation == null) {
             throw new AiException(ApiErrorDefinition.NOT_CONTACT);
         }
+        previous = repository.findByRequest(device.userId(), request.requestId());
+        if (previous != null) {
+            return response(previous);
+        }
         if (!conversation.enabledForBoth()) {
             throw new AiException(ApiErrorDefinition.AI_CONSENT_REQUIRED);
         }
@@ -124,9 +134,70 @@ public class AiService {
         }
         long fromSeq = context.get(0).conversationSeq();
         long toSeq = context.get(context.size() - 1).conversationSeq();
+        String contextDigest = AiContextDigest.sha256(context);
+        String cacheKey = AiCacheKey.summary(
+                device.userId(),
+                conversationId,
+                fromSeq,
+                toSeq,
+                "openai-compatible",
+                properties.provider().model(),
+                properties.promptVersion(),
+                false,
+                contextDigest);
         String contextJson = writeJson(context);
+        Instant now = clock.instant();
+        LocalDate budgetDate = now.atZone(BUDGET_ZONE).toLocalDate();
+        AiCacheEntry cached = repository.findCache(device.userId(), cacheKey, now);
+        if (cached != null) {
+            UUID cachedJobId = UuidV7.random();
+            repository.insertCachedJob(
+                    cachedJobId,
+                    device.userId(),
+                    device.deviceId(),
+                    conversationId,
+                    request.requestId(),
+                    fromSeq,
+                    toSeq,
+                    contextDigest,
+                    contextJson,
+                    conversation.policyVersion(),
+                    cacheKey,
+                    budgetDate,
+                    properties.provider().model(),
+                    properties.promptVersion(),
+                    cached.resultJson(),
+                    now,
+                    cached.expiresAt());
+            repository.createArtifact(
+                    cachedJobId,
+                    device.userId(),
+                    cached.resultJson(),
+                    cached.expiresAt());
+            syncService.recordEventForUsers(
+                    List.of(device.userId()),
+                    "AI_JOB_COMPLETED",
+                    cachedJobId,
+                    conversationId);
+            return response(repository.findJob(device.userId(), cachedJobId));
+        }
+        long reservedTokens = Math.addExact(
+                Math.addExact(
+                        PROMPT_OVERHEAD_TOKEN_RESERVATION,
+                        contextJson.getBytes(StandardCharsets.UTF_8).length),
+                properties.budget().maxOutputTokens());
+        if (!repository.reserveBudget(
+                device.userId(),
+                budgetDate,
+                properties.budget().dailyTokenLimit(),
+                reservedTokens)) {
+            throw new AiException(ApiErrorDefinition.AI_BUDGET_EXCEEDED);
+        }
+        if (repository.countQueuedJobs(device.userId()) >= MAX_QUEUED_SUMMARIES_PER_USER) {
+            throw new AiException(ApiErrorDefinition.AI_BUSY);
+        }
         UUID jobId = UuidV7.random();
-        Instant expiresAt = clock.instant().plus(SUMMARY_RETENTION);
+        Instant expiresAt = now.plus(SUMMARY_RETENTION);
         repository.insertJob(
                 jobId,
                 device.userId(),
@@ -135,9 +206,12 @@ public class AiService {
                 request.requestId(),
                 fromSeq,
                 toSeq,
-                AiContextDigest.sha256(context),
+                contextDigest,
                 contextJson,
                 conversation.policyVersion(),
+                cacheKey,
+                budgetDate,
+                reservedTokens,
                 properties.provider().model(),
                 properties.promptVersion(),
                 expiresAt);
@@ -188,11 +262,12 @@ public class AiService {
 
     @Transactional
     public void deleteJob(UUID ownerUserId, UUID jobId) {
-        AiJobRecord job = repository.findJob(ownerUserId, jobId);
+        AiJobRecord job = repository.findJobForUpdate(ownerUserId, jobId);
         if (job == null) {
             throw new AiException(ApiErrorDefinition.AI_NOT_FOUND);
         }
         repository.deleteArtifactsForJob(ownerUserId, jobId);
+        repository.releaseBudget(job);
         if (repository.deleteJob(ownerUserId, jobId) == 0) {
             throw new AiException(ApiErrorDefinition.AI_NOT_FOUND);
         }

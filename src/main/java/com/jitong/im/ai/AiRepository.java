@@ -6,6 +6,7 @@ import org.springframework.stereotype.Repository;
 
 import java.sql.Types;
 import java.time.Instant;
+import java.time.LocalDate;
 import java.time.OffsetDateTime;
 import java.time.ZoneOffset;
 import java.util.List;
@@ -214,6 +215,16 @@ class AiRepository {
                 .orElse(null);
     }
 
+    AiJobRecord findJobForUpdate(UUID ownerUserId, UUID jobId) {
+        return jdbc.sql(selectJobSql()
+                        + " WHERE id = :jobId AND owner_user_id = :ownerUserId FOR UPDATE")
+                .param("jobId", jobId)
+                .param("ownerUserId", ownerUserId)
+                .query(this::mapJob)
+                .optional()
+                .orElse(null);
+    }
+
     AiJobRecord findJob(UUID jobId) {
         return jdbc.sql(selectJobSql() + " WHERE id = :jobId")
                 .param("jobId", jobId)
@@ -243,6 +254,9 @@ class AiRepository {
             String contextDigest,
             String contextJson,
             long policyVersion,
+            String cacheKey,
+            LocalDate budgetDate,
+            long reservedTokens,
             String model,
             String promptVersion,
             Instant expiresAt
@@ -252,11 +266,13 @@ class AiRepository {
                             id, owner_user_id, requesting_device_id, conversation_id,
                             request_id, kind, status, from_seq, to_seq,
                             context_digest, context_json, ai_policy_version,
+                            cache_key, budget_date, reserved_tokens,
                             model, prompt_version, expires_at
                         ) VALUES (
                             :id, :ownerUserId, :requestingDeviceId, :conversationId,
                             :requestId, 'SUMMARY', 'QUEUED', :fromSeq, :toSeq,
                             :contextDigest, CAST(:contextJson AS jsonb), :policyVersion,
+                            :cacheKey, :budgetDate, :reservedTokens,
                             :model, :promptVersion, :expiresAt
                         )
                         """)
@@ -270,6 +286,9 @@ class AiRepository {
                 .param("contextDigest", contextDigest)
                 .param("contextJson", contextJson)
                 .param("policyVersion", policyVersion)
+                .param("cacheKey", cacheKey)
+                .param("budgetDate", budgetDate)
+                .param("reservedTokens", reservedTokens)
                 .param("model", model)
                 .param("promptVersion", promptVersion)
                 .param("expiresAt", utc(expiresAt), Types.TIMESTAMP_WITH_TIMEZONE)
@@ -277,25 +296,189 @@ class AiRepository {
         return jobId;
     }
 
+    UUID insertCachedJob(
+            UUID jobId,
+            UUID ownerUserId,
+            UUID requestingDeviceId,
+            UUID conversationId,
+            UUID requestId,
+            long fromSeq,
+            long toSeq,
+            String contextDigest,
+            String contextJson,
+            long policyVersion,
+            String cacheKey,
+            LocalDate budgetDate,
+            String model,
+            String promptVersion,
+            String resultJson,
+            Instant finishedAt,
+            Instant expiresAt
+    ) {
+        jdbc.sql("""
+                        INSERT INTO ai_jobs (
+                            id, owner_user_id, requesting_device_id, conversation_id,
+                            request_id, kind, status, from_seq, to_seq,
+                            context_digest, context_json, ai_policy_version,
+                            cache_key, budget_date, reserved_tokens,
+                            model, prompt_version, result_json,
+                            started_at, finished_at, expires_at
+                        ) VALUES (
+                            :id, :ownerUserId, :requestingDeviceId, :conversationId,
+                            :requestId, 'SUMMARY', 'SUCCEEDED', :fromSeq, :toSeq,
+                            :contextDigest, CAST(:contextJson AS jsonb), :policyVersion,
+                            :cacheKey, :budgetDate, 0,
+                            :model, :promptVersion, CAST(:resultJson AS jsonb),
+                            :finishedAt, :finishedAt, :expiresAt
+                        )
+                        """)
+                .param("id", jobId)
+                .param("ownerUserId", ownerUserId)
+                .param("requestingDeviceId", requestingDeviceId)
+                .param("conversationId", conversationId)
+                .param("requestId", requestId)
+                .param("fromSeq", fromSeq)
+                .param("toSeq", toSeq)
+                .param("contextDigest", contextDigest)
+                .param("contextJson", contextJson)
+                .param("policyVersion", policyVersion)
+                .param("cacheKey", cacheKey)
+                .param("budgetDate", budgetDate)
+                .param("model", model)
+                .param("promptVersion", promptVersion)
+                .param("resultJson", resultJson)
+                .param("finishedAt", utc(finishedAt), Types.TIMESTAMP_WITH_TIMEZONE)
+                .param("expiresAt", utc(expiresAt), Types.TIMESTAMP_WITH_TIMEZONE)
+                .update();
+        return jobId;
+    }
+
+    AiCacheEntry findCache(UUID ownerUserId, String cacheKey, Instant now) {
+        return jdbc.sql("""
+                        SELECT cache_key, result_json::text, expires_at
+                        FROM ai_cache_entries
+                        WHERE owner_user_id = :ownerUserId
+                          AND cache_key = :cacheKey
+                          AND expires_at > :now
+                        """)
+                .param("ownerUserId", ownerUserId)
+                .param("cacheKey", cacheKey)
+                .param("now", utc(now), Types.TIMESTAMP_WITH_TIMEZONE)
+                .query((row, rowNumber) -> new AiCacheEntry(
+                        row.getString("cache_key"),
+                        row.getString("result_json"),
+                        row.getObject("expires_at", OffsetDateTime.class).toInstant()))
+                .optional()
+                .orElse(null);
+    }
+
+    void createCacheEntry(AiJobRecord job, String resultJson, Instant expiresAt) {
+        jdbc.sql("""
+                        INSERT INTO ai_cache_entries (
+                            owner_user_id, cache_key, conversation_id, kind,
+                            from_seq, to_seq, provider, model, prompt_version,
+                            image_input_enabled, context_digest, result_json, expires_at
+                        ) VALUES (
+                            :ownerUserId, :cacheKey, :conversationId, :kind,
+                            :fromSeq, :toSeq, 'openai-compatible', :model, :promptVersion,
+                            FALSE, :contextDigest, CAST(:resultJson AS jsonb), :expiresAt
+                        )
+                        ON CONFLICT (owner_user_id, cache_key)
+                        DO UPDATE SET result_json = EXCLUDED.result_json,
+                                      created_at = CURRENT_TIMESTAMP,
+                                      expires_at = EXCLUDED.expires_at
+                        """)
+                .param("ownerUserId", job.ownerUserId())
+                .param("cacheKey", job.cacheKey())
+                .param("conversationId", job.conversationId())
+                .param("kind", job.kind())
+                .param("fromSeq", job.fromSeq())
+                .param("toSeq", job.toSeq())
+                .param("model", job.model())
+                .param("promptVersion", job.promptVersion())
+                .param("contextDigest", job.contextDigest())
+                .param("resultJson", resultJson)
+                .param("expiresAt", utc(expiresAt), Types.TIMESTAMP_WITH_TIMEZONE)
+                .update();
+    }
+
+    boolean reserveBudget(
+            UUID ownerUserId,
+            LocalDate budgetDate,
+            long limitTokens,
+            long reserveTokens
+    ) {
+        jdbc.sql("""
+                        INSERT INTO ai_daily_budgets (
+                            owner_user_id, budget_date, limit_tokens,
+                            reserved_tokens, used_tokens, version
+                        ) VALUES (
+                            :ownerUserId, :budgetDate, :limitTokens, 0, 0, 0
+                        )
+                        ON CONFLICT (owner_user_id, budget_date) DO NOTHING
+                        """)
+                .param("ownerUserId", ownerUserId)
+                .param("budgetDate", budgetDate)
+                .param("limitTokens", limitTokens)
+                .update();
+        return jdbc.sql("""
+                        UPDATE ai_daily_budgets
+                        SET reserved_tokens = reserved_tokens + :reserveTokens,
+                            version = version + 1
+                        WHERE owner_user_id = :ownerUserId
+                          AND budget_date = :budgetDate
+                          AND used_tokens + reserved_tokens + :reserveTokens <= limit_tokens
+                        """)
+                .param("ownerUserId", ownerUserId)
+                .param("budgetDate", budgetDate)
+                .param("reserveTokens", reserveTokens)
+                .update() == 1;
+    }
+
+    long countQueuedJobs(UUID ownerUserId) {
+        return jdbc.sql("""
+                        SELECT COUNT(*)
+                        FROM ai_jobs
+                        WHERE owner_user_id = :ownerUserId
+                          AND status = 'QUEUED'
+                        """)
+                .param("ownerUserId", ownerUserId)
+                .query(Long.class)
+                .single();
+    }
+
     AiJobRecord claimNextQueued(Instant startedAt) {
         return jdbc.sql("""
                         WITH candidate AS (
-                            SELECT id
-                            FROM ai_jobs
-                            WHERE status = 'QUEUED'
-                            ORDER BY created_at, id
-                            FOR UPDATE SKIP LOCKED
+                            SELECT job.id
+                            FROM ai_jobs job
+                            JOIN ai_daily_budgets budget
+                              ON budget.owner_user_id = job.owner_user_id
+                             AND budget.budget_date = job.budget_date
+                            WHERE job.status = 'QUEUED'
+                              AND job.expires_at > :startedAt
+                              AND NOT EXISTS (
+                                  SELECT 1
+                                  FROM ai_jobs running
+                                  WHERE running.owner_user_id = job.owner_user_id
+                                    AND running.status = 'RUNNING'
+                              )
+                            ORDER BY job.created_at, job.id
+                            FOR UPDATE OF job, budget SKIP LOCKED
                             LIMIT 1
                         )
                         UPDATE ai_jobs job
                         SET status = 'RUNNING',
-                            started_at = :startedAt
+                            started_at = :startedAt,
+                            attempt_count = attempt_count + 1
                         FROM candidate
                         WHERE job.id = candidate.id
                         RETURNING job.id, job.owner_user_id, job.requesting_device_id,
                                   job.conversation_id, job.request_id, job.kind, job.status,
                                   job.from_seq, job.to_seq, job.context_digest,
                                   job.context_json::text, job.ai_policy_version,
+                                  job.cache_key, job.budget_date, job.reserved_tokens,
+                                  job.attempt_count, job.input_tokens, job.output_tokens,
                                   job.model, job.prompt_version, job.result_json::text,
                                   job.error_code, job.created_at, job.started_at,
                                   job.finished_at, job.expires_at
@@ -306,10 +489,42 @@ class AiRepository {
                 .orElse(null);
     }
 
+    List<AiJobRecord> findExpiredActiveJobsForUpdate(Instant now, int limit) {
+        return jdbc.sql(selectJobSql() + """
+                         WHERE status IN ('QUEUED', 'RUNNING')
+                           AND expires_at <= :now
+                         ORDER BY expires_at, id
+                         FOR UPDATE SKIP LOCKED
+                         LIMIT :limit
+                        """)
+                .param("now", utc(now), Types.TIMESTAMP_WITH_TIMEZONE)
+                .param("limit", limit)
+                .query(this::mapJob)
+                .list();
+    }
+
+    int requeue(UUID jobId, UUID ownerUserId) {
+        return jdbc.sql("""
+                        UPDATE ai_jobs
+                        SET status = 'QUEUED',
+                            started_at = NULL,
+                            error_code = NULL
+                        WHERE id = :jobId
+                          AND owner_user_id = :ownerUserId
+                          AND status = 'RUNNING'
+                          AND attempt_count < 2
+                        """)
+                .param("jobId", jobId)
+                .param("ownerUserId", ownerUserId)
+                .update();
+    }
+
     int succeed(
             UUID jobId,
             UUID ownerUserId,
             String resultJson,
+            int inputTokens,
+            int outputTokens,
             Instant finishedAt,
             Instant expiresAt
     ) {
@@ -318,6 +533,9 @@ class AiRepository {
                         SET status = 'SUCCEEDED',
                             result_json = CAST(:resultJson AS jsonb),
                             error_code = NULL,
+                            reserved_tokens = 0,
+                            input_tokens = :inputTokens,
+                            output_tokens = :outputTokens,
                             finished_at = :finishedAt,
                             expires_at = :expiresAt
                         WHERE id = :jobId
@@ -327,9 +545,54 @@ class AiRepository {
                 .param("jobId", jobId)
                 .param("ownerUserId", ownerUserId)
                 .param("resultJson", resultJson)
+                .param("inputTokens", inputTokens)
+                .param("outputTokens", outputTokens)
                 .param("finishedAt", utc(finishedAt), Types.TIMESTAMP_WITH_TIMEZONE)
                 .param("expiresAt", utc(expiresAt), Types.TIMESTAMP_WITH_TIMEZONE)
                 .update();
+    }
+
+    void settleSucceededBudget(AiJobRecord job, long actualTokens) {
+        int updated = jdbc.sql("""
+                        UPDATE ai_daily_budgets
+                        SET reserved_tokens = reserved_tokens - :reservedTokens,
+                            used_tokens = used_tokens + :actualTokens,
+                            version = version + 1
+                        WHERE owner_user_id = :ownerUserId
+                          AND budget_date = :budgetDate
+                          AND reserved_tokens >= :reservedTokens
+                          AND used_tokens + reserved_tokens - :reservedTokens + :actualTokens
+                              <= limit_tokens
+                        """)
+                .param("ownerUserId", job.ownerUserId())
+                .param("budgetDate", job.budgetDate())
+                .param("reservedTokens", job.reservedTokens())
+                .param("actualTokens", actualTokens)
+                .update();
+        if (updated != 1) {
+            throw new IllegalStateException("AI budget could not be settled");
+        }
+    }
+
+    void releaseBudget(AiJobRecord job) {
+        if (job.reservedTokens() == 0) {
+            return;
+        }
+        int updated = jdbc.sql("""
+                        UPDATE ai_daily_budgets
+                        SET reserved_tokens = reserved_tokens - :reservedTokens,
+                            version = version + 1
+                        WHERE owner_user_id = :ownerUserId
+                          AND budget_date = :budgetDate
+                          AND reserved_tokens >= :reservedTokens
+                        """)
+                .param("ownerUserId", job.ownerUserId())
+                .param("budgetDate", job.budgetDate())
+                .param("reservedTokens", job.reservedTokens())
+                .update();
+        if (updated != 1) {
+            throw new IllegalStateException("AI budget reservation could not be released");
+        }
     }
 
     int createArtifact(
@@ -365,6 +628,7 @@ class AiRepository {
                         SET status = 'FAILED',
                             result_json = NULL,
                             error_code = :errorCode,
+                            reserved_tokens = 0,
                             finished_at = :finishedAt
                         WHERE id = :jobId
                           AND owner_user_id = :ownerUserId
@@ -374,6 +638,50 @@ class AiRepository {
                 .param("ownerUserId", ownerUserId)
                 .param("errorCode", errorCode)
                 .param("finishedAt", utc(finishedAt), Types.TIMESTAMP_WITH_TIMEZONE)
+                .update();
+    }
+
+    int expire(UUID jobId, UUID ownerUserId, String errorCode, Instant finishedAt) {
+        return jdbc.sql("""
+                        UPDATE ai_jobs
+                        SET status = 'EXPIRED',
+                            context_json = NULL,
+                            result_json = NULL,
+                            error_code = :errorCode,
+                            reserved_tokens = 0,
+                            finished_at = :finishedAt
+                        WHERE id = :jobId
+                          AND owner_user_id = :ownerUserId
+                          AND status IN ('QUEUED', 'RUNNING')
+                        """)
+                .param("jobId", jobId)
+                .param("ownerUserId", ownerUserId)
+                .param("errorCode", errorCode)
+                .param("finishedAt", utc(finishedAt), Types.TIMESTAMP_WITH_TIMEZONE)
+                .update();
+    }
+
+    int deleteExpiredArtifacts(Instant now) {
+        return jdbc.sql("DELETE FROM ai_artifacts WHERE expires_at <= :now")
+                .param("now", utc(now), Types.TIMESTAMP_WITH_TIMEZONE)
+                .update();
+    }
+
+    int deleteExpiredCacheEntries(Instant now) {
+        return jdbc.sql("DELETE FROM ai_cache_entries WHERE expires_at <= :now")
+                .param("now", utc(now), Types.TIMESTAMP_WITH_TIMEZONE)
+                .update();
+    }
+
+    int deleteExpiredTerminalJobs(Instant now, Instant expiredMetadataCutoff) {
+        return jdbc.sql("""
+                        DELETE FROM ai_jobs
+                        WHERE (status IN ('SUCCEEDED', 'FAILED', 'CANCELLED')
+                               AND expires_at <= :now)
+                           OR (status = 'EXPIRED' AND finished_at <= :expiredMetadataCutoff)
+                        """)
+                .param("now", utc(now), Types.TIMESTAMP_WITH_TIMEZONE)
+                .param("expiredMetadataCutoff", utc(expiredMetadataCutoff), Types.TIMESTAMP_WITH_TIMEZONE)
                 .update();
     }
 
@@ -433,6 +741,8 @@ class AiRepository {
                 SELECT id, owner_user_id, requesting_device_id, conversation_id,
                        request_id, kind, status, from_seq, to_seq,
                        context_digest, context_json::text, ai_policy_version,
+                       cache_key, budget_date, reserved_tokens, attempt_count,
+                       input_tokens, output_tokens,
                        model, prompt_version, result_json::text, error_code,
                        created_at, started_at, finished_at, expires_at
                 FROM ai_jobs
@@ -453,6 +763,12 @@ class AiRepository {
                 row.getString("context_digest"),
                 row.getString("context_json"),
                 row.getLong("ai_policy_version"),
+                row.getString("cache_key"),
+                row.getObject("budget_date", LocalDate.class),
+                row.getLong("reserved_tokens"),
+                row.getInt("attempt_count"),
+                row.getInt("input_tokens"),
+                row.getInt("output_tokens"),
                 row.getString("model"),
                 row.getString("prompt_version"),
                 row.getString("result_json"),

@@ -1,6 +1,7 @@
 package com.jitong.im.ai;
 
 import java.time.Instant;
+import java.time.LocalDate;
 import java.util.UUID;
 
 record AiConsentResponse(
@@ -66,6 +67,12 @@ record AiJobRecord(
         String contextDigest,
         String contextJson,
         long aiPolicyVersion,
+        String cacheKey,
+        LocalDate budgetDate,
+        long reservedTokens,
+        int attemptCount,
+        int inputTokens,
+        int outputTokens,
         String model,
         String promptVersion,
         String resultJson,
@@ -73,6 +80,13 @@ record AiJobRecord(
         Instant createdAt,
         Instant startedAt,
         Instant finishedAt,
+        Instant expiresAt
+) {
+}
+
+record AiCacheEntry(
+        String cacheKey,
+        String resultJson,
         Instant expiresAt
 ) {
 }

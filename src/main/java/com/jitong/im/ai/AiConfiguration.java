@@ -1,14 +1,15 @@
 package com.jitong.im.ai;
 
-import org.springframework.ai.model.tool.ToolCallingManager;
 import org.springframework.ai.model.tool.DefaultToolCallingManager;
+import org.springframework.ai.model.tool.ToolCallingManager;
 import org.springframework.ai.openai.OpenAiChatModel;
 import org.springframework.ai.openai.OpenAiChatOptions;
 import org.springframework.ai.openai.api.OpenAiApi;
-import org.springframework.boot.context.properties.EnableConfigurationProperties;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
+import org.springframework.boot.context.properties.EnableConfigurationProperties;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
+import org.springframework.retry.support.RetryTemplate;
 
 @Configuration(proxyBeanMethods = false)
 @EnableConfigurationProperties(AiProperties.class)
@@ -44,6 +45,10 @@ class AiConfiguration {
         return OpenAiChatModel.builder()
                 .openAiApi(api)
                 .toolCallingManager(toolCallingManager)
+                .retryTemplate(RetryTemplate.builder()
+                        .maxAttempts(1)
+                        .noBackoff()
+                        .build())
                 .defaultOptions(OpenAiChatOptions.builder()
                         .model(properties.provider().model())
                         .temperature(0.0)

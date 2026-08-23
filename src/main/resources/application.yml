@@ -1,4 +1,8 @@
 spring:
+  task:
+    scheduling:
+      pool:
+        size: 4
   application:
     name: jitong-im-server
   servlet:
@@ -54,6 +58,8 @@ jitong:
     token-encryption-key: ${FCM_TOKEN_ENCRYPTION_KEY:}
   ai:
     prompt-version: ${AI_PROMPT_VERSION:summary-v1}
+    retention-interval: ${AI_RETENTION_INTERVAL:60000}
+    retention-initial-delay: ${AI_RETENTION_INITIAL_DELAY:60000}
     provider:
       enabled: ${AI_PROVIDER_ENABLED:false}
       base-url: ${AI_PROVIDER_BASE_URL:}
@@ -61,6 +67,9 @@ jitong:
       model: ${AI_PROVIDER_MODEL:gpt-4o-mini}
     worker:
       poll-interval: ${AI_WORKER_POLL_INTERVAL:250}
+    budget:
+      daily-token-limit: ${AI_DAILY_TOKEN_LIMIT:100000}
+      max-output-tokens: ${AI_MAX_OUTPUT_TOKENS:1024}
 
 management:
   endpoints:

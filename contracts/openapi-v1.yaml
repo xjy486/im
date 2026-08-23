@@ -1166,6 +1166,8 @@ paths:
           $ref: '#/components/responses/ApiError'
         '409':
           $ref: '#/components/responses/ApiError'
+        '429':
+          $ref: '#/components/responses/ApiError'
   /api/v1/ai/jobs/{jobId}:
     get:
       operationId: getPrivateAiJob

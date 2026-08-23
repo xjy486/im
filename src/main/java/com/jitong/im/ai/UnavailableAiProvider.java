@@ -12,7 +12,7 @@ import org.springframework.stereotype.Component;
 class UnavailableAiProvider implements AiProvider {
 
     @Override
-    public AiSummary summarize(AiSummaryContext context) {
+    public AiProviderResult summarize(AiSummaryContext context) {
         throw new AiProviderException(
                 "AI_PROVIDER_UNAVAILABLE",
                 "No AI provider is configured");

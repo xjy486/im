@@ -188,6 +188,10 @@ curl http://127.0.0.1:8080/api/v1/system/health
 | `AI_PROVIDER_API_KEY` | AI provider API key | 空；只写入本机 `.env` |
 | `AI_PROVIDER_MODEL` | AI 总结使用的模型名 | `gpt-4o-mini` |
 | `AI_WORKER_POLL_INTERVAL` | AI 异步任务轮询间隔，单位毫秒 | `250` |
+| `AI_DAILY_TOKEN_LIMIT` | 每用户按上海自然日计算的 AI Token 上限 | `100000` |
+| `AI_MAX_OUTPUT_TOKENS` | 单次 AI 总结允许的最大输出 Token | `1024` |
+| `AI_RETENTION_INTERVAL` | AI 过期任务与私人内容清理间隔，单位毫秒 | `60000` |
+| `AI_RETENTION_INITIAL_DELAY` | 服务启动后首次 AI 清理延迟，单位毫秒 | `60000` |
 
 `.env` 包含本地凭证，不得提交、复制到 issue、日志或聊天记录。修改 `JITONG_HTTP_PORT` 后重新执行 `./scripts/dev-up.sh` 即可使用新端口。
 
@@ -206,6 +210,8 @@ AI_PROVIDER_BASE_URL=https://example.invalid/v1
 AI_PROVIDER_API_KEY=replace-with-a-local-secret
 AI_PROVIDER_MODEL=replace-with-provider-model
 AI_WORKER_POLL_INTERVAL=250
+AI_DAILY_TOKEN_LIMIT=100000
+AI_MAX_OUTPUT_TOKENS=1024
 ```
 
 `compose.yaml` 会把这些变量传给 `server` 容器；Spring Boot 再通过

@@ -3,6 +3,8 @@ package com.jitong.im.ai;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.springframework.ai.chat.client.ChatClient;
 import org.springframework.ai.chat.model.ChatModel;
+import org.springframework.ai.chat.model.ChatResponse;
+import org.springframework.ai.chat.metadata.Usage;
 import org.springframework.ai.chat.prompt.Prompt;
 import org.springframework.ai.converter.BeanOutputConverter;
 import org.springframework.ai.openai.OpenAiChatOptions;
@@ -38,7 +40,7 @@ class OpenAiCompatibleAiProvider implements AiProvider {
     }
 
     @Override
-    public AiSummary summarize(AiSummaryContext context) {
+    public AiProviderResult summarize(AiSummaryContext context) {
         if (!properties.provider().enabled()
                 || properties.provider().baseUrl() == null
                 || properties.provider().baseUrl().isBlank()
@@ -48,7 +50,7 @@ class OpenAiCompatibleAiProvider implements AiProvider {
         }
 
         try {
-            String content = chatClient.prompt(new Prompt(
+            ChatResponse response = chatClient.prompt(new Prompt(
                             List.of(
                                     new org.springframework.ai.chat.messages.SystemMessage(
                                             "Return only JSON matching this schema. Do not invent message IDs.\\n"
@@ -60,20 +62,32 @@ class OpenAiCompatibleAiProvider implements AiProvider {
                                     .responseFormat(ResponseFormat.builder()
                                             .type(ResponseFormat.Type.JSON_OBJECT)
                                             .build())
+                                    .maxTokens(properties.budget().maxOutputTokens())
                                     .build()))
                     .call()
-                    .content();
+                    .chatResponse();
+            String content = response == null || response.getResult() == null
+                    ? null
+                    : response.getResult().getOutput().getText();
             if (content == null || content.isBlank()) {
                 throw new AiProviderException("AI_INVALID_RESULT", "The AI provider returned no content");
             }
             AiSummary summary = outputConverter.convert(content);
             AiSummaryValidator.validate(summary, context);
-            return summary;
+            Usage usage = response.getMetadata() == null ? null : response.getMetadata().getUsage();
+            return new AiProviderResult(
+                    summary,
+                    tokenCount(usage == null ? null : usage.getPromptTokens()),
+                    tokenCount(usage == null ? null : usage.getCompletionTokens()));
         } catch (AiProviderException exception) {
             throw exception;
         } catch (RuntimeException exception) {
             throw new AiProviderException("AI_PROVIDER_FAILURE", "The AI provider request failed", exception);
         }
+    }
+
+    private int tokenCount(Integer value) {
+        return value == null || value < 0 ? 0 : value;
     }
 
     @Override
