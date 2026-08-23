@@ -225,6 +225,53 @@ class GroupContractTest extends ContractTestEnvironment {
     }
 
     @Test
+    void group_number_join_requests_and_member_listing_are_available_to_the_desktop_flow()
+            throws Exception {
+        TestUser owner = createUser("Desktop group owner");
+        TestUser applicant = createUser("Desktop group applicant");
+        String ownerToken = login(owner.accountNo(), "desktop-group-owner");
+        String applicantToken = login(applicant.accountNo(), "desktop-group-applicant");
+
+        JsonNode group = createGroup(ownerToken, "Desktop Lounge", "", "PUBLIC");
+        UUID conversationId = UUID.fromString(group.get("conversationId").asText());
+
+        ResponseEntity<JsonNode> request = exchange(
+                HttpMethod.POST,
+                "/api/v1/groups/join-requests/by-group-no",
+                applicantToken,
+                Map.of("groupNo", group.get("groupNo").asText()));
+        assertThat(request.getStatusCode()).isEqualTo(HttpStatus.OK);
+        assertThat(request.getBody().get("status").asText()).isEqualTo("PENDING");
+
+        JsonNode mine = exchange(
+                HttpMethod.GET,
+                "/api/v1/groups/join-requests/mine",
+                applicantToken,
+                null).getBody();
+        assertThat(mine).hasSize(1);
+        assertThat(mine.get(0).get("groupNo").asText())
+                .isEqualTo(group.get("groupNo").asText());
+
+        assertThat(exchange(
+                HttpMethod.GET,
+                "/api/v1/groups/" + conversationId + "/members",
+                ownerToken,
+                null).getBody()).hasSize(1);
+
+        assertThat(exchange(
+                HttpMethod.POST,
+                "/api/v1/groups/" + conversationId + "/join-requests/" +
+                        request.getBody().get("requestId").asText() + "/approve",
+                ownerToken,
+                null).getStatusCode()).isEqualTo(HttpStatus.OK);
+        assertThat(exchange(
+                HttpMethod.GET,
+                "/api/v1/groups/" + conversationId + "/members",
+                applicantToken,
+                null).getBody()).hasSize(2);
+    }
+
+    @Test
     void ordinary_removal_allows_reapplication_but_ban_blocks_every_entry_path() throws Exception {
         TestUser owner = createUser("Ban owner");
         TestUser member = createUser("Ban member");

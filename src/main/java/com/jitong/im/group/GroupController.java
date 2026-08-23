@@ -143,12 +143,39 @@ class GroupController {
         return service.createJoinRequest(authorization, conversationId, request, clientIp(servletRequest));
     }
 
+    @PostMapping("/join-requests/by-group-no")
+    GroupJoinRequestResponse createJoinRequestByGroupNo(
+            @RequestHeader(value = "Authorization", required = false) String authorization,
+            @Valid @RequestBody GroupJoinRequestByGroupNoRequest request,
+            HttpServletRequest servletRequest
+    ) {
+        return service.createJoinRequestByGroupNo(
+                authorization,
+                request,
+                clientIp(servletRequest));
+    }
+
+    @GetMapping("/join-requests/mine")
+    List<GroupMyJoinRequestSummary> listMyJoinRequests(
+            @RequestHeader(value = "Authorization", required = false) String authorization
+    ) {
+        return service.listMyJoinRequests(authorization);
+    }
+
     @GetMapping("/{conversationId}/join-requests")
     List<GroupJoinRequestSummary> listJoinRequests(
             @RequestHeader(value = "Authorization", required = false) String authorization,
             @PathVariable java.util.UUID conversationId
     ) {
         return service.listJoinRequests(authorization, conversationId);
+    }
+
+    @GetMapping("/{conversationId}/members")
+    List<GroupMemberSummary> listMembers(
+            @RequestHeader(value = "Authorization", required = false) String authorization,
+            @PathVariable java.util.UUID conversationId
+    ) {
+        return service.listMembers(authorization, conversationId);
     }
 
     @PostMapping("/{conversationId}/join-requests/{requestId}/approve")

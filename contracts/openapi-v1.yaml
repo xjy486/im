@@ -525,6 +525,72 @@ paths:
           $ref: '#/components/responses/ApiError'
         '403':
           $ref: '#/components/responses/ApiError'
+  /api/v1/groups/join-requests/by-group-no:
+    post:
+      operationId: createGroupJoinRequestByGroupNumber
+      summary: Submit a group join request using an exact group number
+      security: [{ bearerAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [groupNo]
+              properties:
+                groupNo: { type: string, pattern: '^[1-9][0-9]{10}$' }
+                inviteToken: { type: [string, 'null'], minLength: 20, maxLength: 128 }
+      responses:
+        '200':
+          description: Idempotent pending join request
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/GroupJoinRequestResponse' }
+        '400':
+          $ref: '#/components/responses/ApiError'
+        '401':
+          $ref: '#/components/responses/ApiError'
+        '403':
+          $ref: '#/components/responses/ApiError'
+        '404':
+          $ref: '#/components/responses/ApiError'
+        '409':
+          $ref: '#/components/responses/ApiError'
+  /api/v1/groups/join-requests/mine:
+    get:
+      operationId: listMyGroupJoinRequests
+      summary: List the authenticated user's group join requests
+      security: [{ bearerAuth: [] }]
+      responses:
+        '200':
+          description: Join request status history
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: '#/components/schemas/GroupMyJoinRequestSummary' }
+        '401':
+          $ref: '#/components/responses/ApiError'
+  /api/v1/groups/{conversationId}/members:
+    get:
+      operationId: listGroupMembers
+      summary: List active members for a group member
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { $ref: '#/components/parameters/ConversationId' }
+      responses:
+        '200':
+          description: Active group members in role order
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: '#/components/schemas/GroupMemberSummary' }
+        '401':
+          $ref: '#/components/responses/ApiError'
+        '403':
+          $ref: '#/components/responses/ApiError'
   /api/v1/groups/{conversationId}/join-requests/{requestId}/approve:
     post:
       operationId: approveGroupJoinRequest
@@ -1360,6 +1426,34 @@ components:
         inviteId: { type: [string, 'null'], format: uuid }
         createdAt: { type: string, format: date-time }
         resolvedAt: { type: [string, 'null'], format: date-time }
+    GroupMyJoinRequestSummary:
+      type: object
+      additionalProperties: false
+      required:
+        [version, requestId, conversationId, groupNo, groupName, status, createdAt, resolvedAt]
+      properties:
+        version: { const: 1 }
+        requestId: { type: string, format: uuid }
+        conversationId: { type: string, format: uuid }
+        groupNo: { type: string, pattern: '^[1-9][0-9]{10}$' }
+        groupName: { type: string }
+        status: { type: string, enum: [PENDING, APPROVED, REJECTED, CANCELLED, EXPIRED] }
+        createdAt: { type: string, format: date-time }
+        resolvedAt: { type: [string, 'null'], format: date-time }
+    GroupMemberSummary:
+      type: object
+      additionalProperties: false
+      required:
+        [version, userId, accountNo, displayName, role, avatarUrl, avatarVersion, avatarFallback]
+      properties:
+        version: { const: 1 }
+        userId: { type: string, format: uuid }
+        accountNo: { type: string, pattern: '^[1-9][0-9]{10}$' }
+        displayName: { type: string }
+        role: { type: string, enum: [OWNER, ADMIN, MEMBER] }
+        avatarUrl: { type: [string, 'null'] }
+        avatarVersion: { type: integer, format: int64, minimum: 0 }
+        avatarFallback: { type: string, minLength: 1, maxLength: 2 }
     GroupJoinRequestSummary:
       type: object
       additionalProperties: false

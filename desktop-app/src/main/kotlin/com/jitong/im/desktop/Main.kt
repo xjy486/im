@@ -44,6 +44,11 @@ import com.jitong.im.desktop.conversation.ConversationApiException
 import com.jitong.im.desktop.conversation.ConversationClient
 import com.jitong.im.desktop.conversation.DesktopContactRequestSummary
 import com.jitong.im.desktop.conversation.DesktopContactSearchResult
+import com.jitong.im.desktop.conversation.DesktopGroupInvite
+import com.jitong.im.desktop.conversation.DesktopGroupMember
+import com.jitong.im.desktop.conversation.DesktopGroupSearchPage
+import com.jitong.im.desktop.conversation.DesktopGroupSummary
+import com.jitong.im.desktop.conversation.DesktopMyGroupJoinRequest
 import com.jitong.im.desktop.conversation.DesktopRealtimeClient
 import com.jitong.im.desktop.conversation.DesktopUserProfile
 import com.jitong.im.desktop.conversation.RealtimeCommandException
@@ -110,6 +115,11 @@ private data class DesktopData(
     val messages: List<LocalMessage> = emptyList(),
     val searchResults: List<LocalMessage> = emptyList(),
     val requests: List<DesktopContactRequestSummary> = emptyList(),
+    val groups: List<DesktopGroupSummary> = emptyList(),
+    val groupSearch: DesktopGroupSearchPage? = null,
+    val groupJoinRequests: List<DesktopMyGroupJoinRequest> = emptyList(),
+    val groupMembers: List<DesktopGroupMember> = emptyList(),
+    val groupInvite: DesktopGroupInvite? = null,
 )
 
 @Composable
@@ -139,6 +149,10 @@ private fun DesktopApp(
     var mediaLoadGeneration by remember { mutableStateOf(0L) }
     val uiScope = androidx.compose.runtime.rememberCoroutineScope()
     val syncMutex = remember { Mutex() }
+    var groupSearchQuery by remember { mutableStateOf("") }
+    var groupJoinGroupNo by remember { mutableStateOf("") }
+    var groupJoinToken by remember { mutableStateOf("") }
+    var groupManagementAccountNo by remember { mutableStateOf("") }
 
     fun refreshLocal() {
         val local = authStore.localDatabase() ?: return
@@ -155,8 +169,12 @@ private fun DesktopApp(
         mediaBytes = mediaBytes.filterKeys { it in activeMediaKeys }
         val token = authStore.session?.accessToken ?: session?.accessToken
         val activeAvatarKeys = conversations
-            .filter { it.peerAvatarVersion > 0 }
+            .filter { it.kind == "C2C" && it.peerAvatarVersion > 0 && it.peerUserId.isNotBlank() }
             .map { "${it.peerUserId}-v${it.peerAvatarVersion}" }
+            .toSet()
+        val activeGroupAvatarKeys = conversations
+            .filter { it.kind == "GROUP" && it.peerAvatarVersion > 0 }
+            .map { "group-avatar-${it.conversationId}-v${it.peerAvatarVersion}" }
             .toSet()
         avatarBytes = avatarBytes.filterKeys { it in activeAvatarKeys }
         val query = localSearchQuery
@@ -184,7 +202,7 @@ private fun DesktopApp(
         uiScope.launch(Dispatchers.IO) {
             val loaded = buildMap {
                 conversations
-                    .filter { it.peerAvatarVersion > 0 }
+                    .filter { it.kind == "C2C" && it.peerAvatarVersion > 0 && it.peerUserId.isNotBlank() }
                     .forEach { conversation ->
                         conversationClient.loadUserAvatar(
                             token,
@@ -198,9 +216,18 @@ private fun DesktopApp(
                             }
                     }
                 conversations
-                    .map { it.conversationId }
-                    .forEach { conversationId ->
-                        conversationClient.currentGroupAvatar(token, local, conversationId)
+                    .filter { it.kind == "GROUP" && it.peerAvatarVersion > 0 }
+                    .forEach { conversation ->
+                        conversationClient.loadGroupAvatar(
+                            token,
+                            local,
+                            conversation.conversationId,
+                            conversation.peerAvatarVersion)
+                            ?.let { bytes ->
+                                put(
+                                    "group-avatar-${conversation.conversationId}-v${conversation.peerAvatarVersion}",
+                                    bytes)
+                            }
                     }
                 messages
                     .filter {
@@ -225,7 +252,7 @@ private fun DesktopApp(
             withContext(Dispatchers.Main.immediate) {
                 if (generation != mediaLoadGeneration) return@withContext
                 val loadedAvatars = loaded.filterKeys { key ->
-                    key in activeAvatarKeys || key.startsWith("group-avatar-")
+                    key in activeAvatarKeys || key in activeGroupAvatarKeys
                 }
                 val loadedMedia = loaded.filterKeys { key ->
                     key.startsWith("message-media-")
@@ -324,6 +351,63 @@ private fun DesktopApp(
         }
     }
 
+    fun refreshGroups() {
+        val current = authStore.session ?: session ?: return
+        uiScope.launch {
+            runCatching {
+                withContext(Dispatchers.IO) {
+                    conversationClient.listGroups(current.accessToken)
+                }
+            }.onSuccess { groups ->
+                data = data.copy(groups = groups)
+                withContext(Dispatchers.IO) {
+                    authStore.localDatabase()?.let { local ->
+                        val existingGroupIds = local.listConversations()
+                            .filter { it.kind == "GROUP" }
+                            .map { it.conversationId }
+                            .toSet()
+                        val incomingGroupIds = groups
+                            .map { it.conversationId }
+                            .toSet()
+                        (existingGroupIds - incomingGroupIds)
+                            .forEach(local::clearGroupData)
+                        conversationClient.replaceGroups(local, groups)
+                        val currentSession = authStore.session ?: session
+                        if (currentSession != null) {
+                            groups.forEach { group ->
+                                conversationClient.restoreConversation(
+                                    currentSession.accessToken,
+                                    local,
+                                    group.conversationId,
+                                    currentSession.userId)
+                                conversationClient.restoreReadStates(
+                                    currentSession.accessToken,
+                                    local,
+                                    group.conversationId)
+                            }
+                        }
+                    }
+                }
+                refreshLocal()
+            }.onFailure { error = messageFor(it) }
+        }
+    }
+
+    fun refreshGroupMembers(conversationId: String) {
+        val current = authStore.session ?: session ?: return
+        uiScope.launch {
+            runCatching {
+                withContext(Dispatchers.IO) {
+                    conversationClient.listGroupMembers(
+                        current.accessToken,
+                        conversationId)
+                }
+            }.onSuccess {
+                data = data.copy(groupMembers = it)
+            }.onFailure { error = messageFor(it) }
+        }
+    }
+
     LaunchedEffect(authStore) {
         runCatching {
             withContext(Dispatchers.IO) { authStore.restore() }
@@ -357,6 +441,7 @@ private fun DesktopApp(
         refreshLocal()
         refreshSelfProfile()
         refreshRequests()
+        refreshGroups()
         val realtime = DesktopRealtimeClient(
             baseUrl = serverUrl(),
             accessToken = { authStore.session?.accessToken },
@@ -401,6 +486,11 @@ private fun DesktopApp(
                             }
                         }
                         refreshLocal()
+                        if (envelope.operation == "membership.granted"
+                            || (envelope.operation == "message.created"
+                                && envelope.body?.type == "SYSTEM")) {
+                            refreshGroups()
+                        }
                     }.onFailure {
                         if (it is SyncGapException) {
                             runCatching {
@@ -440,6 +530,7 @@ private fun DesktopApp(
                     }
                     refreshLocal()
                     refreshRequests()
+                    refreshGroups()
                 }.onFailure {
                     if ((it is ConversationApiException && it.statusCode == 409)
                         || it is SyncGapException) {
@@ -522,6 +613,15 @@ private fun DesktopApp(
             selfAvatarBytes = selfAvatarBytes,
             selfAvatarLoading = selfAvatarLoading,
             mediaBytes = mediaBytes,
+            groups = data.groups,
+            groupSearchQuery = groupSearchQuery,
+            groupSearch = data.groupSearch,
+            groupJoinGroupNo = groupJoinGroupNo,
+            groupJoinToken = groupJoinToken,
+            groupJoinRequests = data.groupJoinRequests,
+            groupMembers = data.groupMembers,
+            groupManagementAccountNo = groupManagementAccountNo,
+            groupInvite = data.groupInvite,
             draft = draft,
             error = error,
             onSearchAccountNoChange = { searchAccountNo = it.filter(Char::isDigit).take(11) },
@@ -545,6 +645,167 @@ private fun DesktopApp(
                 data = data.copy(searchResults = emptyList())
             },
             onLocalSearch = ::searchLocalHistory,
+            onGroupSearchQueryChange = {
+                groupSearchQuery = it.take(128)
+                data = data.copy(groupSearch = null)
+            },
+            onGroupSearch = {
+                val current = authStore.session ?: session ?: return@MainScreen
+                uiScope.launch {
+                    runCatching {
+                        withContext(Dispatchers.IO) {
+                            conversationClient.searchGroups(
+                                current.accessToken,
+                                groupSearchQuery)
+                        }
+                    }.onSuccess { data = data.copy(groupSearch = it) }
+                        .onFailure { error = messageFor(it) }
+                }
+            },
+            onJoinGroup = {
+                val current = authStore.session ?: session ?: return@MainScreen
+                uiScope.launch {
+                    runCatching {
+                        withContext(Dispatchers.IO) {
+                            conversationClient.requestToJoinGroup(
+                                current.accessToken,
+                                groupJoinGroupNo,
+                                groupJoinToken.takeIf(String::isNotBlank))
+                        }
+                    }.onSuccess {
+                        data = data.copy(
+                            groupJoinRequests = data.groupJoinRequests + DesktopMyGroupJoinRequest(
+                                requestId = it.requestId,
+                                conversationId = it.conversationId,
+                                groupNo = groupJoinGroupNo,
+                                groupName = "Group $groupJoinGroupNo",
+                                status = it.status,
+                                createdAt = it.createdAt,
+                                resolvedAt = it.resolvedAt))
+                    }.onFailure { error = messageFor(it) }
+                }
+            },
+            onGroupJoinGroupNoChange = { groupJoinGroupNo = it.filter(Char::isDigit).take(11) },
+            onGroupJoinTokenChange = { groupJoinToken = it.take(128) },
+            onGroupManagementAccountNoChange = {
+                groupManagementAccountNo = it.filter(Char::isDigit).take(11)
+            },
+            onRefreshGroupJoinRequests = {
+                val current = authStore.session ?: session ?: return@MainScreen
+                uiScope.launch {
+                    runCatching {
+                        withContext(Dispatchers.IO) {
+                            conversationClient.listMyGroupJoinRequests(current.accessToken)
+                        }
+                    }.onSuccess { data = data.copy(groupJoinRequests = it) }
+                        .onFailure { error = messageFor(it) }
+                }
+            },
+            onRefreshGroupMembers = ::refreshGroupMembers,
+            onAddGroupMember = { conversationId ->
+                val current = authStore.session ?: session ?: return@MainScreen
+                uiScope.launch {
+                    runCatching {
+                        withContext(Dispatchers.IO) {
+                            conversationClient.addGroupMember(
+                                current.accessToken,
+                                conversationId,
+                                groupManagementAccountNo)
+                        }
+                        refreshGroups()
+                        refreshGroupMembers(conversationId)
+                    }.onFailure { error = messageFor(it) }
+                }
+            },
+            onChangeGroupRole = { conversationId, userId, role ->
+                val current = authStore.session ?: session ?: return@MainScreen
+                uiScope.launch {
+                    runCatching {
+                        withContext(Dispatchers.IO) {
+                            conversationClient.changeGroupRole(
+                                current.accessToken,
+                                conversationId,
+                                userId,
+                                role)
+                        }
+                        refreshGroups()
+                        refreshGroupMembers(conversationId)
+                    }.onFailure { error = messageFor(it) }
+                }
+            },
+            onTransferGroupOwner = { conversationId, userId ->
+                val current = authStore.session ?: session ?: return@MainScreen
+                uiScope.launch {
+                    runCatching {
+                        withContext(Dispatchers.IO) {
+                            conversationClient.transferGroupOwner(
+                                current.accessToken,
+                                conversationId,
+                                userId)
+                        }
+                        refreshGroups()
+                        refreshGroupMembers(conversationId)
+                    }.onFailure { error = messageFor(it) }
+                }
+            },
+            onRemoveGroupMember = { conversationId, userId ->
+                val current = authStore.session ?: session ?: return@MainScreen
+                uiScope.launch {
+                    runCatching {
+                        withContext(Dispatchers.IO) {
+                            conversationClient.removeGroupMember(
+                                current.accessToken,
+                                conversationId,
+                                userId)
+                        }
+                        refreshGroups()
+                        refreshGroupMembers(conversationId)
+                    }.onFailure { error = messageFor(it) }
+                }
+            },
+            onLeaveGroup = { conversationId ->
+                val current = authStore.session ?: session ?: return@MainScreen
+                uiScope.launch {
+                    runCatching {
+                        withContext(Dispatchers.IO) {
+                            conversationClient.leaveGroup(
+                                current.accessToken,
+                                conversationId)
+                        }
+                        selectedConversationId = null
+                        refreshGroups()
+                        refreshLocal()
+                    }.onFailure { error = messageFor(it) }
+                }
+            },
+            onDissolveGroup = { conversationId ->
+                val current = authStore.session ?: session ?: return@MainScreen
+                uiScope.launch {
+                    runCatching {
+                        withContext(Dispatchers.IO) {
+                            conversationClient.dissolveGroup(
+                                current.accessToken,
+                                conversationId)
+                        }
+                        selectedConversationId = null
+                        refreshGroups()
+                        refreshLocal()
+                    }.onFailure { error = messageFor(it) }
+                }
+            },
+            onCreateGroupInvite = { conversationId ->
+                val current = authStore.session ?: session ?: return@MainScreen
+                uiScope.launch {
+                    runCatching {
+                        withContext(Dispatchers.IO) {
+                            conversationClient.createGroupInvite(
+                                current.accessToken,
+                                conversationId)
+                        }
+                    }.onSuccess { data = data.copy(groupInvite = it) }
+                        .onFailure { error = messageFor(it) }
+                }
+            },
             onOpenSearchResult = { conversationId, messageId ->
                 selectedConversationId = conversationId
                 selectedSearchMessageId = messageId
@@ -693,10 +954,17 @@ private fun DesktopApp(
                             val activeConversation = data.conversations.firstOrNull {
                                 it.conversationId == conversationId
                             }
-                            if (activeConversation == null
-                                || activeConversation.status != "ACTIVE"
-                                || activeConversation.relationship != "ACTIVE"
-                                || activeConversation.blockedByMe) {
+                            val canSend = activeConversation?.let {
+                                if (it.kind == "GROUP") {
+                                    it.status == "ACTIVE" &&
+                                        it.relationship in setOf("OWNER", "ADMIN", "MEMBER")
+                                } else {
+                                    it.status == "ACTIVE" &&
+                                        it.relationship == "ACTIVE" &&
+                                        !it.blockedByMe
+                                }
+                            } == true
+                            if (!canSend) {
                                 error = "This conversation is read-only. Sending is disabled."
                                 return@launch
                             }
@@ -932,12 +1200,36 @@ private fun MainScreen(
     selfAvatarBytes: ByteArray?,
     selfAvatarLoading: Boolean,
     mediaBytes: Map<String, ByteArray>,
+    groups: List<DesktopGroupSummary>,
+    groupSearchQuery: String,
+    groupSearch: DesktopGroupSearchPage?,
+    groupJoinGroupNo: String,
+    groupJoinToken: String,
+    groupJoinRequests: List<DesktopMyGroupJoinRequest>,
+    groupMembers: List<DesktopGroupMember>,
+    groupManagementAccountNo: String,
+    groupInvite: DesktopGroupInvite?,
     draft: String,
     error: String?,
     onSearchAccountNoChange: (String) -> Unit,
     onSearch: () -> Unit,
     onLocalSearchQueryChange: (String) -> Unit,
     onLocalSearch: () -> Unit,
+    onGroupSearchQueryChange: (String) -> Unit,
+    onGroupSearch: () -> Unit,
+    onJoinGroup: () -> Unit,
+    onGroupJoinGroupNoChange: (String) -> Unit,
+    onGroupJoinTokenChange: (String) -> Unit,
+    onGroupManagementAccountNoChange: (String) -> Unit,
+    onRefreshGroupJoinRequests: () -> Unit,
+    onRefreshGroupMembers: (String) -> Unit,
+    onAddGroupMember: (String) -> Unit,
+    onChangeGroupRole: (String, String, String) -> Unit,
+    onTransferGroupOwner: (String, String) -> Unit,
+    onRemoveGroupMember: (String, String) -> Unit,
+    onLeaveGroup: (String) -> Unit,
+    onDissolveGroup: (String) -> Unit,
+    onCreateGroupInvite: (String) -> Unit,
     onOpenSearchResult: (String, String) -> Unit,
     onAddContact: () -> Unit,
     onAcceptRequest: (String) -> Unit,
@@ -1094,8 +1386,35 @@ private fun MainScreen(
                     }
                 }
                 Spacer(Modifier.height(16.dp))
+                GroupSidebarPanel(
+                    groups = groups,
+                    groupSearchQuery = groupSearchQuery,
+                    groupSearch = groupSearch,
+                    groupJoinGroupNo = groupJoinGroupNo,
+                    groupJoinToken = groupJoinToken,
+                    groupJoinRequests = groupJoinRequests,
+                    groupMembers = groupMembers,
+                    groupManagementAccountNo = groupManagementAccountNo,
+                    groupInvite = groupInvite,
+                    onGroupSearchQueryChange = onGroupSearchQueryChange,
+                    onGroupSearch = onGroupSearch,
+                    onJoinGroup = onJoinGroup,
+                    onGroupJoinGroupNoChange = onGroupJoinGroupNoChange,
+                    onGroupJoinTokenChange = onGroupJoinTokenChange,
+                    onGroupManagementAccountNoChange = onGroupManagementAccountNoChange,
+                    onRefreshGroupJoinRequests = onRefreshGroupJoinRequests,
+                    onRefreshGroupMembers = onRefreshGroupMembers,
+                    onAddGroupMember = onAddGroupMember,
+                    onChangeGroupRole = onChangeGroupRole,
+                    onTransferGroupOwner = onTransferGroupOwner,
+                    onRemoveGroupMember = onRemoveGroupMember,
+                    onLeaveGroup = onLeaveGroup,
+                    onDissolveGroup = onDissolveGroup,
+                    onCreateGroupInvite = onCreateGroupInvite,
+                    onSelectGroup = onSelectConversation)
+                Spacer(Modifier.height(16.dp))
                 Text("Conversations", style = MaterialTheme.typography.titleMedium)
-                data.conversations.forEach { conversation ->
+                data.conversations.filter { it.kind == "C2C" }.forEach { conversation ->
                     Card(Modifier.fillMaxWidth().padding(top = 8.dp)) {
                         Column(Modifier.padding(8.dp)) {
                             DesktopAvatar(
@@ -1135,6 +1454,7 @@ private fun MainScreen(
                 selectedConversation = data.conversations.firstOrNull {
                     it.conversationId == selectedConversationId
                 },
+                currentUserId = session.userId,
                 messages = data.messages,
                 initialMessageId = selectedSearchMessageId,
                 avatarBytes = avatarBytes,
@@ -1152,9 +1472,173 @@ private fun MainScreen(
 }
 
 @Composable
+private fun GroupSidebarPanel(
+    groups: List<DesktopGroupSummary>,
+    groupSearchQuery: String,
+    groupSearch: DesktopGroupSearchPage?,
+    groupJoinGroupNo: String,
+    groupJoinToken: String,
+    groupJoinRequests: List<DesktopMyGroupJoinRequest>,
+    groupMembers: List<DesktopGroupMember>,
+    groupManagementAccountNo: String,
+    groupInvite: DesktopGroupInvite?,
+    onGroupSearchQueryChange: (String) -> Unit,
+    onGroupSearch: () -> Unit,
+    onJoinGroup: () -> Unit,
+    onGroupJoinGroupNoChange: (String) -> Unit,
+    onGroupJoinTokenChange: (String) -> Unit,
+    onGroupManagementAccountNoChange: (String) -> Unit,
+    onRefreshGroupJoinRequests: () -> Unit,
+    onRefreshGroupMembers: (String) -> Unit,
+    onAddGroupMember: (String) -> Unit,
+    onChangeGroupRole: (String, String, String) -> Unit,
+    onTransferGroupOwner: (String, String) -> Unit,
+    onRemoveGroupMember: (String, String) -> Unit,
+    onLeaveGroup: (String) -> Unit,
+    onDissolveGroup: (String) -> Unit,
+    onCreateGroupInvite: (String) -> Unit,
+    onSelectGroup: (String) -> Unit,
+) {
+    var managedGroupId by remember { mutableStateOf<String?>(null) }
+    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        Text("Groups", style = MaterialTheme.typography.titleMedium)
+        OutlinedTextField(
+            modifier = Modifier.fillMaxWidth(),
+            value = groupSearchQuery,
+            onValueChange = onGroupSearchQueryChange,
+            label = { Text("Search group number or PUBLIC name") },
+            singleLine = true)
+        Button(
+            modifier = Modifier.fillMaxWidth(),
+            enabled = groupSearchQuery.isNotBlank(),
+            onClick = onGroupSearch) { Text("Search groups") }
+        groupSearch?.groups?.forEach { result ->
+            Card(Modifier.fillMaxWidth()) {
+                Column(Modifier.padding(8.dp)) {
+                    Text(result.name, style = MaterialTheme.typography.titleSmall)
+                    Text(result.description.ifBlank { "No description" })
+                    Text("${result.memberCount} members")
+                }
+            }
+        }
+        OutlinedTextField(
+            modifier = Modifier.fillMaxWidth(),
+            value = groupJoinGroupNo,
+            onValueChange = onGroupJoinGroupNoChange,
+            label = { Text("Join by exact group number") },
+            singleLine = true)
+        OutlinedTextField(
+            modifier = Modifier.fillMaxWidth(),
+            value = groupJoinToken,
+            onValueChange = onGroupJoinTokenChange,
+            label = { Text("Invite token (optional)") },
+            singleLine = true)
+        Button(
+            modifier = Modifier.fillMaxWidth(),
+            enabled = groupJoinGroupNo.length == 11,
+            onClick = onJoinGroup) { Text("Submit join request") }
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = androidx.compose.ui.Alignment.CenterVertically) {
+            Text("My join requests")
+            OutlinedButton(onClick = onRefreshGroupJoinRequests) { Text("Refresh") }
+        }
+        groupJoinRequests.take(5).forEach { request ->
+            Text("${request.groupName} · ${request.status}")
+        }
+        groups.forEach { group ->
+            Card(Modifier.fillMaxWidth()) {
+                Column(Modifier.padding(10.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                    Text("${group.name} · ${group.groupNo}", style = MaterialTheme.typography.titleSmall)
+                    Text("${group.visibility} · ${group.role} · ${group.memberCount} members")
+                    Text(group.description.ifBlank { "No description" })
+                    Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                        Button(onClick = {
+                            onRefreshGroupMembers(group.conversationId)
+                            onSelectGroup(group.conversationId)
+                        }) { Text("Open") }
+                        OutlinedButton(onClick = {
+                            managedGroupId = group.conversationId
+                            onRefreshGroupMembers(group.conversationId)
+                        }) { Text("Manage") }
+                        OutlinedButton(onClick = {
+                            onCreateGroupInvite(group.conversationId)
+                        }) { Text("Invite") }
+                    }
+                    if (group.role != "OWNER") {
+                        OutlinedButton(onClick = { onLeaveGroup(group.conversationId) }) {
+                            Text("Leave")
+                        }
+                    } else {
+                        OutlinedButton(onClick = { onDissolveGroup(group.conversationId) }) {
+                            Text("Dissolve")
+                        }
+                    }
+                    if (groupInvite?.conversationId == group.conversationId) {
+                        Text("Invite link: ${groupInvite.deepLink}")
+                    }
+                    if (managedGroupId == group.conversationId) {
+                        OutlinedTextField(
+                            modifier = Modifier.fillMaxWidth(),
+                            value = groupManagementAccountNo,
+                            onValueChange = onGroupManagementAccountNoChange,
+                            label = { Text("Member account number") },
+                            singleLine = true)
+                        Button(
+                            modifier = Modifier.fillMaxWidth(),
+                            enabled = groupManagementAccountNo.length == 11,
+                            onClick = { onAddGroupMember(group.conversationId) }) {
+                            Text("Invite member directly")
+                        }
+                        groupMembers.forEach { member ->
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = androidx.compose.ui.Alignment.CenterVertically) {
+                                Text(
+                                    "${member.displayName} · ${member.role}",
+                                    modifier = Modifier.weight(1f))
+                                if (member.role == "MEMBER" &&
+                                    (group.role == "OWNER" || group.role == "ADMIN")) {
+                                    OutlinedButton(onClick = {
+                                        onChangeGroupRole(
+                                            group.conversationId,
+                                            member.userId,
+                                            "ADMIN")
+                                    }) { Text("Admin") }
+                                    OutlinedButton(onClick = {
+                                        onRemoveGroupMember(
+                                            group.conversationId,
+                                            member.userId)
+                                    }) { Text("Remove") }
+                                } else if (member.role == "ADMIN" && group.role == "OWNER") {
+                                    OutlinedButton(onClick = {
+                                        onChangeGroupRole(
+                                            group.conversationId,
+                                            member.userId,
+                                            "MEMBER")
+                                    }) { Text("Demote") }
+                                    OutlinedButton(onClick = {
+                                        onTransferGroupOwner(
+                                            group.conversationId,
+                                            member.userId)
+                                    }) { Text("Transfer") }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
 private fun ConversationPane(
     modifier: Modifier,
     selectedConversation: LocalConversation?,
+    currentUserId: String,
     messages: List<LocalMessage>,
     initialMessageId: String?,
     avatarBytes: Map<String, ByteArray>,
@@ -1182,14 +1666,26 @@ private fun ConversationPane(
     }
     Column(modifier) {
         DesktopAvatar(
-            bytes = avatarBytes[
-                "${selectedConversation.peerUserId}-v${selectedConversation.peerAvatarVersion}"],
+            bytes = if (selectedConversation.kind == "GROUP") {
+                avatarBytes[
+                    "group-avatar-${selectedConversation.conversationId}-v${selectedConversation.peerAvatarVersion}"]
+            } else {
+                avatarBytes[
+                    "${selectedConversation.peerUserId}-v${selectedConversation.peerAvatarVersion}"]
+            },
             fallback = selectedConversation.peerAvatarFallback,
             size = 64.dp)
         Text(
             "${selectedConversation.peerDisplayName} · ${selectedConversation.peerAccountNo}",
             style = MaterialTheme.typography.titleLarge)
-        Text("${selectedConversation.status} · ${selectedConversation.relationship}")
+        Text(
+            if (selectedConversation.kind == "GROUP") {
+                "${selectedConversation.groupVisibility} · " +
+                    "${selectedConversation.relationship} · " +
+                    "${selectedConversation.groupMemberCount} members"
+            } else {
+                "${selectedConversation.status} · ${selectedConversation.relationship}"
+            })
         Spacer(Modifier.height(8.dp))
         LazyColumn(
             state = listState,
@@ -1200,8 +1696,26 @@ private fun ConversationPane(
                     Column(Modifier.padding(12.dp)) {
                         Text(if (message.localState == "SENDING") "Sending…" else message.localState)
                         when {
+                            message.type == "SYSTEM" -> {
+                                val target = message.systemTargetUserId
+                                    ?.let { " · target $it" }
+                                    .orEmpty()
+                                val role = message.systemRole
+                                    ?.let { " · role $it" }
+                                    .orEmpty()
+                                Text(
+                                    "Group event: " +
+                                        (message.systemEventType ?: "UNKNOWN") +
+                                        target +
+                                        role)
+                            }
                             message.state == "RECALLED" -> Text("Message recalled")
-                            message.state == "MODERATED" -> Text("Message moderated")
+                            message.state == "MODERATED" -> Text(
+                                if (message.moderatedReason.isNullOrBlank()) {
+                                    "Message moderated"
+                                } else {
+                                    "Message moderated: ${message.moderatedReason}"
+                                })
                             message.type == "IMAGE" -> {
                                 val image = mediaBytes[
                                     "message-media-${message.mediaId}-thumb"]
@@ -1216,7 +1730,7 @@ private fun ConversationPane(
                             }
                             else -> Text(message.text)
                         }
-                        if (message.senderId != selectedConversation.peerUserId
+                        if (message.senderId == currentUserId
                             && message.state == "ACTIVE") {
                             OutlinedButton(onClick = { onRecall(message) }) {
                                 Text("Recall")

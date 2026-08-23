@@ -77,6 +77,7 @@ class LocalDatabaseManager(
                         """
                         CREATE TABLE IF NOT EXISTS local_conversations (
                             conversation_id VARCHAR(36) PRIMARY KEY,
+                            kind VARCHAR(16) NOT NULL DEFAULT 'C2C',
                             peer_user_id VARCHAR(36) NOT NULL,
                             peer_account_no VARCHAR(11) NOT NULL,
                             peer_display_name VARCHAR(255) NOT NULL,
@@ -90,6 +91,9 @@ class LocalDatabaseManager(
                             peer_read_seq BIGINT NOT NULL,
                             search_visible BOOLEAN NOT NULL DEFAULT TRUE,
                             search_visible_after_seq BIGINT NOT NULL DEFAULT 0,
+                            group_description CLOB NOT NULL DEFAULT '',
+                            group_visibility VARCHAR(16),
+                            group_member_count INT NOT NULL DEFAULT 0,
                             updated_at BIGINT NOT NULL
                         )
                         """.trimIndent())
@@ -179,6 +183,14 @@ class LocalDatabaseManager(
                             avatar_version BIGINT NOT NULL DEFAULT 0
                         )
                         """.trimIndent())
+                    statement.executeUpdate(
+                        "ALTER TABLE local_conversations ADD COLUMN IF NOT EXISTS kind VARCHAR(16) NOT NULL DEFAULT 'C2C'")
+                    statement.executeUpdate(
+                        "ALTER TABLE local_conversations ADD COLUMN IF NOT EXISTS group_description CLOB NOT NULL DEFAULT ''")
+                    statement.executeUpdate(
+                        "ALTER TABLE local_conversations ADD COLUMN IF NOT EXISTS group_visibility VARCHAR(16)")
+                    statement.executeUpdate(
+                        "ALTER TABLE local_conversations ADD COLUMN IF NOT EXISTS group_member_count INT NOT NULL DEFAULT 0")
                     statement.executeUpdate(
                         "ALTER TABLE local_conversations ADD COLUMN IF NOT EXISTS peer_avatar_url VARCHAR(1000)")
                     statement.executeUpdate(
@@ -369,27 +381,14 @@ class LocalDatabase internal constructor(
             connection.prepareStatement(
                 """
                 MERGE INTO local_conversations (
-                    conversation_id, peer_user_id, peer_account_no, peer_display_name,
+                    conversation_id, kind, peer_user_id, peer_account_no, peer_display_name,
                     peer_avatar_url, peer_avatar_version, peer_avatar_fallback,
                     status, relationship, blocked_by_me, read_seq, peer_read_seq,
-                    search_visible, search_visible_after_seq, updated_at
-                ) KEY(conversation_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    search_visible, search_visible_after_seq, group_description,
+                    group_visibility, group_member_count, updated_at
+                ) KEY(conversation_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """.trimIndent()).use { statement ->
-                statement.setString(1, conversation.conversationId)
-                statement.setString(2, conversation.peerUserId)
-                statement.setString(3, conversation.peerAccountNo)
-                statement.setString(4, conversation.peerDisplayName)
-                statement.setString(5, conversation.peerAvatarUrl)
-                statement.setLong(6, conversation.peerAvatarVersion)
-                statement.setString(7, conversation.peerAvatarFallback)
-                statement.setString(8, conversation.status)
-                statement.setString(9, conversation.relationship)
-                statement.setBoolean(10, conversation.blockedByMe)
-                statement.setLong(11, conversation.readSeq)
-                statement.setLong(12, conversation.peerReadSeq)
-                statement.setBoolean(13, conversation.searchVisible)
-                statement.setLong(14, conversation.searchVisibleAfterSeq)
-                statement.setLong(15, conversation.updatedAt)
+                bindConversation(statement, conversation)
                 statement.executeUpdate()
             }
         }
@@ -400,33 +399,55 @@ class LocalDatabase internal constructor(
             connection.autoCommit = false
             try {
                 connection.createStatement().use { statement ->
-                    statement.executeUpdate("DELETE FROM local_conversations")
+                    statement.executeUpdate("DELETE FROM local_conversations WHERE kind = 'C2C'")
                 }
                 connection.prepareStatement(
                     """
                     INSERT INTO local_conversations (
-                        conversation_id, peer_user_id, peer_account_no, peer_display_name,
+                        conversation_id, kind, peer_user_id, peer_account_no, peer_display_name,
                         peer_avatar_url, peer_avatar_version, peer_avatar_fallback,
                         status, relationship, blocked_by_me, read_seq, peer_read_seq,
-                        search_visible, search_visible_after_seq, updated_at
-                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                        search_visible, search_visible_after_seq, group_description,
+                        group_visibility, group_member_count, updated_at
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     """.trimIndent()).use { statement ->
                     conversations.forEach { conversation ->
-                        statement.setString(1, conversation.conversationId)
-                        statement.setString(2, conversation.peerUserId)
-                        statement.setString(3, conversation.peerAccountNo)
-                        statement.setString(4, conversation.peerDisplayName)
-                        statement.setString(5, conversation.peerAvatarUrl)
-                        statement.setLong(6, conversation.peerAvatarVersion)
-                        statement.setString(7, conversation.peerAvatarFallback)
-                        statement.setString(8, conversation.status)
-                        statement.setString(9, conversation.relationship)
-                    statement.setBoolean(10, conversation.blockedByMe)
-                    statement.setLong(11, conversation.readSeq)
-                    statement.setLong(12, conversation.peerReadSeq)
-                    statement.setBoolean(13, conversation.searchVisible)
-                    statement.setLong(14, conversation.searchVisibleAfterSeq)
-                    statement.setLong(15, conversation.updatedAt)
+                        bindConversation(statement, conversation)
+                        statement.addBatch()
+                    }
+                    statement.executeBatch()
+                }
+                connection.commit()
+            } catch (exception: RuntimeException) {
+                connection.rollback()
+                throw exception
+            } finally {
+                connection.autoCommit = true
+            }
+        }
+    }
+
+    fun replaceGroups(groups: List<LocalConversation>) {
+        pool.connection.use { connection ->
+            connection.autoCommit = false
+            try {
+                connection.prepareStatement(
+                    "DELETE FROM local_conversations WHERE kind = 'GROUP'",
+                ).use { it.executeUpdate() }
+                connection.prepareStatement(
+                    """
+                    INSERT INTO local_conversations (
+                        conversation_id, kind, peer_user_id, peer_account_no, peer_display_name,
+                        peer_avatar_url, peer_avatar_version, peer_avatar_fallback,
+                        status, relationship, blocked_by_me, read_seq, peer_read_seq,
+                        search_visible, search_visible_after_seq, group_description,
+                        group_visibility, group_member_count, updated_at
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    """.trimIndent(),
+                ).use { statement ->
+                    groups.forEach { group ->
+                        require(group.kind == "GROUP") { "replaceGroups accepts GROUP rows only" }
+                        bindConversation(statement, group)
                         statement.addBatch()
                     }
                     statement.executeBatch()
@@ -570,11 +591,32 @@ class LocalDatabase internal constructor(
     fun clearGroupData(conversationId: String) {
         clearConversationMessages(conversationId)
         pool.connection.use { connection ->
-            connection.prepareStatement(
-                "DELETE FROM local_group_profiles WHERE conversation_id = ?",
-            ).use { statement ->
-                statement.setString(1, conversationId)
-                statement.executeUpdate()
+            connection.autoCommit = false
+            try {
+                connection.prepareStatement(
+                    "DELETE FROM local_group_profiles WHERE conversation_id = ?",
+                ).use { statement ->
+                    statement.setString(1, conversationId)
+                    statement.executeUpdate()
+                }
+                connection.prepareStatement(
+                    "DELETE FROM local_conversations WHERE conversation_id = ? AND kind = 'GROUP'",
+                ).use { statement ->
+                    statement.setString(1, conversationId)
+                    statement.executeUpdate()
+                }
+                connection.prepareStatement(
+                    "DELETE FROM local_read_states WHERE conversation_id = ?",
+                ).use { statement ->
+                    statement.setString(1, conversationId)
+                    statement.executeUpdate()
+                }
+                connection.commit()
+            } catch (exception: RuntimeException) {
+                connection.rollback()
+                throw exception
+            } finally {
+                connection.autoCommit = true
             }
         }
         mediaCache.deleteMatching("group-avatar-$conversationId-v")
@@ -591,6 +633,30 @@ class LocalDatabase internal constructor(
                 statement.setString(1, profile.conversationId)
                 statement.setString(2, profile.avatarUrl)
                 statement.setLong(3, profile.avatarVersion)
+                statement.executeUpdate()
+            }
+        }
+    }
+
+    fun updateGroupAvatar(
+        conversationId: String,
+        avatarUrl: String?,
+        avatarVersion: Long,
+    ) {
+        pool.connection.use { connection ->
+            connection.prepareStatement(
+                """
+                UPDATE local_conversations
+                SET peer_avatar_url = ?,
+                    peer_avatar_version = ?,
+                    updated_at = ?
+                WHERE conversation_id = ? AND kind = 'GROUP'
+                """.trimIndent(),
+            ).use { statement ->
+                statement.setString(1, avatarUrl)
+                statement.setLong(2, avatarVersion)
+                statement.setLong(3, System.currentTimeMillis())
+                statement.setString(4, conversationId)
                 statement.executeUpdate()
             }
         }
@@ -620,12 +686,13 @@ class LocalDatabase internal constructor(
         pool.connection.use { connection ->
             connection.prepareStatement(
                 """
-                SELECT conversation_id, peer_user_id, peer_account_no, peer_display_name,
+                SELECT conversation_id, kind, peer_user_id, peer_account_no, peer_display_name,
                        peer_avatar_url, peer_avatar_version, peer_avatar_fallback,
                        status, relationship, blocked_by_me, read_seq, peer_read_seq,
-                       search_visible, search_visible_after_seq, updated_at
+                       search_visible, search_visible_after_seq, group_description,
+                       group_visibility, group_member_count, updated_at
                 FROM local_conversations
-            ORDER BY updated_at DESC, peer_display_name, peer_account_no
+                ORDER BY updated_at DESC, peer_display_name, peer_account_no
                 """.trimIndent()).use { statement ->
                 statement.executeQuery().use { result ->
                     return buildList {
@@ -963,6 +1030,32 @@ class LocalDatabase internal constructor(
         pool.dispose()
     }
 
+    private fun bindConversation(
+        statement: java.sql.PreparedStatement,
+        conversation: LocalConversation,
+    ) {
+        var index = 1
+        statement.setString(index++, conversation.conversationId)
+        statement.setString(index++, conversation.kind)
+        statement.setString(index++, conversation.peerUserId)
+        statement.setString(index++, conversation.peerAccountNo)
+        statement.setString(index++, conversation.peerDisplayName)
+        statement.setString(index++, conversation.peerAvatarUrl)
+        statement.setLong(index++, conversation.peerAvatarVersion)
+        statement.setString(index++, conversation.peerAvatarFallback)
+        statement.setString(index++, conversation.status)
+        statement.setString(index++, conversation.relationship)
+        statement.setBoolean(index++, conversation.blockedByMe)
+        statement.setLong(index++, conversation.readSeq)
+        statement.setLong(index++, conversation.peerReadSeq)
+        statement.setBoolean(index++, conversation.searchVisible)
+        statement.setLong(index++, conversation.searchVisibleAfterSeq)
+        statement.setString(index++, conversation.groupDescription)
+        statement.setString(index++, conversation.groupVisibility)
+        statement.setInt(index++, conversation.groupMemberCount)
+        statement.setLong(index, conversation.updatedAt)
+    }
+
     private fun upsertMessage(
         connection: java.sql.Connection,
         message: LocalMessage,
@@ -1240,6 +1333,7 @@ class LocalDatabase internal constructor(
 
     private fun ResultSet.toLocalConversation() = LocalConversation(
         conversationId = getString("conversation_id"),
+        kind = getString("kind"),
         peerUserId = getString("peer_user_id"),
         peerAccountNo = getString("peer_account_no"),
         peerDisplayName = getString("peer_display_name"),
@@ -1253,6 +1347,9 @@ class LocalDatabase internal constructor(
         peerReadSeq = getLong("peer_read_seq"),
         searchVisible = getBoolean("search_visible"),
         searchVisibleAfterSeq = getLong("search_visible_after_seq"),
+        groupDescription = getString("group_description"),
+        groupVisibility = getString("group_visibility"),
+        groupMemberCount = getInt("group_member_count"),
         updatedAt = getLong("updated_at"))
 
     private fun ResultSet.toLocalMessage() = LocalMessage(
@@ -1378,6 +1475,7 @@ data class StoredSession(
 
 data class LocalConversation(
     val conversationId: String,
+    val kind: String = "C2C",
     val peerUserId: String,
     val peerAccountNo: String,
     val peerDisplayName: String,
@@ -1391,6 +1489,9 @@ data class LocalConversation(
     val peerReadSeq: Long,
     val searchVisible: Boolean = true,
     val searchVisibleAfterSeq: Long = 0,
+    val groupDescription: String = "",
+    val groupVisibility: String? = null,
+    val groupMemberCount: Int = 0,
     val updatedAt: Long,
 )
 

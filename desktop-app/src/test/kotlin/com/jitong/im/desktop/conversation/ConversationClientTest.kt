@@ -21,6 +21,42 @@ import java.util.UUID
 
 class ConversationClientTest {
     @Test
+    fun group_discovery_join_request_and_member_listing_use_the_v1_contract() {
+        val server = MockWebServer()
+        server.enqueue(
+            MockResponse().setBody(
+                """{"version":1,"groups":[{"name":"Desktop Lounge","avatarUrl":null,"description":"","memberCount":1}]}"""))
+        server.enqueue(
+            MockResponse().setBody(
+                """{"version":1,"requestId":"request-1","conversationId":"conversation-1","userId":"user-1","status":"PENDING","inviteId":null,"createdAt":"2026-08-23T00:00:00Z","resolvedAt":null}"""))
+        server.enqueue(
+            MockResponse().setBody(
+                """[{"version":1,"userId":"user-1","accountNo":"12345678903","displayName":"Alice","role":"OWNER","avatarUrl":null,"avatarVersion":0,"avatarFallback":"A"}]"""))
+        server.start()
+        try {
+            val client = ConversationClient(
+                baseUrl = server.url("/").toString(),
+                httpClient = OkHttpClient())
+
+            val search = client.searchGroups("access", "Desktop Lounge")
+            val request = client.requestToJoinGroup("access", "12345678903")
+            val members = client.listGroupMembers("access", "conversation-1")
+
+            assertEquals("Desktop Lounge", search.groups.single().name)
+            assertEquals("PENDING", request.status)
+            assertEquals("OWNER", members.single().role)
+            assertEquals(
+                listOf(
+                    "/api/v1/groups/search?query=Desktop+Lounge",
+                    "/api/v1/groups/join-requests/by-group-no",
+                    "/api/v1/groups/conversation-1/members"),
+                (1..3).map { server.takeRequest().path })
+        } finally {
+            server.shutdown()
+        }
+    }
+
+    @Test
     fun contact_and_message_requests_use_the_shared_v1_http_contract() {
         val server = MockWebServer()
         server.enqueue(MockResponse().setBody("""{"version":1,"accountNo":"22345678902","displayName":"Bob","avatarUrl":null,"relationship":"NONE","pendingRequestId":null}"""))

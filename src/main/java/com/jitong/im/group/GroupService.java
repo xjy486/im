@@ -447,6 +447,68 @@ public class GroupService {
     }
 
     @Transactional
+    public GroupJoinRequestResponse createJoinRequestByGroupNo(
+            String authorization,
+            GroupJoinRequestByGroupNoRequest request,
+            String ipAddress
+    ) {
+        UUID userId = authService.requireUserId(authorization);
+        rateLimiter.check(userId.toString(), ipAddress);
+        rateLimiter.record(userId.toString(), ipAddress);
+        if (request == null || request.groupNo() == null
+                || !request.groupNo().trim().matches("[1-9][0-9]{10}")) {
+            throw new GroupException(ApiErrorDefinition.RESOURCE_NOT_FOUND);
+        }
+        GroupRepository.GroupRecord group =
+                repository.findActiveGroupByGroupNo(request.groupNo().trim());
+        if (group == null) {
+            throw new GroupException(ApiErrorDefinition.RESOURCE_NOT_FOUND);
+        }
+        return createJoinRequestForGroup(
+                userId,
+                group,
+                request.inviteToken());
+    }
+
+    @Transactional(readOnly = true)
+    public List<GroupMyJoinRequestSummary> listMyJoinRequests(String authorization) {
+        UUID userId = authService.requireUserId(authorization);
+        return repository.listJoinRequestsForUser(userId).stream()
+                .map(request -> new GroupMyJoinRequestSummary(
+                        1,
+                        request.requestId(),
+                        request.conversationId(),
+                        request.groupNo(),
+                        request.groupName(),
+                        request.status(),
+                        request.createdAt(),
+                        request.resolvedAt()))
+                .toList();
+    }
+
+    @Transactional(readOnly = true)
+    public List<GroupMemberSummary> listMembers(
+            String authorization,
+            UUID conversationId
+    ) {
+        UUID userId = authService.requireUserId(authorization);
+        if (repository.findGroupForUser(conversationId, userId) == null) {
+            throw new GroupException(ApiErrorDefinition.FORBIDDEN);
+        }
+        return repository.listMembers(conversationId, userId).stream()
+                .map(member -> new GroupMemberSummary(
+                        1,
+                        member.userId(),
+                        member.accountNo(),
+                        member.displayName(),
+                        member.role(),
+                        userAvatarUrl(member.userId(), member.avatarMediaId(), member.avatarVersion()),
+                        member.avatarVersion(),
+                        fallback(member.displayName())))
+                .toList();
+    }
+
+    @Transactional
     public List<GroupJoinRequestSummary> listJoinRequests(
             String authorization,
             UUID conversationId
@@ -793,6 +855,62 @@ public class GroupService {
                 request.inviteId(),
                 request.createdAt(),
                 request.resolvedAt());
+    }
+
+    private GroupJoinRequestResponse createJoinRequestForGroup(
+            UUID userId,
+            GroupRepository.GroupRecord group,
+            String rawToken
+    ) {
+        if (repository.isActiveMember(group.conversationId(), userId)) {
+            throw new GroupException(ApiErrorDefinition.CONFLICT);
+        }
+        if (repository.isBanned(group.conversationId(), userId)) {
+            throw new GroupException(ApiErrorDefinition.FORBIDDEN);
+        }
+        GroupRepository.JoinRequestRecord existing =
+                repository.findPendingJoinRequest(group.conversationId(), userId);
+        if (existing != null) {
+            return toJoinRequestResponse(existing);
+        }
+        GroupRepository.GroupInviteRecord invite = null;
+        if (rawToken != null && !rawToken.isBlank()) {
+            invite = loadUsableInvite(rawToken, clock.instant());
+            if (!invite.conversationId().equals(group.conversationId())) {
+                throw new GroupException(ApiErrorDefinition.RESOURCE_NOT_FOUND);
+            }
+        } else if (!"PUBLIC".equals(group.visibility())) {
+            throw new GroupException(ApiErrorDefinition.RESOURCE_NOT_FOUND);
+        }
+        GroupRepository.JoinRequestRecord created = repository.insertJoinRequest(
+                UuidV7.random(),
+                group.conversationId(),
+                userId,
+                invite == null ? null : invite.inviteId(),
+                clock.instant());
+        if (created == null) {
+            return toJoinRequestResponse(
+                    repository.findPendingJoinRequest(group.conversationId(), userId));
+        }
+        if (invite != null) {
+            repository.incrementInviteUse(invite.inviteId());
+        }
+        return toJoinRequestResponse(created);
+    }
+
+    private String fallback(String displayName) {
+        if (displayName == null || displayName.isBlank()) {
+            return "?";
+        }
+        int codePoint = displayName.codePointAt(0);
+        return new String(Character.toChars(codePoint));
+    }
+
+    private String userAvatarUrl(UUID userId, UUID avatarMediaId, long avatarVersion) {
+        return avatarMediaId == null || avatarVersion == 0
+                ? null
+                : "/api/v1/users/" + userId
+                + "/avatar?variant=thumb&avatarVersion=" + avatarVersion;
     }
 
     private GroupJoinRequestSummary toJoinRequestSummary(

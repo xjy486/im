@@ -144,6 +144,107 @@ data class DesktopGroupProfile(
 )
 
 @Serializable
+data class DesktopGroupSummary(
+    val version: Int = 1,
+    val conversationId: String,
+    val groupNo: String,
+    val name: String,
+    val description: String,
+    val visibility: String,
+    val role: String,
+    val avatarUrl: String? = null,
+    val avatarVersion: Long = 0,
+    val memberCount: Int = 0,
+)
+
+@Serializable
+data class DesktopGroupSearchResult(
+    val name: String,
+    val avatarUrl: String? = null,
+    val description: String,
+    val memberCount: Int,
+)
+
+@Serializable
+data class DesktopGroupSearchPage(
+    val version: Int = 1,
+    val groups: List<DesktopGroupSearchResult>,
+)
+
+@Serializable
+data class DesktopGroupJoinRequestByGroupNo(
+    val groupNo: String,
+    val inviteToken: String? = null,
+)
+
+@Serializable
+data class DesktopGroupJoinRequest(
+    val version: Int = 1,
+    val requestId: String,
+    val conversationId: String,
+    val userId: String,
+    val status: String,
+    val inviteId: String? = null,
+    val createdAt: String,
+    val resolvedAt: String? = null,
+)
+
+@Serializable
+data class DesktopMyGroupJoinRequest(
+    val version: Int = 1,
+    val requestId: String,
+    val conversationId: String,
+    val groupNo: String,
+    val groupName: String,
+    val status: String,
+    val createdAt: String,
+    val resolvedAt: String? = null,
+)
+
+@Serializable
+data class DesktopGroupMember(
+    val version: Int = 1,
+    val userId: String,
+    val accountNo: String,
+    val displayName: String,
+    val role: String,
+    val avatarUrl: String? = null,
+    val avatarVersion: Long = 0,
+    val avatarFallback: String = "?",
+)
+
+@Serializable
+data class DesktopGroupMemberAddRequest(val accountNo: String)
+
+@Serializable
+data class DesktopGroupRoleChangeRequest(val role: String)
+
+@Serializable
+data class DesktopGroupOwnerTransferRequest(val userId: String)
+
+@Serializable
+data class DesktopGroupProfileUpdateRequest(
+    val name: String,
+    val description: String,
+    val visibility: String,
+)
+
+@Serializable
+data class DesktopGroupInvite(
+    val version: Int = 1,
+    val inviteId: String,
+    val conversationId: String,
+    val maxUses: Int,
+    val useCount: Int,
+    val expiresAt: String,
+    val deepLink: String,
+    val qrPayload: String,
+)
+
+@Serializable
+data class DesktopGroupBanRequest(val reason: String? = null)
+
+@Serializable
 data class DesktopSyncEvent(
     val syncSeq: Long,
     val eventType: String,
@@ -311,6 +412,177 @@ class ConversationClient(
     fun list(accessToken: String): List<DesktopConversationSummary> =
         requestJson(get("/api/v1/conversations", accessToken))
 
+    fun listGroups(accessToken: String): List<DesktopGroupSummary> =
+        requestJson(get("/api/v1/groups", accessToken))
+
+    fun searchGroups(
+        accessToken: String,
+        query: String,
+    ): DesktopGroupSearchPage =
+        requestJson(
+            get(
+                "/api/v1/groups/search?query=${java.net.URLEncoder.encode(
+                    query,
+                    Charsets.UTF_8)}",
+                accessToken))
+
+    fun requestToJoinGroup(
+        accessToken: String,
+        groupNo: String,
+        inviteToken: String? = null,
+    ): DesktopGroupJoinRequest =
+        requestJson(
+            post(
+                "/api/v1/groups/join-requests/by-group-no",
+                accessToken,
+                DesktopGroupJoinRequestByGroupNo(groupNo, inviteToken)))
+
+    fun listMyGroupJoinRequests(accessToken: String): List<DesktopMyGroupJoinRequest> =
+        requestJson(get("/api/v1/groups/join-requests/mine", accessToken))
+
+    fun listGroupMembers(
+        accessToken: String,
+        conversationId: String,
+    ): List<DesktopGroupMember> =
+        requestJson(get("/api/v1/groups/$conversationId/members", accessToken))
+
+    fun addGroupMember(
+        accessToken: String,
+        conversationId: String,
+        accountNo: String,
+    ) {
+        execute(
+            post(
+                "/api/v1/groups/$conversationId/members",
+                accessToken,
+                DesktopGroupMemberAddRequest(accountNo)))
+    }
+
+    fun removeGroupMember(
+        accessToken: String,
+        conversationId: String,
+        userId: String,
+    ) {
+        execute(
+            requestWithoutBody(
+                "/api/v1/groups/$conversationId/members/$userId",
+                accessToken,
+                "DELETE"))
+    }
+
+    fun changeGroupRole(
+        accessToken: String,
+        conversationId: String,
+        userId: String,
+        role: String,
+    ) {
+        execute(
+            put(
+                "/api/v1/groups/$conversationId/members/$userId/role",
+                accessToken,
+                DesktopGroupRoleChangeRequest(role)))
+    }
+
+    fun transferGroupOwner(
+        accessToken: String,
+        conversationId: String,
+        userId: String,
+    ) {
+        execute(
+            post(
+                "/api/v1/groups/$conversationId/owner-transfer",
+                accessToken,
+                DesktopGroupOwnerTransferRequest(userId)))
+    }
+
+    fun updateGroupProfile(
+        accessToken: String,
+        conversationId: String,
+        name: String,
+        description: String,
+        visibility: String,
+    ): DesktopGroupSummary =
+        requestJson(
+            put(
+                "/api/v1/groups/$conversationId/profile",
+                accessToken,
+                DesktopGroupProfileUpdateRequest(name, description, visibility)))
+
+    fun leaveGroup(accessToken: String, conversationId: String) {
+        execute(
+            requestWithoutBody(
+                "/api/v1/groups/$conversationId/leave",
+                accessToken,
+                "POST"))
+    }
+
+    fun dissolveGroup(accessToken: String, conversationId: String) {
+        execute(
+            requestWithoutBody(
+                "/api/v1/groups/$conversationId",
+                accessToken,
+                "DELETE"))
+    }
+
+    fun createGroupInvite(
+        accessToken: String,
+        conversationId: String,
+    ): DesktopGroupInvite =
+        requestJson(
+            post(
+                "/api/v1/groups/$conversationId/invites",
+                accessToken,
+                emptyMap<String, String>()))
+
+    fun approveGroupJoinRequest(
+        accessToken: String,
+        conversationId: String,
+        requestId: String,
+    ) {
+        execute(
+            requestWithoutBody(
+                "/api/v1/groups/$conversationId/join-requests/$requestId/approve",
+                accessToken,
+                "POST"))
+    }
+
+    fun rejectGroupJoinRequest(
+        accessToken: String,
+        conversationId: String,
+        requestId: String,
+    ) {
+        execute(
+            requestWithoutBody(
+                "/api/v1/groups/$conversationId/join-requests/$requestId/reject",
+                accessToken,
+                "POST"))
+    }
+
+    fun banGroupMember(
+        accessToken: String,
+        conversationId: String,
+        userId: String,
+        reason: String? = null,
+    ) {
+        execute(
+            post(
+                "/api/v1/groups/$conversationId/bans/$userId",
+                accessToken,
+                DesktopGroupBanRequest(reason)))
+    }
+
+    fun unbanGroupMember(
+        accessToken: String,
+        conversationId: String,
+        userId: String,
+    ) {
+        execute(
+            requestWithoutBody(
+                "/api/v1/groups/$conversationId/bans/$userId",
+                accessToken,
+                "DELETE"))
+    }
+
     fun userProfile(accessToken: String, userId: String): DesktopUserProfile =
         requestJson(get("/api/v1/users/$userId/profile", accessToken))
 
@@ -418,6 +690,7 @@ class ConversationClient(
     ) {
         require(highWatermark >= 0) { "highWatermark must not be negative" }
         val conversations = list(accessToken)
+        val groups = listGroups(accessToken)
         local.clearMessageData()
         local.saveLastSyncSeq(0)
         conversations.forEach { conversation ->
@@ -429,7 +702,20 @@ class ConversationClient(
                 currentUserId)
             restoreReadStates(accessToken, local, conversation.conversationId)
         }
-        restoreGroupProfiles(accessToken, local, conversations.map { it.conversationId })
+        groups.forEach { group ->
+            applyGroup(local, group)
+            restoreConversation(
+                accessToken,
+                local,
+                group.conversationId,
+                currentUserId)
+            restoreReadStates(accessToken, local, group.conversationId)
+        }
+        restoreGroupProfiles(
+            accessToken,
+            local,
+            (conversations.map { it.conversationId } + groups.map { it.conversationId })
+                .distinct())
         acknowledge(accessToken, highWatermark)
         local.saveLastSyncSeq(highWatermark)
     }
@@ -483,6 +769,10 @@ class ConversationClient(
                         conversationId = profile.conversationId,
                         avatarUrl = profile.avatarUrl,
                         avatarVersion = profile.avatarVersion))
+                local.updateGroupAvatar(
+                    profile.conversationId,
+                    profile.avatarUrl,
+                    profile.avatarVersion)
                 local.mediaCache().deleteMatching("group-avatar-$conversationId-v")
             }
         events
@@ -510,6 +800,10 @@ class ConversationClient(
                     conversationId = profile.conversationId,
                     avatarUrl = profile.avatarUrl,
                     avatarVersion = profile.avatarVersion))
+            local.updateGroupAvatar(
+                profile.conversationId,
+                profile.avatarUrl,
+                profile.avatarVersion)
             local.mediaCache().deleteMatching("group-avatar-$conversationId-v")
         }
     }
@@ -583,6 +877,7 @@ class ConversationClient(
         local.upsertConversation(
             LocalConversation(
                 conversationId = conversation.conversationId,
+                kind = "C2C",
                 peerUserId = conversation.peerUserId,
                 peerAccountNo = conversation.peerAccountNo,
                 peerDisplayName = conversation.peerDisplayName,
@@ -597,6 +892,57 @@ class ConversationClient(
                 searchVisible = conversation.searchVisible,
                 searchVisibleAfterSeq = conversation.searchVisibleAfterSeq,
                 updatedAt = System.currentTimeMillis()))
+    }
+
+    fun applyGroup(local: LocalDatabase, group: DesktopGroupSummary) {
+        local.upsertConversation(
+            LocalConversation(
+                conversationId = group.conversationId,
+                kind = "GROUP",
+                peerUserId = "",
+                peerAccountNo = group.groupNo,
+                peerDisplayName = group.name,
+                peerAvatarUrl = group.avatarUrl,
+                peerAvatarVersion = group.avatarVersion,
+                peerAvatarFallback = group.name.firstOrNull()?.toString() ?: "?",
+                status = "ACTIVE",
+                relationship = group.role,
+                blockedByMe = false,
+                readSeq = 0,
+                peerReadSeq = 0,
+                groupDescription = group.description,
+                groupVisibility = group.visibility,
+                groupMemberCount = group.memberCount,
+                updatedAt = System.currentTimeMillis()))
+        local.upsertGroupProfile(
+            LocalGroupProfile(
+                group.conversationId,
+                group.avatarUrl,
+                group.avatarVersion))
+    }
+
+    fun replaceGroups(local: LocalDatabase, groups: List<DesktopGroupSummary>) {
+        local.replaceGroups(
+            groups.map {
+                LocalConversation(
+                    conversationId = it.conversationId,
+                    kind = "GROUP",
+                    peerUserId = "",
+                    peerAccountNo = it.groupNo,
+                    peerDisplayName = it.name,
+                    peerAvatarUrl = it.avatarUrl,
+                    peerAvatarVersion = it.avatarVersion,
+                    peerAvatarFallback = it.name.firstOrNull()?.toString() ?: "?",
+                    status = "ACTIVE",
+                    relationship = it.role,
+                    blockedByMe = false,
+                    readSeq = 0,
+                    peerReadSeq = 0,
+                    groupDescription = it.description,
+                    groupVisibility = it.visibility,
+                    groupMemberCount = it.memberCount,
+                    updatedAt = System.currentTimeMillis())
+            })
     }
 
     fun applyReadState(local: LocalDatabase, state: DesktopReadState) {
@@ -861,7 +1207,21 @@ class ConversationClient(
                     conversationId = conversationId,
                     avatarUrl = body.avatarUrl,
                     avatarVersion = body.avatarVersion ?: 0))
+            local.updateGroupAvatar(
+                conversationId,
+                body.avatarUrl,
+                body.avatarVersion ?: 0)
             local.mediaCache().deleteMatching("group-avatar-$conversationId-v")
+            syncSeq?.let(local::saveLastSyncSeq)
+            return
+        }
+        if (envelope.operation == "membership.revoked") {
+            val conversationId = body.conversationId ?: return
+            local.clearGroupData(conversationId)
+            syncSeq?.let(local::saveLastSyncSeq)
+            return
+        }
+        if (envelope.operation == "membership.granted") {
             syncSeq?.let(local::saveLastSyncSeq)
             return
         }
@@ -975,6 +1335,19 @@ class ConversationClient(
         .header("Authorization", "Bearer $accessToken")
         .get()
         .build()
+
+    private inline fun <reified T> put(
+        path: String,
+        accessToken: String,
+        body: T,
+    ): Request {
+        val builder = Request.Builder()
+            .url(url(path))
+            .header("Authorization", "Bearer $accessToken")
+        builder.put(json.encodeToString(body).toRequestBody(jsonMediaType))
+        builder.header("Content-Type", jsonMediaType.toString())
+        return builder.build()
+    }
 
     private fun post(path: String, accessToken: String): Request =
         requestWithoutBody(path, accessToken, "POST")

@@ -17,4 +17,4 @@ The server URL defaults to `https://127.0.0.1:8443`. Set `JITONG_SERVER_URL` to 
 ./gradlew packageDmg
 ```
 
-The desktop client also supports exact account search, contact requests, contact removal/blocking, one-to-one conversation history, real-time text messages, user-level read progress, and durable per-account sync cursors. Local history remains available while offline, while the composer is disabled and clearly reports that sending requires a connection.
+The desktop client also supports exact account and group discovery, approval-gated group join requests, group member/role management, group invites, contact removal/blocking, one-to-one and group conversation history, real-time text and image messages, SYSTEM/MODERATED tombstones, user-level read progress, and durable per-account sync cursors. Local history remains available while offline, while the composer is disabled and clearly reports that sending requires a connection.

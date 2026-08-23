@@ -145,6 +145,14 @@ record GroupJoinRequestCreateRequest(
 ) {
 }
 
+record GroupJoinRequestByGroupNoRequest(
+        @Pattern(regexp = "[1-9][0-9]{10}")
+        String groupNo,
+        @Size(min = 20, max = 128)
+        String inviteToken
+) {
+}
+
 record GroupJoinRequestResponse(
         int version,
         UUID requestId,
@@ -152,6 +160,18 @@ record GroupJoinRequestResponse(
         UUID userId,
         String status,
         UUID inviteId,
+        Instant createdAt,
+        Instant resolvedAt
+) {
+}
+
+record GroupMyJoinRequestSummary(
+        int version,
+        UUID requestId,
+        UUID conversationId,
+        String groupNo,
+        String groupName,
+        String status,
         Instant createdAt,
         Instant resolvedAt
 ) {
@@ -168,6 +188,18 @@ record GroupJoinRequestSummary(
         UUID inviteId,
         Instant createdAt,
         Instant resolvedAt
+) {
+}
+
+record GroupMemberSummary(
+        int version,
+        UUID userId,
+        String accountNo,
+        String displayName,
+        String role,
+        String avatarUrl,
+        long avatarVersion,
+        String avatarFallback
 ) {
 }
 

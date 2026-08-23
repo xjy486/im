@@ -862,6 +862,100 @@ class GroupRepository {
                 .list();
     }
 
+    List<MyJoinRequestRecord> listJoinRequestsForUser(UUID userId) {
+        return jdbc.sql("""
+                        SELECT request.id, request.conversation_id, group_chat.group_no,
+                               group_chat.name, request.status, request.created_at,
+                               request.resolved_at
+                        FROM group_join_requests request
+                        JOIN groups group_chat
+                          ON group_chat.conversation_id = request.conversation_id
+                        WHERE request.user_id = :userId
+                        ORDER BY request.created_at DESC
+                        """)
+                .param("userId", userId)
+                .query((row, rowNum) -> new MyJoinRequestRecord(
+                        row.getObject("id", UUID.class),
+                        row.getObject("conversation_id", UUID.class),
+                        row.getString("group_no").trim(),
+                        row.getString("name"),
+                        row.getString("status"),
+                        row.getObject("created_at", OffsetDateTime.class).toInstant(),
+                        nullableInstant(row, "resolved_at")))
+                .list();
+    }
+
+    List<MemberRecord> listMembers(UUID conversationId, UUID userId) {
+        return jdbc.sql("""
+                        SELECT member.user_id, user_account.account_no,
+                               user_account.display_name, member.role,
+                               user_account.avatar_media_id, user_account.avatar_version
+                        FROM conversation_members member
+                        JOIN users user_account ON user_account.id = member.user_id
+                        JOIN groups group_chat
+                          ON group_chat.conversation_id = member.conversation_id
+                         AND group_chat.status = 'ACTIVE'
+                        WHERE member.conversation_id = :conversationId
+                          AND member.status = 'ACTIVE'
+                          AND EXISTS (
+                              SELECT 1
+                              FROM conversation_members actor
+                              WHERE actor.conversation_id = member.conversation_id
+                                AND actor.user_id = :userId
+                                AND actor.status = 'ACTIVE'
+                          )
+                        ORDER BY CASE member.role
+                            WHEN 'OWNER' THEN 0
+                            WHEN 'ADMIN' THEN 1
+                            ELSE 2
+                        END,
+                        user_account.display_name,
+                        member.user_id
+                        """)
+                .param("conversationId", conversationId)
+                .param("userId", userId)
+                .query((row, rowNum) -> new MemberRecord(
+                        row.getObject("user_id", UUID.class),
+                        row.getString("account_no").trim(),
+                        row.getString("display_name"),
+                        row.getString("role"),
+                        row.getObject("avatar_media_id", UUID.class),
+                        row.getLong("avatar_version")))
+                .list();
+    }
+
+    GroupRecord findActiveGroupByGroupNo(String groupNo) {
+        return jdbc.sql("""
+                        SELECT g.conversation_id, g.group_no, g.name, g.description,
+                               g.visibility, g.owner_user_id, g.avatar_media_id,
+                               g.avatar_version,
+                               (
+                                   SELECT COUNT(*)
+                                   FROM conversation_members active_member
+                                   WHERE active_member.conversation_id = g.conversation_id
+                                     AND active_member.status = 'ACTIVE'
+                               ) AS member_count
+                        FROM groups g
+                        WHERE g.group_no = :groupNo
+                          AND g.status = 'ACTIVE'
+                        FOR UPDATE
+                        """)
+                .param("groupNo", groupNo)
+                .query((row, rowNum) -> new GroupRecord(
+                        row.getObject("conversation_id", UUID.class),
+                        row.getString("group_no").trim(),
+                        row.getString("name"),
+                        row.getString("description"),
+                        row.getString("visibility"),
+                        row.getObject("owner_user_id", UUID.class),
+                        row.getObject("avatar_media_id", UUID.class),
+                        row.getLong("avatar_version"),
+                        null,
+                        row.getInt("member_count")))
+                .optional()
+                .orElse(null);
+    }
+
     boolean isBanned(UUID conversationId, UUID userId) {
         return jdbc.sql("""
                         SELECT EXISTS (
@@ -1101,5 +1195,26 @@ class GroupRepository {
                     null,
                     null);
         }
+    }
+
+    record MyJoinRequestRecord(
+            UUID requestId,
+            UUID conversationId,
+            String groupNo,
+            String groupName,
+            String status,
+            Instant createdAt,
+            Instant resolvedAt
+    ) {
+    }
+
+    record MemberRecord(
+            UUID userId,
+            String accountNo,
+            String displayName,
+            String role,
+            UUID avatarMediaId,
+            long avatarVersion
+    ) {
     }
 }
