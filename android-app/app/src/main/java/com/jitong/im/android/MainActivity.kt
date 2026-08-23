@@ -11,6 +11,7 @@ import androidx.activity.viewModels
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.lightColorScheme
 import com.jitong.im.android.ui.AuthViewModel
+import com.jitong.im.android.ui.AiViewModel
 import com.jitong.im.android.ui.ContactViewModel
 import com.jitong.im.android.ui.GroupViewModel
 import com.jitong.im.android.ui.JitongApp
@@ -38,6 +39,10 @@ class MainActivity : ComponentActivity() {
         val container = (application as JitongApplication).container
         GroupViewModel.Factory(container.groupRepository)
     }
+    private val aiViewModel: AiViewModel by viewModels {
+        val container = (application as JitongApplication).container
+        AiViewModel.Factory(container.aiRepository)
+    }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -52,6 +57,7 @@ class MainActivity : ComponentActivity() {
                     viewModel,
                     contactViewModel,
                     messageViewModel,
+                    aiViewModel,
                     avatarViewModel,
                     groupViewModel,
                 )

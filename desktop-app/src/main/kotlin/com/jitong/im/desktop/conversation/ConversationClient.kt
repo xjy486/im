@@ -5,10 +5,16 @@ import com.jitong.im.desktop.local.LocalDatabase
 import com.jitong.im.desktop.local.LocalMessage
 import com.jitong.im.desktop.local.LocalReadState
 import com.jitong.im.desktop.local.LocalGroupProfile
+import com.jitong.im.desktop.local.LocalAiArtifact
+import com.jitong.im.desktop.local.LocalAiActionItem
 import com.jitong.im.desktop.media.ImageNormalizer
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.JsonElement
+import kotlinx.serialization.json.jsonArray
+import kotlinx.serialization.json.jsonObject
+import kotlinx.serialization.json.jsonPrimitive
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.MultipartBody
 import okhttp3.OkHttpClient
@@ -263,6 +269,75 @@ data class DesktopSyncPage(
     val hasMore: Boolean,
     val events: List<DesktopSyncEvent>,
 )
+
+@Serializable
+data class DesktopAiArtifact(
+    val version: Int,
+    val artifactId: String,
+    val jobId: String,
+    val conversationId: String,
+    val artifactType: String,
+    val content: JsonElement,
+    val createdAt: String,
+    val expiresAt: String,
+)
+
+@Serializable
+data class DesktopAiActionItem(
+    val version: Int,
+    val actionItemId: String,
+    val sourceJobId: String?,
+    val ownerUserId: String,
+    val conversationId: String,
+    val assigneeUserId: String?,
+    val title: String,
+    val details: String,
+    val dueAt: String?,
+    val priority: String,
+    val confidence: Double,
+    val sourceMessageIds: List<String>,
+    val status: String,
+    val createdAt: String,
+    val completedAt: String?,
+)
+
+@Serializable
+data class DesktopAiConsent(
+    val version: Int,
+    val conversationId: String,
+    val userId: String,
+    val enabled: Boolean,
+    val enabledForBoth: Boolean,
+    val policyVersion: Long,
+)
+
+@Serializable
+data class DesktopAiJob(
+    val version: Int,
+    val jobId: String,
+    val conversationId: String,
+    val kind: String,
+    val status: String,
+    val errorCode: String?,
+    val result: JsonElement?,
+)
+
+@Serializable
+data class DesktopAiConsentUpdate(val enabled: Boolean)
+
+@Serializable
+data class DesktopAiRequest(val requestId: String = UUID.randomUUID().toString())
+
+@Serializable
+data class DesktopAiExtractionRequest(
+    val requestId: String = UUID.randomUUID().toString(),
+    val messageIds: List<String>,
+)
+
+@Serializable
+data class DesktopAiActionItemUpdate(val status: String)
+
+data class DesktopAiDraft(val text: String, val tone: String)
 
 @Serializable
 data class DesktopSyncAckRequest(val syncSeq: Long)
@@ -691,6 +766,8 @@ class ConversationClient(
         require(highWatermark >= 0) { "highWatermark must not be negative" }
         val conversations = list(accessToken)
         val groups = listGroups(accessToken)
+        val aiArtifacts = listAiArtifacts(accessToken)
+        val aiActionItems = listAiActionItems(accessToken)
         local.clearMessageData()
         local.saveLastSyncSeq(0)
         conversations.forEach { conversation ->
@@ -716,6 +793,8 @@ class ConversationClient(
             local,
             (conversations.map { it.conversationId } + groups.map { it.conversationId })
                 .distinct())
+        aiArtifacts.forEach { local.upsertAiArtifact(it.toLocal()) }
+        aiActionItems.forEach { local.upsertAiActionItem(it.toLocal()) }
         acknowledge(accessToken, highWatermark)
         local.saveLastSyncSeq(highWatermark)
     }
@@ -735,6 +814,133 @@ class ConversationClient(
             append("&limit=200")
         }
         return requestJson(get("/api/v1/sync$query", accessToken))
+    }
+
+    fun listAiArtifacts(accessToken: String): List<DesktopAiArtifact> =
+        requestJson(get("/api/v1/ai/artifacts", accessToken))
+
+    fun listAiActionItems(accessToken: String): List<DesktopAiActionItem> =
+        requestJson(get("/api/v1/ai/action-items", accessToken))
+
+    fun aiConsent(accessToken: String, conversationId: String): DesktopAiConsent =
+        requestJson(get("/api/v1/conversations/$conversationId/ai/consent", accessToken))
+
+    fun updateAiConsent(
+        accessToken: String,
+        conversationId: String,
+        enabled: Boolean,
+    ): DesktopAiConsent = requestJson(
+        patch(
+            "/api/v1/conversations/$conversationId/ai/consent",
+            accessToken,
+            DesktopAiConsentUpdate(enabled)))
+
+    fun requestSmartReplies(accessToken: String, conversationId: String): List<DesktopAiDraft> {
+        val completed = awaitAiJob(
+            accessToken,
+            requestJson(
+                post(
+                    "/api/v1/conversations/$conversationId/ai/smart-replies",
+                    accessToken,
+                    DesktopAiRequest())))
+        return completed.result?.jsonObject?.get("replies")?.jsonArray?.map { value ->
+            val draft = value.jsonObject
+            DesktopAiDraft(
+                draft.getValue("text").jsonPrimitive.content,
+                draft.getValue("tone").jsonPrimitive.content)
+        }.orEmpty()
+    }
+
+    fun extractInformation(
+        accessToken: String,
+        conversationId: String,
+        messageIds: List<String>,
+    ): DesktopAiJob {
+        require(messageIds.isNotEmpty() && messageIds.size <= 200)
+        return awaitAiJob(
+            accessToken,
+            requestJson(
+                post(
+                    "/api/v1/conversations/$conversationId/ai/extract",
+                    accessToken,
+                    DesktopAiExtractionRequest(messageIds = messageIds))))
+    }
+
+    fun deleteAiArtifact(accessToken: String, artifactId: String) {
+        execute(requestWithoutBody("/api/v1/ai/artifacts/$artifactId", accessToken, "DELETE"))
+    }
+
+    fun updateAiActionItem(
+        accessToken: String,
+        actionItemId: String,
+        status: String,
+    ): DesktopAiActionItem = requestJson(
+        patch(
+            "/api/v1/ai/action-items/$actionItemId",
+            accessToken,
+            DesktopAiActionItemUpdate(status)))
+
+    fun deleteAiActionItem(accessToken: String, actionItemId: String) {
+        execute(requestWithoutBody("/api/v1/ai/action-items/$actionItemId", accessToken, "DELETE"))
+    }
+
+    fun refreshAiData(accessToken: String, local: LocalDatabase) {
+        val artifacts = listAiArtifacts(accessToken)
+        val actionItems = listAiActionItems(accessToken)
+        local.clearAiArtifacts()
+        local.clearAiActionItems()
+        artifacts.forEach { local.upsertAiArtifact(it.toLocal()) }
+        actionItems.forEach { local.upsertAiActionItem(it.toLocal()) }
+    }
+
+    fun applyAiSyncEvents(
+        accessToken: String,
+        local: LocalDatabase,
+        events: List<DesktopSyncEvent>,
+    ) {
+        if (events.any { it.eventType.startsWith("AI_") }) {
+            refreshAiData(accessToken, local)
+        }
+    }
+
+    private fun DesktopAiArtifact.toLocal() = LocalAiArtifact(
+        artifactId = artifactId,
+        jobId = jobId,
+        conversationId = conversationId,
+        artifactType = artifactType,
+        contentJson = content.toString(),
+        createdAt = createdAt,
+        expiresAt = expiresAt,
+    )
+
+    private fun DesktopAiActionItem.toLocal() = LocalAiActionItem(
+        actionItemId = actionItemId,
+        sourceJobId = sourceJobId,
+        ownerUserId = ownerUserId,
+        conversationId = conversationId,
+        assigneeUserId = assigneeUserId,
+        title = title,
+        details = details,
+        dueAt = dueAt,
+        priority = priority,
+        confidence = confidence,
+        sourceMessageIdsJson = json.encodeToString(sourceMessageIds),
+        status = status,
+        createdAt = createdAt,
+        completedAt = completedAt,
+    )
+
+    private fun awaitAiJob(accessToken: String, initial: DesktopAiJob): DesktopAiJob {
+        var current = initial
+        repeat(120) {
+            if (current.status == "SUCCEEDED") return current
+            if (current.status in setOf("FAILED", "CANCELLED", "EXPIRED")) {
+                throw IllegalStateException(current.errorCode ?: "AI request failed")
+            }
+            Thread.sleep(250)
+            current = requestJson(get("/api/v1/ai/jobs/${current.jobId}", accessToken))
+        }
+        throw IllegalStateException("AI request timed out")
     }
 
     fun applySyncProfileEvents(
@@ -1231,6 +1437,10 @@ class ConversationClient(
             syncSeq?.let(local::saveLastSyncSeq)
             return
         }
+        if (envelope.operation.startsWith("ai.")) {
+            syncSeq?.let(local::saveLastSyncSeq)
+            return
+        }
         if (envelope.operation == "message.recalled" || envelope.operation == "message.moderated") {
             val message = body.toMessage() ?: return
             applyRecalledMessage(local, message, currentUserId)
@@ -1361,6 +1571,19 @@ class ConversationClient(
             .url(url(path))
             .header("Authorization", "Bearer $accessToken")
         builder.post(json.encodeToString(body).toRequestBody(jsonMediaType))
+        builder.header("Content-Type", jsonMediaType.toString())
+        return builder.build()
+    }
+
+    private inline fun <reified T> patch(
+        path: String,
+        accessToken: String,
+        body: T,
+    ): Request {
+        val builder = Request.Builder()
+            .url(url(path))
+            .header("Authorization", "Bearer $accessToken")
+        builder.patch(json.encodeToString(body).toRequestBody(jsonMediaType))
         builder.header("Content-Type", jsonMediaType.toString())
         return builder.build()
     }

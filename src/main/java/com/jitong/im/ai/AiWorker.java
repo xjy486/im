@@ -56,32 +56,30 @@ class AiWorker {
             return;
         }
 
-        AiProviderResult providerResult;
+        AiProviderResult<?> providerResult;
         try {
-            AiConversation conversation = repository.findConversation(
-                    job.conversationId(),
-                    job.ownerUserId());
-            if (!contextStillAuthorized(job, conversation)) {
-                lifecycle.fail(job, ApiErrorDefinition.AI_CONTEXT_CHANGED.code(), clock.instant());
-                return;
-            }
             List<AiContextMessage> messages = objectMapper.readValue(
                     job.contextJson(),
                     objectMapper.getTypeFactory().constructCollectionType(List.class, AiContextMessage.class));
+            AiConversation conversation = repository.findConversation(
+                    job.conversationId(),
+                    job.ownerUserId());
+            if (!contextStillAuthorized(job, conversation, messages)) {
+                lifecycle.fail(job, ApiErrorDefinition.AI_CONTEXT_CHANGED.code(), clock.instant());
+                return;
+            }
             AiSummaryContext context = new AiSummaryContext(job.conversationId(), messages);
-            providerResult = provider.summarize(context);
+            providerResult = callProvider(job.kind(), context);
             if (providerResult.usageReported()
                     && providerResult.totalTokens() > job.reservedTokens()) {
                 throw new AiProviderException(
                         "AI_PROVIDER_USAGE_EXCEEDED",
                         "The AI provider reported more tokens than were reserved");
             }
-            AiSummary summary = providerResult.summary();
-            AiSummaryValidator.validate(summary, context);
             AiConversation current = repository.findConversation(
                     job.conversationId(),
                     job.ownerUserId());
-            if (!contextStillAuthorized(job, current)) {
+            if (!contextStillAuthorized(job, current, messages)) {
                 lifecycle.fail(job, ApiErrorDefinition.AI_CONTEXT_CHANGED.code(), clock.instant());
                 return;
             }
@@ -89,9 +87,10 @@ class AiWorker {
             lifecycle.complete(
                     job,
                     providerResult,
-                    objectMapper.writeValueAsString(summary),
+                    providerResult.result(),
+                    objectMapper.writeValueAsString(providerResult.result()),
                     finishedAt,
-                    finishedAt.plus(Duration.ofDays(30)));
+                    finishedAt.plus(retention(job.kind())));
         } catch (AiProviderException exception) {
             if (job.attemptCount() < 2 && AiProviderFailures.isRetryable(exception)) {
                 lifecycle.retry(job);
@@ -103,15 +102,49 @@ class AiWorker {
         }
     }
 
-    private boolean contextStillAuthorized(AiJobRecord job, AiConversation conversation) {
+    private AiProviderResult<?> callProvider(String kind, AiSummaryContext context) {
+        return switch (kind) {
+            case "SUMMARY" -> {
+                AiProviderResult<AiSummary> result = provider.summarize(context);
+                AiSummaryValidator.validate(result.result(), context);
+                yield result;
+            }
+            case "SMART_REPLY" -> {
+                AiProviderResult<AiSmartReplies> result = provider.smartReplies(context);
+                AiSmartRepliesValidator.validate(result.result());
+                yield result;
+            }
+            case "EXTRACTION" -> {
+                AiProviderResult<AiExtraction> result = provider.extractInformation(context);
+                AiExtractionValidator.validate(result.result(), context);
+                yield result;
+            }
+            default -> throw new AiProviderException("AI_INVALID_JOB_KIND", "Unsupported AI job kind");
+        };
+    }
+
+    private Duration retention(String kind) {
+        return "SMART_REPLY".equals(kind) ? Duration.ofMinutes(10) : Duration.ofDays(30);
+    }
+
+    private boolean contextStillAuthorized(
+            AiJobRecord job,
+            AiConversation conversation,
+            List<AiContextMessage> originalContext
+    ) {
         if (conversation == null) {
             return false;
         }
-        List<AiContextMessage> currentContext = repository.listContext(
-                job.conversationId(),
-                job.fromSeq() - 1,
-                job.toSeq(),
-                100);
+        List<AiContextMessage> currentContext = "EXTRACTION".equals(job.kind())
+                ? repository.listContextByMessageIds(
+                        job.conversationId(),
+                        originalContext.stream().map(AiContextMessage::messageId).toList(),
+                        200)
+                : repository.listContext(
+                        job.conversationId(),
+                        job.fromSeq() - 1,
+                        job.toSeq(),
+                        "SMART_REPLY".equals(job.kind()) ? 20 : 100);
         return conversation.enabledForBoth()
                 && conversation.policyVersion() == job.aiPolicyVersion()
                 && conversation.lastSeq() >= job.toSeq()

@@ -1,5 +1,7 @@
 package com.jitong.im.ai;
 
+import com.fasterxml.jackson.core.JsonProcessingException;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import com.jitong.im.platform.error.ApiErrorDefinition;
 import com.jitong.im.sync.SyncService;
 import org.springframework.stereotype.Service;
@@ -13,10 +15,12 @@ class AiJobLifecycle {
 
     private final AiRepository repository;
     private final SyncService syncService;
+    private final ObjectMapper objectMapper;
 
-    AiJobLifecycle(AiRepository repository, SyncService syncService) {
+    AiJobLifecycle(AiRepository repository, SyncService syncService, ObjectMapper objectMapper) {
         this.repository = repository;
         this.syncService = syncService;
+        this.objectMapper = objectMapper;
     }
 
     @Transactional
@@ -35,7 +39,8 @@ class AiJobLifecycle {
     @Transactional
     void complete(
             AiJobRecord job,
-            AiProviderResult providerResult,
+            AiProviderResult<?> providerResult,
+            Object result,
             String resultJson,
             Instant finishedAt,
             Instant expiresAt
@@ -57,12 +62,31 @@ class AiJobLifecycle {
                 : job.reservedTokens();
         repository.settleSucceededBudget(job, tokensToSettle);
         repository.createCacheEntry(job, resultJson, expiresAt);
-        repository.createArtifact(job.jobId(), job.ownerUserId(), resultJson, expiresAt);
+        repository.createArtifact(
+                job.jobId(),
+                job.ownerUserId(),
+                job.kind(),
+                artifactJson(result, resultJson),
+                expiresAt);
+        if (result instanceof AiExtraction extraction) {
+            repository.createActionItems(job, extraction);
+        }
         syncService.recordEventForUsers(
                 List.of(job.ownerUserId()),
                 "AI_JOB_COMPLETED",
                 job.jobId(),
                 job.conversationId());
+    }
+
+    private String artifactJson(Object result, String resultJson) {
+        if (!(result instanceof AiExtraction extraction)) {
+            return resultJson;
+        }
+        try {
+            return objectMapper.writeValueAsString(new AiExtraction(List.of(), extraction.keyFacts()));
+        } catch (JsonProcessingException exception) {
+            throw new IllegalStateException("AI artifact could not be serialized", exception);
+        }
     }
 
     @Transactional

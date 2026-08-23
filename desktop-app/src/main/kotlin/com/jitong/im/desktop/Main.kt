@@ -42,6 +42,8 @@ import com.jitong.im.desktop.auth.DesktopSession
 import com.jitong.im.desktop.auth.LoginOutcome
 import com.jitong.im.desktop.conversation.ConversationApiException
 import com.jitong.im.desktop.conversation.ConversationClient
+import com.jitong.im.desktop.conversation.DesktopAiConsent
+import com.jitong.im.desktop.conversation.DesktopAiDraft
 import com.jitong.im.desktop.conversation.DesktopContactRequestSummary
 import com.jitong.im.desktop.conversation.DesktopContactSearchResult
 import com.jitong.im.desktop.conversation.DesktopGroupInvite
@@ -54,6 +56,8 @@ import com.jitong.im.desktop.conversation.DesktopUserProfile
 import com.jitong.im.desktop.conversation.RealtimeCommandException
 import com.jitong.im.desktop.conversation.SyncGapException
 import com.jitong.im.desktop.local.LocalConversation
+import com.jitong.im.desktop.local.LocalAiActionItem
+import com.jitong.im.desktop.local.LocalAiArtifact
 import com.jitong.im.desktop.local.LocalDatabaseManager
 import com.jitong.im.desktop.local.LocalMessage
 import com.jitong.im.desktop.local.MacOsKeychain
@@ -63,6 +67,10 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
+import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.jsonArray
+import kotlinx.serialization.json.jsonObject
+import kotlinx.serialization.json.jsonPrimitive
 import java.nio.file.Path
 import java.util.UUID
 import java.io.ByteArrayInputStream
@@ -120,6 +128,16 @@ private data class DesktopData(
     val groupJoinRequests: List<DesktopMyGroupJoinRequest> = emptyList(),
     val groupMembers: List<DesktopGroupMember> = emptyList(),
     val groupInvite: DesktopGroupInvite? = null,
+    val aiArtifacts: List<LocalAiArtifact> = emptyList(),
+    val aiActionItems: List<LocalAiActionItem> = emptyList(),
+)
+
+private data class DesktopAiKeyFact(
+    val artifactId: String,
+    val category: String,
+    val content: String,
+    val confidence: Double,
+    val sourceMessageIds: List<String>,
 )
 
 @Composable
@@ -140,6 +158,10 @@ private fun DesktopApp(
     var searchResult by remember { mutableStateOf<DesktopContactSearchResult?>(null) }
     var localSearchQuery by remember { mutableStateOf("") }
     var draft by remember { mutableStateOf("") }
+    var aiConsent by remember { mutableStateOf<DesktopAiConsent?>(null) }
+    var aiDrafts by remember { mutableStateOf<List<DesktopAiDraft>>(emptyList()) }
+    var selectedAiMessageIds by remember { mutableStateOf<Set<String>>(emptySet()) }
+    var aiLoading by remember { mutableStateOf(false) }
     var online by remember { mutableStateOf(false) }
     var avatarBytes by remember { mutableStateOf<Map<String, ByteArray>>(emptyMap()) }
     var selfProfile by remember { mutableStateOf<DesktopUserProfile?>(null) }
@@ -159,9 +181,21 @@ private fun DesktopApp(
         val generation = ++mediaLoadGeneration
         val conversations = local.listConversations()
         val messages = selectedConversationId?.let(local::listMessages).orEmpty()
+        val aiArtifacts = local.listAiArtifacts()
+        val aiActionItems = local.listAiActionItems()
         data = data.copy(
             conversations = conversations,
-            messages = messages)
+            messages = messages,
+            aiArtifacts = aiArtifacts,
+            aiActionItems = aiActionItems)
+        if (aiDrafts.isEmpty()) {
+            val latestReplies = aiArtifacts.firstOrNull {
+                it.conversationId == selectedConversationId && it.artifactType == "SMART_REPLY"
+            }
+            if (latestReplies != null) {
+                aiDrafts = parseDesktopAiDrafts(latestReplies.contentJson)
+            }
+        }
         val activeMediaKeys = messages
             .filter { it.type == "IMAGE" && it.state == "ACTIVE" && it.mediaId != null }
             .map { "message-media-${it.mediaId}-thumb" }
@@ -476,6 +510,11 @@ private fun DesktopApp(
                                         local,
                                         envelope,
                                         (authStore.session ?: current).userId)
+                                    if (envelope.operation.startsWith("ai.")) {
+                                        conversationClient.refreshAiData(
+                                            (authStore.session ?: current).accessToken,
+                                            local)
+                                    }
                                 }
                                 if (envelope.operation != "sync.ready"
                                     && envelope.body?.syncSeq != null) {
@@ -623,6 +662,10 @@ private fun DesktopApp(
             groupManagementAccountNo = groupManagementAccountNo,
             groupInvite = data.groupInvite,
             draft = draft,
+            aiConsent = aiConsent,
+            aiDrafts = aiDrafts,
+            selectedAiMessageIds = selectedAiMessageIds,
+            aiLoading = aiLoading,
             error = error,
             onSearchAccountNoChange = { searchAccountNo = it.filter(Char::isDigit).take(11) },
             onSearch = {
@@ -920,9 +963,12 @@ private fun DesktopApp(
             onSelectConversation = { conversationId ->
                 selectedConversationId = conversationId
                 selectedSearchMessageId = null
+                selectedAiMessageIds = emptySet()
+                aiDrafts = emptyList()
+                aiConsent = null
                 uiScope.launch {
                     runCatching {
-                        withContext(Dispatchers.IO) {
+                        val consent = withContext(Dispatchers.IO) {
                             val local = authStore.localDatabase()
                                 ?: error("PC local database is not open")
                             conversationClient.restoreConversation(
@@ -934,12 +980,138 @@ private fun DesktopApp(
                                 authStore.session?.accessToken ?: session!!.accessToken,
                                 local,
                                 conversationId)
+                            conversationClient.aiConsent(
+                                authStore.session?.accessToken ?: session!!.accessToken,
+                                conversationId)
+                        }
+                        refreshLocal()
+                        consent
+                    }.onSuccess { aiConsent = it }
+                        .onFailure { error = messageFor(it) }
+                }
+            },
+            onDraftChange = { draft = it.take(4000) },
+            onToggleAiConsent = {
+                val conversationId = selectedConversationId ?: return@MainScreen
+                val current = authStore.session ?: session ?: return@MainScreen
+                uiScope.launch {
+                    aiLoading = true
+                    runCatching {
+                        withContext(Dispatchers.IO) {
+                            conversationClient.updateAiConsent(
+                                current.accessToken,
+                                conversationId,
+                                !(aiConsent?.enabled ?: false))
+                        }
+                    }.onSuccess { aiConsent = it }
+                        .onFailure { error = messageFor(it) }
+                    aiLoading = false
+                }
+            },
+            onToggleAiMessage = { messageId ->
+                selectedAiMessageIds = selectedAiMessageIds.toMutableSet().also {
+                    if (!it.add(messageId)) it.remove(messageId)
+                }
+            },
+            onRequestSmartReplies = {
+                val conversationId = selectedConversationId ?: return@MainScreen
+                val current = authStore.session ?: session ?: return@MainScreen
+                uiScope.launch {
+                    aiLoading = true
+                    runCatching {
+                        withContext(Dispatchers.IO) {
+                            val replies = conversationClient.requestSmartReplies(
+                                current.accessToken,
+                                conversationId)
+                            val local = authStore.localDatabase()
+                                ?: error("PC local database is not open")
+                            conversationClient.refreshAiData(current.accessToken, local)
+                            replies
+                        }
+                    }.onSuccess {
+                        aiDrafts = it
+                        refreshLocal()
+                    }.onFailure { error = messageFor(it) }
+                    aiLoading = false
+                }
+            },
+            onEditAiDraft = { index, value ->
+                aiDrafts = aiDrafts.mapIndexed { itemIndex, item ->
+                    if (itemIndex == index) item.copy(text = value.take(4000)) else item
+                }
+            },
+            onUseAiDraft = { value -> draft = value.take(4000) },
+            onExtractAiInformation = {
+                val conversationId = selectedConversationId ?: return@MainScreen
+                val current = authStore.session ?: session ?: return@MainScreen
+                if (selectedAiMessageIds.isEmpty()) return@MainScreen
+                uiScope.launch {
+                    aiLoading = true
+                    runCatching {
+                        withContext(Dispatchers.IO) {
+                            conversationClient.extractInformation(
+                                current.accessToken,
+                                conversationId,
+                                selectedAiMessageIds.toList())
+                            val local = authStore.localDatabase()
+                                ?: error("PC local database is not open")
+                            conversationClient.refreshAiData(current.accessToken, local)
+                        }
+                    }.onSuccess {
+                        selectedAiMessageIds = emptySet()
+                        refreshLocal()
+                    }.onFailure { error = messageFor(it) }
+                    aiLoading = false
+                }
+            },
+            onDeleteAiArtifact = { artifactId ->
+                val current = authStore.session ?: session ?: return@MainScreen
+                uiScope.launch {
+                    runCatching {
+                        withContext(Dispatchers.IO) {
+                            conversationClient.deleteAiArtifact(current.accessToken, artifactId)
+                            conversationClient.refreshAiData(
+                                current.accessToken,
+                                authStore.localDatabase()
+                                    ?: error("PC local database is not open"))
                         }
                         refreshLocal()
                     }.onFailure { error = messageFor(it) }
                 }
             },
-            onDraftChange = { draft = it.take(4000) },
+            onSetAiActionItemStatus = { actionItemId, status ->
+                val current = authStore.session ?: session ?: return@MainScreen
+                uiScope.launch {
+                    runCatching {
+                        withContext(Dispatchers.IO) {
+                            conversationClient.updateAiActionItem(
+                                current.accessToken,
+                                actionItemId,
+                                status)
+                            conversationClient.refreshAiData(
+                                current.accessToken,
+                                authStore.localDatabase()
+                                    ?: error("PC local database is not open"))
+                        }
+                        refreshLocal()
+                    }.onFailure { error = messageFor(it) }
+                }
+            },
+            onDeleteAiActionItem = { actionItemId ->
+                val current = authStore.session ?: session ?: return@MainScreen
+                uiScope.launch {
+                    runCatching {
+                        withContext(Dispatchers.IO) {
+                            conversationClient.deleteAiActionItem(current.accessToken, actionItemId)
+                            conversationClient.refreshAiData(
+                                current.accessToken,
+                                authStore.localDatabase()
+                                    ?: error("PC local database is not open"))
+                        }
+                        refreshLocal()
+                    }.onFailure { error = messageFor(it) }
+                }
+            },
             onSend = {
                 val conversationId = selectedConversationId ?: return@MainScreen
                 val text = draft.trim()
@@ -1210,6 +1382,10 @@ private fun MainScreen(
     groupManagementAccountNo: String,
     groupInvite: DesktopGroupInvite?,
     draft: String,
+    aiConsent: DesktopAiConsent?,
+    aiDrafts: List<DesktopAiDraft>,
+    selectedAiMessageIds: Set<String>,
+    aiLoading: Boolean,
     error: String?,
     onSearchAccountNoChange: (String) -> Unit,
     onSearch: () -> Unit,
@@ -1240,6 +1416,15 @@ private fun MainScreen(
     onUnblockContact: (String) -> Unit,
     onSelectConversation: (String) -> Unit,
     onDraftChange: (String) -> Unit,
+    onToggleAiConsent: () -> Unit,
+    onToggleAiMessage: (String) -> Unit,
+    onRequestSmartReplies: () -> Unit,
+    onEditAiDraft: (Int, String) -> Unit,
+    onUseAiDraft: (String) -> Unit,
+    onExtractAiInformation: () -> Unit,
+    onDeleteAiArtifact: (String) -> Unit,
+    onSetAiActionItemStatus: (String, String) -> Unit,
+    onDeleteAiActionItem: (String) -> Unit,
     onSend: () -> Unit,
     onMarkRead: (Long) -> Unit,
     onLogout: () -> Unit,
@@ -1461,8 +1646,27 @@ private fun MainScreen(
                 mediaBytes = mediaBytes,
                 draft = draft,
                 online = online,
+                aiConsent = aiConsent,
+                aiDrafts = aiDrafts,
+                aiArtifacts = data.aiArtifacts.filter {
+                    it.conversationId == selectedConversationId
+                },
+                aiActionItems = data.aiActionItems.filter {
+                    it.conversationId == selectedConversationId
+                },
+                selectedAiMessageIds = selectedAiMessageIds,
+                aiLoading = aiLoading,
                 error = error,
                 onDraftChange = onDraftChange,
+                onToggleAiConsent = onToggleAiConsent,
+                onToggleAiMessage = onToggleAiMessage,
+                onRequestSmartReplies = onRequestSmartReplies,
+                onEditAiDraft = onEditAiDraft,
+                onUseAiDraft = onUseAiDraft,
+                onExtractAiInformation = onExtractAiInformation,
+                onDeleteAiArtifact = onDeleteAiArtifact,
+                onSetAiActionItemStatus = onSetAiActionItemStatus,
+                onDeleteAiActionItem = onDeleteAiActionItem,
                 onSend = onSend,
                 onMarkRead = onMarkRead,
                 onChooseImage = onChooseImage,
@@ -1645,8 +1849,23 @@ private fun ConversationPane(
     mediaBytes: Map<String, ByteArray>,
     draft: String,
     online: Boolean,
+    aiConsent: DesktopAiConsent?,
+    aiDrafts: List<DesktopAiDraft>,
+    aiArtifacts: List<LocalAiArtifact>,
+    aiActionItems: List<LocalAiActionItem>,
+    selectedAiMessageIds: Set<String>,
+    aiLoading: Boolean,
     error: String?,
     onDraftChange: (String) -> Unit,
+    onToggleAiConsent: () -> Unit,
+    onToggleAiMessage: (String) -> Unit,
+    onRequestSmartReplies: () -> Unit,
+    onEditAiDraft: (Int, String) -> Unit,
+    onUseAiDraft: (String) -> Unit,
+    onExtractAiInformation: () -> Unit,
+    onDeleteAiArtifact: (String) -> Unit,
+    onSetAiActionItemStatus: (String, String) -> Unit,
+    onDeleteAiActionItem: (String) -> Unit,
     onSend: () -> Unit,
     onMarkRead: (Long) -> Unit,
     onChooseImage: () -> Unit,
@@ -1739,10 +1958,41 @@ private fun ConversationPane(
                         message.conversationSeq?.let {
                             Text("Message #$it")
                         }
+                        if (message.state == "ACTIVE" &&
+                            message.localState == "SENT" &&
+                            runCatching { UUID.fromString(message.messageId) }.isSuccess) {
+                            OutlinedButton(onClick = {
+                                onToggleAiMessage(message.messageId)
+                            }) {
+                                Text(
+                                    if (message.messageId in selectedAiMessageIds) {
+                                        "Remove from AI evidence"
+                                    } else {
+                                        "Select as AI evidence"
+                                    })
+                            }
+                        }
                     }
                 }
             }
         }
+        AiAssistantPanel(
+            conversationKind = selectedConversation.kind,
+            online = online,
+            consent = aiConsent,
+            drafts = aiDrafts,
+            artifacts = aiArtifacts,
+            actionItems = aiActionItems,
+            selectedMessageCount = selectedAiMessageIds.size,
+            loading = aiLoading,
+            onToggleConsent = onToggleAiConsent,
+            onRequestSmartReplies = onRequestSmartReplies,
+            onEditDraft = onEditAiDraft,
+            onUseDraft = onUseAiDraft,
+            onExtractInformation = onExtractAiInformation,
+            onDeleteArtifact = onDeleteAiArtifact,
+            onSetActionItemStatus = onSetAiActionItemStatus,
+            onDeleteActionItem = onDeleteAiActionItem)
         if (!online) {
             Text(
                 "Offline: you can browse history, but sending is disabled.",
@@ -1779,6 +2029,147 @@ private fun ConversationPane(
         }
     }
 }
+
+@Composable
+private fun AiAssistantPanel(
+    conversationKind: String,
+    online: Boolean,
+    consent: DesktopAiConsent?,
+    drafts: List<DesktopAiDraft>,
+    artifacts: List<LocalAiArtifact>,
+    actionItems: List<LocalAiActionItem>,
+    selectedMessageCount: Int,
+    loading: Boolean,
+    onToggleConsent: () -> Unit,
+    onRequestSmartReplies: () -> Unit,
+    onEditDraft: (Int, String) -> Unit,
+    onUseDraft: (String) -> Unit,
+    onExtractInformation: () -> Unit,
+    onDeleteArtifact: (String) -> Unit,
+    onSetActionItemStatus: (String, String) -> Unit,
+    onDeleteActionItem: (String) -> Unit,
+) {
+    if (conversationKind != "C2C") return
+    val enabledForBoth = consent?.enabledForBoth == true
+    val facts = artifacts.flatMap(::parseDesktopAiFacts)
+    Card(Modifier.fillMaxWidth().padding(top = 8.dp)) {
+        LazyColumn(
+            modifier = Modifier.fillMaxWidth().heightIn(max = 320.dp).padding(12.dp),
+            verticalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+            item {
+                Text("Private AI assistant", style = MaterialTheme.typography.titleMedium)
+                Text(
+                    when {
+                        consent == null -> "Loading consent…"
+                        enabledForBoth -> "Enabled by both participants"
+                        consent.enabled -> "You enabled AI; waiting for the other participant"
+                        else -> "Disabled for you"
+                    })
+                OutlinedButton(
+                    enabled = online && consent != null && !loading,
+                    onClick = onToggleConsent,
+                ) {
+                    Text(if (consent?.enabled == true) "Disable AI" else "Enable AI")
+                }
+            }
+            if (enabledForBoth) {
+                item {
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        Button(
+                            enabled = online && !loading,
+                            onClick = onRequestSmartReplies,
+                        ) { Text("Generate 3 replies") }
+                        Button(
+                            enabled = online && !loading && selectedMessageCount > 0,
+                            onClick = onExtractInformation,
+                        ) { Text("Extract selected ($selectedMessageCount)") }
+                    }
+                }
+                items(drafts.size) { index ->
+                    val reply = drafts[index]
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        OutlinedTextField(
+                            modifier = Modifier.weight(1f),
+                            value = reply.text,
+                            onValueChange = { onEditDraft(index, it) },
+                            label = { Text("Reply ${index + 1} · ${reply.tone}") },
+                            singleLine = true)
+                        Button(onClick = { onUseDraft(reply.text) }) { Text("Use") }
+                    }
+                }
+            }
+            if (facts.isNotEmpty()) {
+                item { Text("Extracted facts", style = MaterialTheme.typography.titleSmall) }
+                items(facts, key = { "${it.artifactId}-${it.category}-${it.content}" }) { fact ->
+                    Card(Modifier.fillMaxWidth()) {
+                        Column(Modifier.padding(8.dp)) {
+                            Text("${fact.category} · ${"%.0f".format(fact.confidence * 100)}%")
+                            Text(fact.content)
+                            Text("Evidence: ${fact.sourceMessageIds.joinToString()}")
+                            OutlinedButton(onClick = { onDeleteArtifact(fact.artifactId) }) {
+                                Text("Delete result")
+                            }
+                        }
+                    }
+                }
+            }
+            if (actionItems.isNotEmpty()) {
+                item { Text("Action items", style = MaterialTheme.typography.titleSmall) }
+                items(actionItems, key = { it.actionItemId }) { action ->
+                    Card(Modifier.fillMaxWidth()) {
+                        Column(Modifier.padding(8.dp)) {
+                            Text("${action.title} · ${action.priority} · ${action.status}")
+                            if (action.details.isNotBlank()) Text(action.details)
+                            action.dueAt?.let { Text("Due: $it") }
+                            action.assigneeUserId?.let { Text("Recognized assignee: $it") }
+                            Text("Evidence: ${parseDesktopAiEvidence(action.sourceMessageIdsJson).joinToString()}")
+                            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                OutlinedButton(onClick = {
+                                    onSetActionItemStatus(
+                                        action.actionItemId,
+                                        if (action.status == "OPEN") "COMPLETED" else "OPEN")
+                                }) {
+                                    Text(if (action.status == "OPEN") "Complete" else "Reopen")
+                                }
+                                OutlinedButton(onClick = {
+                                    onDeleteActionItem(action.actionItemId)
+                                }) { Text("Delete") }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+private fun parseDesktopAiDrafts(contentJson: String): List<DesktopAiDraft> = runCatching {
+    Json.parseToJsonElement(contentJson).jsonObject["replies"]?.jsonArray?.map { value ->
+        val reply = value.jsonObject
+        DesktopAiDraft(
+            text = reply.getValue("text").jsonPrimitive.content,
+            tone = reply.getValue("tone").jsonPrimitive.content)
+    }.orEmpty()
+}.getOrDefault(emptyList())
+
+private fun parseDesktopAiFacts(artifact: LocalAiArtifact): List<DesktopAiKeyFact> = runCatching {
+    Json.parseToJsonElement(artifact.contentJson).jsonObject["keyFacts"]?.jsonArray?.map { value ->
+        val fact = value.jsonObject
+        DesktopAiKeyFact(
+            artifactId = artifact.artifactId,
+            category = fact.getValue("category").jsonPrimitive.content,
+            content = fact.getValue("content").jsonPrimitive.content,
+            confidence = fact.getValue("confidence").jsonPrimitive.content.toDouble(),
+            sourceMessageIds = fact.getValue("sourceMessageIds").jsonArray.map {
+                it.jsonPrimitive.content
+            })
+    }.orEmpty()
+}.getOrDefault(emptyList())
+
+private fun parseDesktopAiEvidence(contentJson: String): List<String> = runCatching {
+    Json.parseToJsonElement(contentJson).jsonArray.map { it.jsonPrimitive.content }
+}.getOrDefault(emptyList())
 
 @Composable
 private fun DefaultAvatar(fallback: String) {
@@ -1834,6 +2225,7 @@ private suspend fun synchronize(
         untilSeq = page.untilSeq
         page.events
             .also { client.applySyncProfileEvents(current.accessToken, local, it) }
+            .also { client.applyAiSyncEvents(current.accessToken, local, it) }
             .also { events ->
                 if (events.any {
                         it.eventType == "MESSAGE_RECALLED" ||

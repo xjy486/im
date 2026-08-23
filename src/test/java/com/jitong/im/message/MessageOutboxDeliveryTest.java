@@ -150,6 +150,8 @@ class MessageOutboxDeliveryTest {
     void delivers_private_ai_deletion_events_without_reloading_deleted_content() throws Exception {
         assertDeletionEnvelope("AI_ARTIFACT_DELETED", "ai.artifact.deleted");
         assertDeletionEnvelope("AI_JOB_DELETED", "ai.job.deleted");
+        assertDeletionEnvelope("AI_ACTION_ITEM_UPDATED", "ai.action-item.updated");
+        assertDeletionEnvelope("AI_ACTION_ITEM_DELETED", "ai.action-item.deleted");
     }
 
     private void assertDeletionEnvelope(String eventType, String operation) throws Exception {

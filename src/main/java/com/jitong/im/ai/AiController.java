@@ -59,6 +59,26 @@ class AiController {
         return service.enqueueSummary(device, conversationId, request);
     }
 
+    @PostMapping("/conversations/{conversationId}/ai/smart-replies")
+    AiJobResponse smartReplies(
+            @RequestHeader(value = "Authorization", required = false) String authorization,
+            @PathVariable UUID conversationId,
+            @Valid @RequestBody AiSmartReplyRequest request
+    ) {
+        AuthenticatedDevice device = authService.requireAuthenticatedDevice(authorization);
+        return service.enqueueSmartReplies(device, conversationId, request);
+    }
+
+    @PostMapping("/conversations/{conversationId}/ai/extract")
+    AiJobResponse extraction(
+            @RequestHeader(value = "Authorization", required = false) String authorization,
+            @PathVariable UUID conversationId,
+            @Valid @RequestBody AiExtractionRequest request
+    ) {
+        AuthenticatedDevice device = authService.requireAuthenticatedDevice(authorization);
+        return service.enqueueExtraction(device, conversationId, request);
+    }
+
     @GetMapping("/ai/jobs/{jobId}")
     AiJobResponse job(
             @RequestHeader(value = "Authorization", required = false) String authorization,
@@ -72,6 +92,34 @@ class AiController {
             @RequestHeader(value = "Authorization", required = false) String authorization
     ) {
         return service.artifacts(authService.requireUserId(authorization));
+    }
+
+    @GetMapping("/ai/action-items")
+    List<AiActionItemResponse> actionItems(
+            @RequestHeader(value = "Authorization", required = false) String authorization
+    ) {
+        return service.actionItems(authService.requireUserId(authorization));
+    }
+
+    @PatchMapping("/ai/action-items/{actionItemId}")
+    AiActionItemResponse updateActionItem(
+            @RequestHeader(value = "Authorization", required = false) String authorization,
+            @PathVariable UUID actionItemId,
+            @Valid @RequestBody AiActionItemUpdate request
+    ) {
+        return service.updateActionItem(
+                authService.requireUserId(authorization),
+                actionItemId,
+                request);
+    }
+
+    @DeleteMapping("/ai/action-items/{actionItemId}")
+    ResponseEntity<Void> deleteActionItem(
+            @RequestHeader(value = "Authorization", required = false) String authorization,
+            @PathVariable UUID actionItemId
+    ) {
+        service.deleteActionItem(authService.requireUserId(authorization), actionItemId);
+        return ResponseEntity.noContent().build();
     }
 
     @DeleteMapping("/ai/jobs/{jobId}")

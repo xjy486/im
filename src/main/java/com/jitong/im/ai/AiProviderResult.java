@@ -1,17 +1,17 @@
 package com.jitong.im.ai;
 
-public record AiProviderResult(
-        AiSummary summary,
+public record AiProviderResult<T>(
+        T result,
         int inputTokens,
         int outputTokens,
         boolean usageReported
 ) {
-    public AiProviderResult(AiSummary summary, int inputTokens, int outputTokens) {
-        this(summary, inputTokens, outputTokens, true);
+    public AiProviderResult(T result, int inputTokens, int outputTokens) {
+        this(result, inputTokens, outputTokens, true);
     }
 
     public AiProviderResult {
-        if (summary == null || inputTokens < 0 || outputTokens < 0) {
+        if (result == null || inputTokens < 0 || outputTokens < 0) {
             throw new IllegalArgumentException("AI provider result and token usage must be valid");
         }
     }

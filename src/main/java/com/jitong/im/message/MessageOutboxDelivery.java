@@ -211,6 +211,16 @@ class MessageOutboxDelivery implements OutboxDelivery {
                     record.entityId(),
                     record.conversationId(),
                     record.syncSeq());
+            case "AI_ACTION_ITEM_UPDATED" -> MessageWire.aiActionItemChanged(
+                    "ai.action-item.updated",
+                    record.entityId(),
+                    record.conversationId(),
+                    record.syncSeq());
+            case "AI_ACTION_ITEM_DELETED" -> MessageWire.aiActionItemChanged(
+                    "ai.action-item.deleted",
+                    record.entityId(),
+                    record.conversationId(),
+                    record.syncSeq());
             default -> null;
         };
         if (envelope == null) {

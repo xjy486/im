@@ -22,6 +22,7 @@
         <minio.version>8.6.0</minio.version>
         <webp-imageio.version>0.10.0</webp-imageio.version>
         <spring-ai.version>1.1.8</spring-ai.version>
+        <json-schema-validator.version>2.0.3</json-schema-validator.version>
     </properties>
 
     <dependencyManagement>
@@ -68,6 +69,11 @@
         <dependency>
             <groupId>org.springframework.security</groupId>
             <artifactId>spring-security-crypto</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>com.networknt</groupId>
+            <artifactId>json-schema-validator</artifactId>
+            <version>${json-schema-validator.version}</version>
         </dependency>
         <dependency>
             <groupId>org.bouncycastle</groupId>
@@ -127,6 +133,18 @@
     </dependencies>
 
     <build>
+        <resources>
+            <resource>
+                <directory>src/main/resources</directory>
+            </resource>
+            <resource>
+                <directory>contracts/schemas</directory>
+                <targetPath>contracts/schemas</targetPath>
+                <includes>
+                    <include>ai-output-v1.schema.json</include>
+                </includes>
+            </resource>
+        </resources>
         <plugins>
             <plugin>
                 <groupId>org.springframework.boot</groupId>

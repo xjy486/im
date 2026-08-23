@@ -291,5 +291,9 @@ class MessageRepositoryMediaTest {
             conversationId: UUID,
             request: ReadStateRequest,
         ): Response<ReadStatePageResponse> = error("not used")
+
+        override suspend fun aiArtifacts(): Response<List<AiArtifactResponse>> = error("not used")
+
+        override suspend fun aiActionItems(): Response<List<AiActionItemResponse>> = error("not used")
     }
 }

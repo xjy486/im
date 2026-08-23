@@ -24,7 +24,9 @@ import java.util.UUID;
 public class AiService {
 
     private static final int MAX_SUMMARY_MESSAGES = 100;
-    private static final int MAX_QUEUED_SUMMARIES_PER_USER = 3;
+    private static final int MAX_SMART_REPLY_MESSAGES = 20;
+    private static final int MAX_EXTRACTION_MESSAGES = 200;
+    private static final int MAX_QUEUED_AI_JOBS_PER_USER = 3;
     private static final int PROMPT_OVERHEAD_TOKEN_RESERVATION = 2_048;
     private static final Duration SUMMARY_RETENTION = Duration.ofDays(30);
     private static final ZoneId BUDGET_ZONE = ZoneId.of("Asia/Shanghai");
@@ -163,6 +165,7 @@ public class AiService {
                     device.deviceId(),
                     conversationId,
                     request.requestId(),
+                    "SUMMARY",
                     fromSeq,
                     toSeq,
                     contextDigest,
@@ -177,6 +180,7 @@ public class AiService {
             repository.createArtifact(
                     cachedJobId,
                     device.userId(),
+                    "SUMMARY",
                     cached.resultJson(),
                     cached.expiresAt());
             syncService.recordEventForUsers(
@@ -198,7 +202,7 @@ public class AiService {
                 reservedTokens)) {
             throw new AiException(ApiErrorDefinition.AI_BUDGET_EXCEEDED);
         }
-        if (repository.countQueuedJobs(device.userId()) >= MAX_QUEUED_SUMMARIES_PER_USER) {
+        if (repository.countQueuedJobs(device.userId()) >= MAX_QUEUED_AI_JOBS_PER_USER) {
             throw new AiException(ApiErrorDefinition.AI_BUSY);
         }
         UUID jobId = UuidV7.random();
@@ -209,6 +213,204 @@ public class AiService {
                 device.deviceId(),
                 conversationId,
                 request.requestId(),
+                "SUMMARY",
+                fromSeq,
+                toSeq,
+                contextDigest,
+                contextJson,
+                conversation.policyVersion(),
+                cacheKey,
+                budgetDate,
+                reservedTokens,
+                properties.provider().model(),
+                properties.promptVersion(),
+                expiresAt);
+        syncService.recordEventForUsers(
+                List.of(device.userId()),
+                "AI_JOB_QUEUED",
+                jobId,
+                conversationId);
+        return response(repository.findJob(device.userId(), jobId));
+    }
+
+    @Transactional
+    public AiJobResponse enqueueSmartReplies(
+            AuthenticatedDevice device,
+            UUID conversationId,
+            AiSmartReplyRequest request
+    ) {
+        if (request == null || request.requestId() == null) {
+            throw new AiException(ApiErrorDefinition.INVALID_REQUEST);
+        }
+        if (!repository.lockActiveOwnerForUpdate(device.userId())) {
+            throw new AiException(ApiErrorDefinition.AUTH_INVALID);
+        }
+        AiJobRecord previous = repository.findByRequest(device.userId(), request.requestId());
+        if (previous != null) {
+            return response(previous);
+        }
+        AiConversation conversation = repository.findConversationForUpdate(conversationId, device.userId());
+        if (conversation == null) {
+            throw new AiException(ApiErrorDefinition.NOT_CONTACT);
+        }
+        previous = repository.findByRequest(device.userId(), request.requestId());
+        if (previous != null) {
+            return response(previous);
+        }
+        if (!conversation.enabledForBoth()) {
+            throw new AiException(ApiErrorDefinition.AI_CONSENT_REQUIRED);
+        }
+
+        List<AiContextMessage> context = repository.listContext(
+                conversationId,
+                0,
+                conversation.lastSeq(),
+                MAX_SMART_REPLY_MESSAGES);
+        if (context.isEmpty()) {
+            throw new AiException(ApiErrorDefinition.INVALID_REQUEST);
+        }
+        long fromSeq = context.get(0).conversationSeq();
+        long toSeq = context.get(context.size() - 1).conversationSeq();
+        String contextDigest = AiContextDigest.sha256(context);
+        String cacheKey = AiCacheKey.forContext(
+                device.userId(),
+                "SMART_REPLY",
+                conversationId,
+                fromSeq,
+                toSeq,
+                "openai-compatible",
+                properties.provider().model(),
+                properties.promptVersion(),
+                false,
+                contextDigest);
+        String contextJson = writeJson(context);
+        Instant now = clock.instant();
+        LocalDate budgetDate = now.atZone(BUDGET_ZONE).toLocalDate();
+        long reservedTokens = Math.addExact(
+                Math.addExact(
+                        PROMPT_OVERHEAD_TOKEN_RESERVATION,
+                        contextJson.getBytes(StandardCharsets.UTF_8).length),
+                properties.budget().maxOutputTokens());
+        if (repository.countActiveJobs(device.userId()) > 0) {
+            throw new AiException(ApiErrorDefinition.AI_BUSY);
+        }
+        if (!repository.reserveBudget(
+                device.userId(),
+                budgetDate,
+                properties.budget().dailyTokenLimit(),
+                reservedTokens)) {
+            throw new AiException(ApiErrorDefinition.AI_BUDGET_EXCEEDED);
+        }
+        UUID jobId = UuidV7.random();
+        Instant expiresAt = now.plus(Duration.ofMinutes(10));
+        repository.insertJob(
+                jobId,
+                device.userId(),
+                device.deviceId(),
+                conversationId,
+                request.requestId(),
+                "SMART_REPLY",
+                fromSeq,
+                toSeq,
+                contextDigest,
+                contextJson,
+                conversation.policyVersion(),
+                cacheKey,
+                budgetDate,
+                reservedTokens,
+                properties.provider().model(),
+                properties.promptVersion(),
+                expiresAt);
+        syncService.recordEventForUsers(
+                List.of(device.userId()),
+                "AI_JOB_QUEUED",
+                jobId,
+                conversationId);
+        return response(repository.findJob(device.userId(), jobId));
+    }
+
+    @Transactional
+    public AiJobResponse enqueueExtraction(
+            AuthenticatedDevice device,
+            UUID conversationId,
+            AiExtractionRequest request
+    ) {
+        if (request == null
+                || request.requestId() == null
+                || request.messageIds() == null
+                || request.messageIds().isEmpty()
+                || request.messageIds().size() > MAX_EXTRACTION_MESSAGES
+                || request.messageIds().stream().anyMatch(java.util.Objects::isNull)
+                || request.messageIds().stream().distinct().count() != request.messageIds().size()) {
+            throw new AiException(ApiErrorDefinition.INVALID_REQUEST);
+        }
+        if (!repository.lockActiveOwnerForUpdate(device.userId())) {
+            throw new AiException(ApiErrorDefinition.AUTH_INVALID);
+        }
+        AiJobRecord previous = repository.findByRequest(device.userId(), request.requestId());
+        if (previous != null) {
+            return response(previous);
+        }
+        AiConversation conversation = repository.findConversationForUpdate(conversationId, device.userId());
+        if (conversation == null) {
+            throw new AiException(ApiErrorDefinition.NOT_CONTACT);
+        }
+        previous = repository.findByRequest(device.userId(), request.requestId());
+        if (previous != null) {
+            return response(previous);
+        }
+        if (!conversation.enabledForBoth()) {
+            throw new AiException(ApiErrorDefinition.AI_CONSENT_REQUIRED);
+        }
+
+        List<AiContextMessage> context = repository.listContextByMessageIds(
+                conversationId,
+                request.messageIds(),
+                MAX_EXTRACTION_MESSAGES);
+        if (context.size() != request.messageIds().size()) {
+            throw new AiException(ApiErrorDefinition.INVALID_REQUEST);
+        }
+        long fromSeq = context.get(0).conversationSeq();
+        long toSeq = context.get(context.size() - 1).conversationSeq();
+        String contextDigest = AiContextDigest.sha256(context);
+        String cacheKey = AiCacheKey.forContext(
+                device.userId(),
+                "EXTRACTION",
+                conversationId,
+                fromSeq,
+                toSeq,
+                "openai-compatible",
+                properties.provider().model(),
+                properties.promptVersion(),
+                false,
+                contextDigest);
+        String contextJson = writeJson(context);
+        Instant now = clock.instant();
+        LocalDate budgetDate = now.atZone(BUDGET_ZONE).toLocalDate();
+        long reservedTokens = Math.addExact(
+                Math.addExact(
+                        PROMPT_OVERHEAD_TOKEN_RESERVATION,
+                        contextJson.getBytes(StandardCharsets.UTF_8).length),
+                properties.budget().maxOutputTokens());
+        if (repository.countQueuedJobs(device.userId()) >= MAX_QUEUED_AI_JOBS_PER_USER) {
+            throw new AiException(ApiErrorDefinition.AI_BUSY);
+        }
+        if (!repository.reserveBudget(
+                device.userId(),
+                budgetDate,
+                properties.budget().dailyTokenLimit(),
+                reservedTokens)) {
+            throw new AiException(ApiErrorDefinition.AI_BUDGET_EXCEEDED);
+        }
+        UUID jobId = UuidV7.random();
+        Instant expiresAt = now.plus(SUMMARY_RETENTION);
+        repository.insertJob(
+                jobId,
+                device.userId(),
+                device.deviceId(),
+                conversationId,
+                request.requestId(),
+                "EXTRACTION",
                 fromSeq,
                 toSeq,
                 contextDigest,
@@ -247,7 +449,7 @@ public class AiService {
                         job.kind(),
                         job.status(),
                         job.errorCode(),
-                        job.resultJson() == null ? null : readSummary(job.resultJson()));
+                        job.resultJson() == null ? null : readResult(job.kind(), job.resultJson()));
     }
 
     @Transactional(readOnly = true)
@@ -255,6 +457,56 @@ public class AiService {
         return repository.listArtifacts(ownerUserId, clock.instant()).stream()
                 .map(this::artifactResponse)
                 .toList();
+    }
+
+    @Transactional(readOnly = true)
+    public List<AiActionItemResponse> actionItems(UUID ownerUserId) {
+        return repository.listActionItems(ownerUserId).stream()
+                .map(this::actionItemResponse)
+                .toList();
+    }
+
+    @Transactional
+    public AiActionItemResponse updateActionItem(
+            UUID ownerUserId,
+            UUID actionItemId,
+            AiActionItemUpdate request
+    ) {
+        if (request == null
+                || !("OPEN".equals(request.status()) || "COMPLETED".equals(request.status()))) {
+            throw new AiException(ApiErrorDefinition.INVALID_REQUEST);
+        }
+        AiRepository.AiActionItemRecord item = repository.findActionItem(ownerUserId, actionItemId);
+        if (item == null) {
+            throw new AiException(ApiErrorDefinition.AI_NOT_FOUND);
+        }
+        Instant completedAt = "COMPLETED".equals(request.status()) ? clock.instant() : null;
+        if (repository.updateActionItemStatus(
+                ownerUserId,
+                actionItemId,
+                request.status(),
+                completedAt) == 0) {
+            throw new AiException(ApiErrorDefinition.AI_NOT_FOUND);
+        }
+        syncService.recordEventForUsers(
+                List.of(ownerUserId),
+                "AI_ACTION_ITEM_UPDATED",
+                actionItemId,
+                item.conversationId());
+        return actionItemResponse(repository.findActionItem(ownerUserId, actionItemId));
+    }
+
+    @Transactional
+    public void deleteActionItem(UUID ownerUserId, UUID actionItemId) {
+        AiRepository.AiActionItemRecord item = repository.findActionItem(ownerUserId, actionItemId);
+        if (item == null || repository.deleteActionItem(ownerUserId, actionItemId) == 0) {
+            throw new AiException(ApiErrorDefinition.AI_NOT_FOUND);
+        }
+        syncService.recordEventForUsers(
+                List.of(ownerUserId),
+                "AI_ACTION_ITEM_DELETED",
+                actionItemId,
+                item.conversationId());
     }
 
     @Transactional
@@ -306,6 +558,7 @@ public class AiService {
             throw new AiException(ApiErrorDefinition.AI_NOT_FOUND);
         }
         repository.deleteArtifactsForJob(ownerUserId, jobId);
+        repository.deleteActionItemsForJob(ownerUserId, jobId);
         repository.deleteCacheEntry(ownerUserId, job.cacheKey());
         repository.releaseBudget(job);
         if (repository.deleteJob(ownerUserId, jobId) == 0) {
@@ -323,10 +576,30 @@ public class AiService {
                 1,
                 record.artifactId(),
                 record.jobId(),
+                record.conversationId(),
                 record.artifactType(),
-                readSummary(record.contentJson()),
+                readResult(record.artifactType(), record.contentJson()),
                 record.createdAt(),
                 record.expiresAt());
+    }
+
+    private AiActionItemResponse actionItemResponse(AiRepository.AiActionItemRecord record) {
+        return new AiActionItemResponse(
+                1,
+                record.actionItemId(),
+                record.sourceJobId(),
+                record.ownerUserId(),
+                record.conversationId(),
+                record.assigneeUserId(),
+                record.title(),
+                record.details(),
+                record.dueAt(),
+                record.priority(),
+                record.confidence(),
+                record.sourceMessageIds(),
+                record.status(),
+                record.createdAt(),
+                record.completedAt());
     }
 
     AiJobResponse response(AiJobRecord job) {
@@ -348,12 +621,17 @@ public class AiService {
                 job.startedAt(),
                 job.finishedAt(),
                 job.expiresAt(),
-                job.resultJson() == null ? null : readSummary(job.resultJson()));
+                job.resultJson() == null ? null : readResult(job.kind(), job.resultJson()));
     }
 
-    private AiSummary readSummary(String json) {
+    private Object readResult(String kind, String json) {
         try {
-            return objectMapper.readValue(json, AiSummary.class);
+            return switch (kind) {
+                case "SUMMARY" -> objectMapper.readValue(json, AiSummary.class);
+                case "SMART_REPLY" -> objectMapper.readValue(json, AiSmartReplies.class);
+                case "EXTRACTION" -> objectMapper.readValue(json, AiExtraction.class);
+                default -> throw new AiException(ApiErrorDefinition.INTERNAL_ERROR);
+            };
         } catch (JsonProcessingException exception) {
             throw new AiException(ApiErrorDefinition.INTERNAL_ERROR, exception);
         }

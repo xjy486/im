@@ -26,6 +26,9 @@ class OpenAiCompatibleAiProvider implements AiProvider {
     private final ObjectMapper objectMapper;
     private final ChatClient chatClient;
     private final BeanOutputConverter<AiSummary> outputConverter;
+    private final BeanOutputConverter<AiSmartReplies> smartRepliesConverter;
+    private final BeanOutputConverter<AiExtraction> extractionConverter;
+    private final AiOutputSchemaValidator schemaValidator;
 
     @Autowired
     OpenAiCompatibleAiProvider(
@@ -37,10 +40,46 @@ class OpenAiCompatibleAiProvider implements AiProvider {
         this.objectMapper = objectMapper;
         this.chatClient = ChatClient.create(chatModel);
         this.outputConverter = new BeanOutputConverter<>(AiSummary.class, objectMapper);
+        this.smartRepliesConverter = new BeanOutputConverter<>(AiSmartReplies.class, objectMapper);
+        this.extractionConverter = new BeanOutputConverter<>(AiExtraction.class, objectMapper);
+        this.schemaValidator = new AiOutputSchemaValidator();
     }
 
     @Override
-    public AiProviderResult summarize(AiSummaryContext context) {
+    public AiProviderResult<AiSummary> summarize(AiSummaryContext context) {
+        ProviderResponse<AiSummary> response = request(
+                context,
+                outputConverter,
+                "Summarize this ordered C2C message context.");
+        AiSummaryValidator.validate(response.value(), context);
+        return providerResult(response);
+    }
+
+    @Override
+    public AiProviderResult<AiSmartReplies> smartReplies(AiSummaryContext context) {
+        ProviderResponse<AiSmartReplies> response = request(
+                context,
+                smartRepliesConverter,
+                "Return exactly three distinct editable reply drafts for the requesting user.");
+        AiSmartRepliesValidator.validate(response.value());
+        return providerResult(response);
+    }
+
+    @Override
+    public AiProviderResult<AiExtraction> extractInformation(AiSummaryContext context) {
+        ProviderResponse<AiExtraction> response = request(
+                context,
+                extractionConverter,
+                "Extract private action items and key facts from only this selected message context.");
+        AiExtractionValidator.validate(response.value(), context);
+        return providerResult(response);
+    }
+
+    private <T> ProviderResponse<T> request(
+            AiSummaryContext context,
+            BeanOutputConverter<T> converter,
+            String instruction
+    ) {
         if (!properties.provider().enabled()
                 || properties.provider().baseUrl() == null
                 || properties.provider().baseUrl().isBlank()
@@ -54,8 +93,8 @@ class OpenAiCompatibleAiProvider implements AiProvider {
                             List.of(
                                     new org.springframework.ai.chat.messages.SystemMessage(
                                             "Return only JSON matching this schema. Do not invent message IDs.\\n"
-                                                    + outputConverter.getFormat()),
-                                    new org.springframework.ai.chat.messages.UserMessage(prompt(context))),
+                                                    + converter.getFormat()),
+                                    new org.springframework.ai.chat.messages.UserMessage(prompt(context, instruction))),
                             OpenAiChatOptions.builder()
                                     .model(model())
                                     .temperature(0.0)
@@ -72,8 +111,8 @@ class OpenAiCompatibleAiProvider implements AiProvider {
             if (content == null || content.isBlank()) {
                 throw new AiProviderException("AI_INVALID_RESULT", "The AI provider returned no content");
             }
-            AiSummary summary = outputConverter.convert(content);
-            AiSummaryValidator.validate(summary, context);
+            schemaValidator.validate(content);
+            T value = converter.convert(content);
             Usage usage = response.getMetadata() == null ? null : response.getMetadata().getUsage();
             int inputTokens = tokenCount(usage == null ? null : usage.getPromptTokens());
             int outputTokens = tokenCount(usage == null ? null : usage.getCompletionTokens());
@@ -81,8 +120,8 @@ class OpenAiCompatibleAiProvider implements AiProvider {
                     && usage.getPromptTokens() != null
                     && usage.getCompletionTokens() != null
                     && (inputTokens > 0 || outputTokens > 0);
-            return new AiProviderResult(
-                    summary,
+            return new ProviderResponse<>(
+                    value,
                     inputTokens,
                     outputTokens,
                     usageReported);
@@ -91,6 +130,14 @@ class OpenAiCompatibleAiProvider implements AiProvider {
         } catch (RuntimeException exception) {
             throw new AiProviderException("AI_PROVIDER_FAILURE", "The AI provider request failed", exception);
         }
+    }
+
+    private <T> AiProviderResult<T> providerResult(ProviderResponse<T> response) {
+        return new AiProviderResult<>(
+                response.value(),
+                response.inputTokens(),
+                response.outputTokens(),
+                response.usageReported());
     }
 
     private int tokenCount(Integer value) {
@@ -102,8 +149,8 @@ class OpenAiCompatibleAiProvider implements AiProvider {
         return properties.provider().model();
     }
 
-    private String prompt(AiSummaryContext context) {
-        StringBuilder prompt = new StringBuilder("Summarize this ordered C2C message context.\n");
+    private String prompt(AiSummaryContext context, String instruction) {
+        StringBuilder prompt = new StringBuilder(instruction).append('\n');
         for (AiContextMessage message : context.messages()) {
             prompt.append("messageId=").append(message.messageId())
                     .append(" seq=").append(message.conversationSeq())
@@ -112,5 +159,13 @@ class OpenAiCompatibleAiProvider implements AiProvider {
                     .append('\n');
         }
         return prompt.toString();
+    }
+
+    private record ProviderResponse<T>(
+            T value,
+            int inputTokens,
+            int outputTokens,
+            boolean usageReported
+    ) {
     }
 }

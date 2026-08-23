@@ -2,6 +2,7 @@ package com.jitong.im.ai;
 
 import java.time.Instant;
 import java.time.LocalDate;
+import java.util.List;
 import java.util.UUID;
 
 record AiConsentResponse(
@@ -19,6 +20,20 @@ record AiSummaryRequest(
         Long afterSeq,
         Long untilSeq
 ) {
+}
+
+record AiSmartReplyRequest(
+        UUID requestId
+) {
+}
+
+record AiExtractionRequest(
+        UUID requestId,
+        List<UUID> messageIds
+) {
+    AiExtractionRequest {
+        messageIds = messageIds == null ? null : List.copyOf(messageIds);
+    }
 }
 
 record AiJobResponse(
@@ -39,7 +54,7 @@ record AiJobResponse(
         Instant startedAt,
         Instant finishedAt,
         Instant expiresAt,
-        AiSummary result
+        Object result
 ) {
 }
 
@@ -47,10 +62,35 @@ record AiArtifactResponse(
         int version,
         UUID artifactId,
         UUID jobId,
+        UUID conversationId,
         String artifactType,
-        AiSummary content,
+        Object content,
         Instant createdAt,
         Instant expiresAt
+) {
+}
+
+record AiActionItemUpdate(
+        String status
+) {
+}
+
+record AiActionItemResponse(
+        int version,
+        UUID actionItemId,
+        UUID sourceJobId,
+        UUID ownerUserId,
+        UUID conversationId,
+        UUID assigneeUserId,
+        String title,
+        String details,
+        Instant dueAt,
+        String priority,
+        double confidence,
+        List<UUID> sourceMessageIds,
+        String status,
+        Instant createdAt,
+        Instant completedAt
 ) {
 }
 

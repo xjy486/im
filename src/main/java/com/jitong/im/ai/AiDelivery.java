@@ -8,6 +8,6 @@ public record AiDelivery(
         String kind,
         String status,
         String errorCode,
-        AiSummary result
+        Object result
 ) {
 }

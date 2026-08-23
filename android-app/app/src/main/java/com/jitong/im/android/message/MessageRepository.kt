@@ -8,6 +8,8 @@ import com.jitong.im.android.local.LocalConversationEntity
 import com.jitong.im.android.local.LocalGroupProfileEntity
 import com.jitong.im.android.local.LocalAccountEntity
 import com.jitong.im.android.local.LocalMessageEntity
+import com.jitong.im.android.local.LocalAiArtifactEntity
+import com.jitong.im.android.local.LocalAiActionItemEntity
 import com.jitong.im.android.local.PendingMessageCommandEntity
 import com.jitong.im.android.media.ImageNormalizer
 import com.jitong.im.android.local.SyncStateEntity
@@ -196,6 +198,9 @@ internal class MessageRepository(
                 .forEach { conversationId ->
                     applyGroupProfile(syncApi.groupProfile(conversationId).syncBodyOrThrow())
                 }
+            if (page.events.any { it.eventType.startsWith("AI_") }) {
+                refreshAiData()
+            }
             page.events
                 .filter {
                     it.eventType == "MESSAGE_CREATED"
@@ -292,11 +297,15 @@ internal class MessageRepository(
         mediaCache()?.deleteMatching("group-avatar-")
         val conversations = syncApi.conversations().syncBodyOrThrow()
         val groups = syncApi.groups().syncBodyOrThrow()
+        val aiArtifacts = syncApi.aiArtifacts().syncBodyOrThrow()
+        val aiActionItems = syncApi.aiActionItems().syncBodyOrThrow()
         withContext(Dispatchers.IO) {
             db.withTransaction {
                 db.messageDao().clearAccepted()
                 db.conversationReadStateDao().clearAll()
                 db.groupProfileDao().clearAll()
+                db.aiArtifactDao().clearAll()
+                db.aiActionItemDao().clearAll()
                 db.syncStateDao().upsert(
                     SyncStateEntity(
                         deviceId = deviceId()?.toString().orEmpty(),
@@ -326,6 +335,8 @@ internal class MessageRepository(
                 applyGroupProfile(groupProfile.body()!!)
             }
         }
+        applyAiArtifacts(aiArtifacts)
+        applyAiActionItems(aiActionItems)
         withContext(Dispatchers.IO) {
             db.withTransaction {
                 db.syncStateDao().upsert(
@@ -404,6 +415,96 @@ internal class MessageRepository(
                     avatarVersion = profile.avatarVersion,
                 ),
             )
+        }
+    }
+
+    private suspend fun applyAiArtifacts(artifacts: List<AiArtifactResponse>) {
+        val db = database() ?: return
+        withContext(Dispatchers.IO) {
+            db.aiArtifactDao().upsertAll(artifacts.map { artifact ->
+                LocalAiArtifactEntity(
+                    artifactId = artifact.artifactId.toString(),
+                    jobId = artifact.jobId.toString(),
+                    conversationId = artifact.conversationId.toString(),
+                    artifactType = artifact.artifactType,
+                    contentJson = artifact.content.toString(),
+                    createdAt = artifact.createdAt,
+                    expiresAt = artifact.expiresAt,
+                )
+            })
+        }
+    }
+
+    private suspend fun applyAiActionItems(items: List<AiActionItemResponse>) {
+        val db = database() ?: return
+        withContext(Dispatchers.IO) {
+            db.aiActionItemDao().upsertAll(items.map { item ->
+                LocalAiActionItemEntity(
+                    actionItemId = item.actionItemId.toString(),
+                    sourceJobId = item.sourceJobId?.toString(),
+                    ownerUserId = item.ownerUserId.toString(),
+                    conversationId = item.conversationId.toString(),
+                    assigneeUserId = item.assigneeUserId?.toString(),
+                    title = item.title,
+                    details = item.details,
+                    dueAt = item.dueAt,
+                    priority = item.priority,
+                    confidence = item.confidence,
+                    sourceMessageIdsJson = item.sourceMessageIds.joinToString(
+                        prefix = "[\"",
+                        separator = "\",\"",
+                        postfix = "\"]",
+                    ),
+                    status = item.status,
+                    createdAt = item.createdAt,
+                    completedAt = item.completedAt,
+                )
+            })
+        }
+    }
+
+    suspend fun refreshAiData() {
+        val db = database() ?: return
+        val artifacts = syncApi.aiArtifacts().syncBodyOrThrow()
+        val actionItems = syncApi.aiActionItems().syncBodyOrThrow()
+        withContext(Dispatchers.IO) {
+            db.withTransaction {
+                db.aiArtifactDao().clearAll()
+                db.aiActionItemDao().clearAll()
+                db.aiArtifactDao().upsertAll(artifacts.map { artifact ->
+                    LocalAiArtifactEntity(
+                        artifactId = artifact.artifactId.toString(),
+                        jobId = artifact.jobId.toString(),
+                        conversationId = artifact.conversationId.toString(),
+                        artifactType = artifact.artifactType,
+                        contentJson = artifact.content.toString(),
+                        createdAt = artifact.createdAt,
+                        expiresAt = artifact.expiresAt,
+                    )
+                })
+                db.aiActionItemDao().upsertAll(actionItems.map { item ->
+                    LocalAiActionItemEntity(
+                        actionItemId = item.actionItemId.toString(),
+                        sourceJobId = item.sourceJobId?.toString(),
+                        ownerUserId = item.ownerUserId.toString(),
+                        conversationId = item.conversationId.toString(),
+                        assigneeUserId = item.assigneeUserId?.toString(),
+                        title = item.title,
+                        details = item.details,
+                        dueAt = item.dueAt,
+                        priority = item.priority,
+                        confidence = item.confidence,
+                        sourceMessageIdsJson = item.sourceMessageIds.joinToString(
+                            prefix = "[\"",
+                            separator = "\",\"",
+                            postfix = "\"]",
+                        ),
+                        status = item.status,
+                        createdAt = item.createdAt,
+                        completedAt = item.completedAt,
+                    )
+                })
+            }
         }
     }
 

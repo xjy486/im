@@ -33,7 +33,7 @@ class AccountDatabaseMigrationTest {
     }
 
     @Test
-    fun migrates_v9_search_schema_through_v15_and_rebuilds_legacy_messages() {
+    fun migrates_v9_search_schema_through_v16_and_rebuilds_legacy_messages() {
         helper.createDatabase(TEST_DB, 9).apply {
             execSQL(
                 """
@@ -65,7 +65,7 @@ class AccountDatabaseMigrationTest {
 
         helper.runMigrationsAndValidate(
             TEST_DB,
-            15,
+            16,
             true,
             AccountDatabase.MIGRATION_9_10,
             AccountDatabase.MIGRATION_10_11,
@@ -73,6 +73,7 @@ class AccountDatabaseMigrationTest {
             AccountDatabase.MIGRATION_12_13,
             AccountDatabase.MIGRATION_13_14,
             AccountDatabase.MIGRATION_14_15,
+            AccountDatabase.MIGRATION_15_16,
         ).close()
 
         migratedDatabase = Room.databaseBuilder(
@@ -87,6 +88,7 @@ class AccountDatabaseMigrationTest {
                 AccountDatabase.MIGRATION_12_13,
                 AccountDatabase.MIGRATION_13_14,
                 AccountDatabase.MIGRATION_14_15,
+                AccountDatabase.MIGRATION_15_16,
             )
             .build()
 
@@ -107,6 +109,24 @@ class AccountDatabaseMigrationTest {
                     assertEquals(1, cursor.getInt(0))
                     assertEquals(0, cursor.getLong(1))
                     1
+                },
+        )
+        assertEquals(
+            0,
+            migratedDatabase!!.openHelper.writableDatabase
+                .query("SELECT COUNT(*) FROM local_ai_artifact")
+                .use { cursor ->
+                    assertTrue(cursor.moveToFirst())
+                    cursor.getInt(0)
+                },
+        )
+        assertEquals(
+            0,
+            migratedDatabase!!.openHelper.writableDatabase
+                .query("SELECT COUNT(*) FROM local_ai_action_item")
+                .use { cursor ->
+                    assertTrue(cursor.moveToFirst())
+                    cursor.getInt(0)
                 },
         )
     }

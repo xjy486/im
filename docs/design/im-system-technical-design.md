@@ -710,7 +710,7 @@ SUMMARY：
 
 SMART_REPLY：
 
-    replies[{ text, tone }]
+    replies[{ text, tone }]  // 固定 3 条可编辑草稿
 
 EXTRACTION：
 

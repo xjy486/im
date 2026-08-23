@@ -14,11 +14,38 @@ import java.util.List;
 import java.util.UUID;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
 
 class OpenAiCompatibleAiProviderTest {
+
+    @Test
+    void rejects_extraction_json_that_omits_required_nullable_schema_properties() {
+        UUID messageId = UUID.randomUUID();
+        ChatModel chatModel = mock(ChatModel.class);
+        when(chatModel.call(any(Prompt.class))).thenReturn(new ChatResponse(List.of(
+                new Generation(new AssistantMessage("""
+                        {
+                          "actionItems": [{
+                            "title": "Send proposal",
+                            "details": "Send it Friday",
+                            "priority": "HIGH",
+                            "confidence": 0.9,
+                            "sourceMessageIds": ["%s"]
+                          }],
+                          "keyFacts": []
+                        }
+                        """.formatted(messageId))))));
+        OpenAiCompatibleAiProvider provider = provider(chatModel);
+
+        assertThatThrownBy(() -> provider.extractInformation(new AiSummaryContext(
+                UUID.randomUUID(),
+                List.of(new AiContextMessage(messageId, 1, UUID.randomUUID(), "hello")))))
+                .isInstanceOf(AiProviderException.class)
+                .hasMessageContaining("schema");
+    }
 
     @Test
     void uses_spring_ai_chat_model_and_validates_structured_summary_evidence() {
@@ -38,22 +65,14 @@ class OpenAiCompatibleAiProviderTest {
                         .usage(new DefaultUsage(37, 5))
                         .build()));
 
-        AiProperties properties = new AiProperties(
-                "summary-v1",
-                new AiProperties.Provider(true, "http://provider.test/v1", "secret", "test-model"),
-                new AiProperties.Worker(250),
-                null);
-        OpenAiCompatibleAiProvider provider = new OpenAiCompatibleAiProvider(
-                properties,
-                new ObjectMapper().findAndRegisterModules(),
-                chatModel);
+        OpenAiCompatibleAiProvider provider = provider(chatModel);
 
-        AiProviderResult result = provider.summarize(new AiSummaryContext(
+        AiProviderResult<AiSummary> result = provider.summarize(new AiSummaryContext(
                 UUID.randomUUID(),
                 List.of(new AiContextMessage(messageId, 1, UUID.randomUUID(), "hello"))));
 
-        assertThat(result.summary().overview()).isEqualTo("A concise overview");
-        assertThat(result.summary().sourceMessageIds()).containsExactly(messageId);
+        assertThat(result.result().overview()).isEqualTo("A concise overview");
+        assertThat(result.result().sourceMessageIds()).containsExactly(messageId);
         assertThat(result.inputTokens()).isEqualTo(37);
         assertThat(result.outputTokens()).isEqualTo(5);
         assertThat(result.usageReported()).isTrue();
@@ -73,21 +92,25 @@ class OpenAiCompatibleAiProviderTest {
                           "sourceMessageIds": ["%s"]
                         }
                         """.formatted(messageId))))));
-        AiProperties properties = new AiProperties(
-                "summary-v1",
-                new AiProperties.Provider(true, "http://provider.test/v1", "secret", "test-model"),
-                new AiProperties.Worker(250),
-                null);
-        OpenAiCompatibleAiProvider provider = new OpenAiCompatibleAiProvider(
-                properties,
-                new ObjectMapper().findAndRegisterModules(),
-                chatModel);
+        OpenAiCompatibleAiProvider provider = provider(chatModel);
 
-        AiProviderResult result = provider.summarize(new AiSummaryContext(
+        AiProviderResult<AiSummary> result = provider.summarize(new AiSummaryContext(
                 UUID.randomUUID(),
                 List.of(new AiContextMessage(messageId, 1, UUID.randomUUID(), "hello"))));
 
         assertThat(result.usageReported()).isFalse();
         assertThat(result.totalTokens()).isZero();
+    }
+
+    private OpenAiCompatibleAiProvider provider(ChatModel chatModel) {
+        AiProperties properties = new AiProperties(
+                "summary-v1",
+                new AiProperties.Provider(true, "http://provider.test/v1", "secret", "test-model"),
+                new AiProperties.Worker(250),
+                null);
+        return new OpenAiCompatibleAiProvider(
+                properties,
+                new ObjectMapper().findAndRegisterModules(),
+                chatModel);
     }
 }

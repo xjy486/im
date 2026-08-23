@@ -3,9 +3,11 @@ package com.jitong.im.contract;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.jitong.im.ai.AiContextMessage;
+import com.jitong.im.ai.AiExtraction;
 import com.jitong.im.ai.AiProvider;
 import com.jitong.im.ai.AiProviderException;
 import com.jitong.im.ai.AiProviderResult;
+import com.jitong.im.ai.AiSmartReplies;
 import com.jitong.im.ai.AiSummary;
 import com.jitong.im.ai.AiSummaryContext;
 import org.junit.jupiter.api.Test;
@@ -22,6 +24,7 @@ import org.springframework.ai.retry.TransientAiException;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.test.context.TestPropertySource;
 
+import java.time.Instant;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
@@ -628,7 +631,7 @@ class AiSummaryContractTest extends ContractTestEnvironment {
             if (!releaseProvider.await(5, TimeUnit.SECONDS)) {
                 throw new AssertionError("provider was not released");
             }
-            return new AiProviderResult(new AiSummary(
+            return new AiProviderResult<>(new AiSummary(
                     "Conservatively settled summary.",
                     List.of(),
                     List.of(),
@@ -955,6 +958,303 @@ class AiSummaryContractTest extends ContractTestEnvironment {
                 });
     }
 
+    @Test
+    void smart_reply_request_queues_private_work_without_sending_a_conversation_message() {
+        TestUser alice = createUser("Smart Reply Alice");
+        TestUser bob = createUser("Smart Reply Bob");
+        String aliceToken = login(alice.accountNo(), "smart-reply-alice", "PC");
+        String bobToken = login(bob.accountNo(), "smart-reply-bob", "MOBILE");
+        UUID conversationId = acceptContact(aliceToken, bob, bobToken);
+        enableAi(aliceToken, bobToken, conversationId);
+        post(
+                "/api/v1/conversations/" + conversationId + "/messages",
+                bobToken,
+                Map.of("clientMsgId", UUID.randomUUID(), "text", "Can you join the review tomorrow?"));
+
+        long messagesBefore = jdbc.sql("SELECT COUNT(*) FROM messages WHERE conversation_id = :conversationId")
+                .param("conversationId", conversationId)
+                .query(Long.class)
+                .single();
+
+        ResponseEntity<JsonNode> response = exchange(
+                "/api/v1/conversations/" + conversationId + "/ai/smart-replies",
+                HttpMethod.POST,
+                aliceToken,
+                Map.of("requestId", UUID.randomUUID()));
+
+        assertThat(response.getStatusCode()).isEqualTo(HttpStatus.OK);
+        assertThat(response.getBody().get("kind").asText()).isEqualTo("SMART_REPLY");
+        assertThat(response.getBody().get("status").asText()).isEqualTo("QUEUED");
+        assertThat(jdbc.sql("SELECT COUNT(*) FROM messages WHERE conversation_id = :conversationId")
+                .param("conversationId", conversationId)
+                .query(Long.class)
+                .single()).isEqualTo(messagesBefore);
+    }
+
+    @Test
+    void smart_reply_returns_three_editable_drafts_and_only_the_user_can_send_an_edited_copy() {
+        TestUser alice = createUser("Editable Reply Alice");
+        TestUser bob = createUser("Editable Reply Bob");
+        String aliceToken = login(alice.accountNo(), "editable-reply-alice", "PC");
+        String bobToken = login(bob.accountNo(), "editable-reply-bob", "MOBILE");
+        UUID conversationId = acceptContact(aliceToken, bob, bobToken);
+        enableAi(aliceToken, bobToken, conversationId);
+        post(
+                "/api/v1/conversations/" + conversationId + "/messages",
+                bobToken,
+                Map.of("clientMsgId", UUID.randomUUID(), "text", "Can you join the review tomorrow?"));
+
+        when(provider.smartReplies(any(AiSummaryContext.class))).thenReturn(new AiProviderResult<>(
+                new AiSmartReplies(List.of(
+                        new AiSmartReplies.Draft("Yes, I can join tomorrow.", "FRIENDLY"),
+                        new AiSmartReplies.Draft("What time is the review?", "CURIOUS"),
+                        new AiSmartReplies.Draft("I cannot make it tomorrow.", "DIRECT"))),
+                31,
+                12));
+
+        JsonNode queued = exchange(
+                "/api/v1/conversations/" + conversationId + "/ai/smart-replies",
+                HttpMethod.POST,
+                aliceToken,
+                Map.of("requestId", UUID.randomUUID())).getBody();
+        UUID jobId = UUID.fromString(queued.get("jobId").asText());
+        awaitJob(aliceToken, jobId);
+
+        JsonNode result = exchange(
+                "/api/v1/ai/jobs/" + jobId,
+                HttpMethod.GET,
+                aliceToken,
+                null).getBody().get("result");
+        assertThat(result.get("replies")).hasSize(3);
+        assertThat(jdbc.sql("SELECT COUNT(*) FROM messages WHERE conversation_id = :conversationId")
+                .param("conversationId", conversationId)
+                .query(Long.class)
+                .single()).isEqualTo(1);
+
+        JsonNode sent = post(
+                "/api/v1/conversations/" + conversationId + "/messages",
+                aliceToken,
+                Map.of("clientMsgId", UUID.randomUUID(), "text", "Yes — I can join after 10:00."));
+        assertThat(sent.get("senderId").asText()).isEqualTo(alice.userId().toString());
+        assertThat(sent.get("text").asText()).isEqualTo("Yes — I can join after 10:00.");
+        assertThat(jdbc.sql("SELECT COUNT(*) FROM messages WHERE conversation_id = :conversationId")
+                .param("conversationId", conversationId)
+                .query(Long.class)
+                .single()).isEqualTo(2);
+    }
+
+    @Test
+    void extraction_persists_private_action_items_and_facts_and_syncs_deletion_to_mobile_and_pc() {
+        TestUser alice = createUser("Extraction Alice");
+        TestUser bob = createUser("Extraction Bob");
+        String alicePcToken = login(alice.accountNo(), "extraction-alice-pc", "PC");
+        String aliceMobileToken = login(alice.accountNo(), "extraction-alice-mobile", "MOBILE");
+        String bobToken = login(bob.accountNo(), "extraction-bob", "MOBILE");
+        UUID conversationId = acceptContact(alicePcToken, bob, bobToken);
+        enableAi(alicePcToken, bobToken, conversationId);
+        UUID firstMessageId = UUID.fromString(post(
+                "/api/v1/conversations/" + conversationId + "/messages",
+                bobToken,
+                Map.of("clientMsgId", UUID.randomUUID(), "text", "Bob will send the proposal by Friday."))
+                .get("messageId").asText());
+        UUID ignoredMessageId = UUID.fromString(post(
+                "/api/v1/conversations/" + conversationId + "/messages",
+                alicePcToken,
+                Map.of("clientMsgId", UUID.randomUUID(), "text", "This message is not selected."))
+                .get("messageId").asText());
+        UUID thirdMessageId = UUID.fromString(post(
+                "/api/v1/conversations/" + conversationId + "/messages",
+                alicePcToken,
+                Map.of("clientMsgId", UUID.randomUUID(), "text", "The review is in meeting room 4."))
+                .get("messageId").asText());
+
+        when(provider.extractInformation(any(AiSummaryContext.class))).thenAnswer(invocation -> {
+            AiSummaryContext context = invocation.getArgument(0);
+            assertThat(context.messages()).extracting(AiContextMessage::messageId)
+                    .containsExactly(firstMessageId, thirdMessageId)
+                    .doesNotContain(ignoredMessageId);
+            return new AiProviderResult<>(new AiExtraction(
+                    List.of(new AiExtraction.ActionItem(
+                            "Send the proposal",
+                            "Send the agreed proposal before the review.",
+                            bob.userId(),
+                            Instant.parse("2026-08-28T09:00:00Z"),
+                            "HIGH",
+                            0.94,
+                            List.of(firstMessageId))),
+                    List.of(new AiExtraction.KeyFact(
+                            "LOCATION",
+                            "The review is in meeting room 4.",
+                            0.99,
+                            List.of(thirdMessageId)))), 44, 18);
+        });
+
+        JsonNode queued = exchange(
+                "/api/v1/conversations/" + conversationId + "/ai/extract",
+                HttpMethod.POST,
+                alicePcToken,
+                Map.of(
+                        "requestId", UUID.randomUUID(),
+                        "messageIds", List.of(firstMessageId, thirdMessageId))).getBody();
+        UUID jobId = UUID.fromString(queued.get("jobId").asText());
+        awaitJob(alicePcToken, jobId);
+
+        JsonNode completed = exchange(
+                "/api/v1/ai/jobs/" + jobId,
+                HttpMethod.GET,
+                alicePcToken,
+                null).getBody();
+        assertThat(completed.get("kind").asText()).isEqualTo("EXTRACTION");
+        assertThat(completed.get("result").get("actionItems")).hasSize(1);
+        assertThat(completed.get("result").get("keyFacts")).hasSize(1);
+        assertThat(jdbc.sql("SELECT COUNT(*) FROM ai_action_items WHERE owner_user_id = :ownerUserId")
+                .param("ownerUserId", alice.userId())
+                .query(Long.class)
+                .single()).isEqualTo(1);
+        assertThat(jdbc.sql("SELECT COUNT(*) FROM ai_action_items WHERE owner_user_id = :ownerUserId")
+                .param("ownerUserId", bob.userId())
+                .query(Long.class)
+                .single()).isZero();
+
+        JsonNode actionItems = exchange(
+                "/api/v1/ai/action-items",
+                HttpMethod.GET,
+                alicePcToken,
+                null).getBody();
+        assertThat(actionItems).hasSize(1);
+        UUID actionItemId = UUID.fromString(actionItems.get(0).get("actionItemId").asText());
+        assertThat(actionItems.get(0).get("ownerUserId").asText())
+                .isEqualTo(alice.userId().toString());
+        assertThat(actionItems.get(0).get("assigneeUserId").asText())
+                .isEqualTo(bob.userId().toString());
+        assertThat(actionItems.get(0).get("status").asText()).isEqualTo("OPEN");
+        JsonNode completedItem = exchange(
+                "/api/v1/ai/action-items/" + actionItemId,
+                HttpMethod.PATCH,
+                alicePcToken,
+                Map.of("status", "COMPLETED")).getBody();
+        assertThat(completedItem.get("status").asText()).isEqualTo("COMPLETED");
+        assertThat(completedItem.get("completedAt").isTextual()).isTrue();
+
+        JsonNode artifacts = exchange(
+                "/api/v1/ai/artifacts",
+                HttpMethod.GET,
+                alicePcToken,
+                null).getBody();
+        JsonNode extractionArtifact = null;
+        for (JsonNode artifact : artifacts) {
+            if (artifact.get("jobId").asText().equals(jobId.toString())) {
+                extractionArtifact = artifact;
+                break;
+            }
+        }
+        assertThat(extractionArtifact).isNotNull();
+        assertThat(extractionArtifact.get("content").get("actionItems")).isEmpty();
+        assertThat(extractionArtifact.get("content").get("keyFacts")).hasSize(1);
+        UUID artifactId = UUID.fromString(extractionArtifact.get("artifactId").asText());
+        assertThat(exchange(
+                "/api/v1/ai/artifacts/" + artifactId,
+                HttpMethod.DELETE,
+                alicePcToken,
+                null).getStatusCode()).isEqualTo(HttpStatus.NO_CONTENT);
+        assertThat(jdbc.sql("SELECT COUNT(*) FROM ai_action_items WHERE owner_user_id = :ownerUserId")
+                .param("ownerUserId", alice.userId())
+                .query(Long.class)
+                .single()).isZero();
+
+        for (String token : List.of(alicePcToken, aliceMobileToken)) {
+            JsonNode sync = exchange("/api/v1/sync?after=0&limit=200", HttpMethod.GET, token, null).getBody();
+            List<String> eventTypes = new ArrayList<>();
+            sync.get("events").forEach(event -> eventTypes.add(event.get("eventType").asText()));
+            assertThat(eventTypes).contains("AI_ARTIFACT_DELETED");
+        }
+    }
+
+    @Test
+    void rejects_extraction_evidence_outside_the_selected_authorized_context() {
+        TestUser alice = createUser("Evidence Alice");
+        TestUser bob = createUser("Evidence Bob");
+        String aliceToken = login(alice.accountNo(), "evidence-alice", "PC");
+        String bobToken = login(bob.accountNo(), "evidence-bob", "MOBILE");
+        UUID conversationId = acceptContact(aliceToken, bob, bobToken);
+        enableAi(aliceToken, bobToken, conversationId);
+        UUID selectedMessageId = UUID.fromString(post(
+                "/api/v1/conversations/" + conversationId + "/messages",
+                bobToken,
+                Map.of("clientMsgId", UUID.randomUUID(), "text", "Keep evidence inside this message."))
+                .get("messageId").asText());
+
+        when(provider.extractInformation(any(AiSummaryContext.class))).thenReturn(new AiProviderResult<>(
+                new AiExtraction(
+                        List.of(),
+                        List.of(new AiExtraction.KeyFact(
+                                "OTHER",
+                                "Unsupported evidence",
+                                0.8,
+                                List.of(UUID.randomUUID())))),
+                10,
+                5));
+
+        JsonNode queued = exchange(
+                "/api/v1/conversations/" + conversationId + "/ai/extract",
+                HttpMethod.POST,
+                aliceToken,
+                Map.of("requestId", UUID.randomUUID(), "messageIds", List.of(selectedMessageId)))
+                .getBody();
+        UUID jobId = UUID.fromString(queued.get("jobId").asText());
+        awaitStatus(aliceToken, jobId, "FAILED");
+
+        JsonNode failed = exchange(
+                "/api/v1/ai/jobs/" + jobId,
+                HttpMethod.GET,
+                aliceToken,
+                null).getBody();
+        assertThat(failed.get("errorCode").asText()).isEqualTo("AI_INVALID_RESULT");
+        assertThat(jdbc.sql("SELECT COUNT(*) FROM ai_artifacts WHERE job_id = :jobId")
+                .param("jobId", jobId)
+                .query(Long.class)
+                .single()).isZero();
+        assertThat(jdbc.sql("SELECT COUNT(*) FROM ai_action_items WHERE source_job_id = :jobId")
+                .param("jobId", jobId)
+                .query(Long.class)
+                .single()).isZero();
+    }
+
+    @Test
+    void rejects_smart_reply_results_that_do_not_contain_exactly_three_drafts() {
+        TestUser alice = createUser("Reply Count Alice");
+        TestUser bob = createUser("Reply Count Bob");
+        String aliceToken = login(alice.accountNo(), "reply-count-alice", "PC");
+        String bobToken = login(bob.accountNo(), "reply-count-bob", "MOBILE");
+        UUID conversationId = acceptContact(aliceToken, bob, bobToken);
+        enableAi(aliceToken, bobToken, conversationId);
+        post(
+                "/api/v1/conversations/" + conversationId + "/messages",
+                bobToken,
+                Map.of("clientMsgId", UUID.randomUUID(), "text", "Return the fixed draft count."));
+        when(provider.smartReplies(any(AiSummaryContext.class))).thenReturn(new AiProviderResult<>(
+                new AiSmartReplies(List.of(
+                        new AiSmartReplies.Draft("First", "DIRECT"),
+                        new AiSmartReplies.Draft("Second", "FRIENDLY"))),
+                10,
+                5));
+
+        JsonNode queued = exchange(
+                "/api/v1/conversations/" + conversationId + "/ai/smart-replies",
+                HttpMethod.POST,
+                aliceToken,
+                Map.of("requestId", UUID.randomUUID())).getBody();
+        UUID jobId = UUID.fromString(queued.get("jobId").asText());
+        awaitStatus(aliceToken, jobId, "FAILED");
+
+        JsonNode failed = exchange(
+                "/api/v1/ai/jobs/" + jobId,
+                HttpMethod.GET,
+                aliceToken,
+                null).getBody();
+        assertThat(failed.get("errorCode").asText()).isEqualTo("AI_INVALID_RESULT");
+    }
+
     private void awaitJob(String token, UUID jobId) {
         awaitStatus(token, jobId, "SUCCEEDED");
     }
@@ -965,6 +1265,10 @@ class AiSummaryContractTest extends ContractTestEnvironment {
                 .query(Long.class)
                 .single()).isZero();
         assertThat(jdbc.sql("SELECT COUNT(*) FROM ai_artifacts WHERE owner_user_id = :ownerUserId")
+                .param("ownerUserId", ownerUserId)
+                .query(Long.class)
+                .single()).isZero();
+        assertThat(jdbc.sql("SELECT COUNT(*) FROM ai_action_items WHERE owner_user_id = :ownerUserId")
                 .param("ownerUserId", ownerUserId)
                 .query(Long.class)
                 .single()).isZero();
@@ -1103,8 +1407,8 @@ class AiSummaryContractTest extends ContractTestEnvironment {
         }
     }
 
-    private AiProviderResult withUsage(AiSummary summary) {
-        return new AiProviderResult(summary, 37, 5);
+    private AiProviderResult<AiSummary> withUsage(AiSummary summary) {
+        return new AiProviderResult<>(summary, 37, 5);
     }
 
     private Map<String, Long> budgetFor(UUID ownerUserId) {

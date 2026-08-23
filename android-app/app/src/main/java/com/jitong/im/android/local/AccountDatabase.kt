@@ -140,6 +140,80 @@ data class LocalGroupProfileEntity(
     val avatarVersion: Long,
 )
 
+@Entity(
+    tableName = "local_ai_artifact",
+    indices = [Index(value = ["jobId"])],
+)
+data class LocalAiArtifactEntity(
+    @PrimaryKey val artifactId: String,
+    val jobId: String,
+    val conversationId: String,
+    val artifactType: String,
+    val contentJson: String,
+    val createdAt: String,
+    val expiresAt: String,
+)
+
+@Dao
+interface LocalAiArtifactDao {
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    fun upsertAll(artifacts: List<LocalAiArtifactEntity>)
+
+    @Query("SELECT * FROM local_ai_artifact WHERE expiresAt > :now ORDER BY createdAt DESC, artifactId")
+    fun listActive(now: String): List<LocalAiArtifactEntity>
+
+    @Query("DELETE FROM local_ai_artifact WHERE artifactId = :artifactId")
+    fun delete(artifactId: String)
+
+    @Query("DELETE FROM local_ai_artifact WHERE jobId = :jobId")
+    fun deleteForJob(jobId: String)
+
+    @Query("DELETE FROM local_ai_artifact")
+    fun clearAll()
+
+    @Query("DELETE FROM local_ai_artifact WHERE expiresAt <= :now")
+    fun deleteExpired(now: String)
+}
+
+@Entity(
+    tableName = "local_ai_action_item",
+    indices = [Index(value = ["conversationId"]), Index(value = ["status"])],
+)
+data class LocalAiActionItemEntity(
+    @PrimaryKey val actionItemId: String,
+    val sourceJobId: String?,
+    val ownerUserId: String,
+    val conversationId: String,
+    val assigneeUserId: String?,
+    val title: String,
+    val details: String,
+    val dueAt: String?,
+    val priority: String,
+    val confidence: Double,
+    val sourceMessageIdsJson: String,
+    val status: String,
+    val createdAt: String,
+    val completedAt: String?,
+)
+
+@Dao
+interface LocalAiActionItemDao {
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    fun upsertAll(items: List<LocalAiActionItemEntity>)
+
+    @Query("SELECT * FROM local_ai_action_item ORDER BY status, createdAt DESC, actionItemId")
+    fun listAll(): List<LocalAiActionItemEntity>
+
+    @Query("SELECT * FROM local_ai_action_item WHERE conversationId = :conversationId ORDER BY status, createdAt DESC")
+    fun listForConversation(conversationId: String): List<LocalAiActionItemEntity>
+
+    @Query("DELETE FROM local_ai_action_item WHERE actionItemId = :actionItemId")
+    fun delete(actionItemId: String)
+
+    @Query("DELETE FROM local_ai_action_item")
+    fun clearAll()
+}
+
 @Dao
 interface LocalConversationDao {
     @Insert(onConflict = OnConflictStrategy.REPLACE)
@@ -515,8 +589,10 @@ interface SyncStateDao {
         LocalConversationReadStateEntity::class,
         PendingMessageCommandEntity::class,
         LocalGroupProfileEntity::class,
+        LocalAiArtifactEntity::class,
+        LocalAiActionItemEntity::class,
     ],
-    version = 15,
+    version = 16,
     exportSchema = true,
 )
 abstract class AccountDatabase : RoomDatabase() {
@@ -528,6 +604,8 @@ abstract class AccountDatabase : RoomDatabase() {
     abstract fun pendingCommandDao(): PendingCommandDao
     abstract fun syncStateDao(): SyncStateDao
     abstract fun groupProfileDao(): LocalGroupProfileDao
+    abstract fun aiArtifactDao(): LocalAiArtifactDao
+    abstract fun aiActionItemDao(): LocalAiActionItemDao
 
     companion object {
         val MIGRATION_1_2 = object : androidx.room.migration.Migration(1, 2) {
@@ -744,6 +822,56 @@ abstract class AccountDatabase : RoomDatabase() {
                 database.execSQL("ALTER TABLE local_message ADD COLUMN moderatedByUserId TEXT")
                 database.execSQL("ALTER TABLE local_message ADD COLUMN moderatedReason TEXT")
                 database.execSQL("ALTER TABLE local_message ADD COLUMN moderatedAt TEXT")
+            }
+        }
+
+        val MIGRATION_15_16 = object : androidx.room.migration.Migration(15, 16) {
+            override fun migrate(database: androidx.sqlite.db.SupportSQLiteDatabase) {
+                database.execSQL(
+                    """
+                    CREATE TABLE IF NOT EXISTS local_ai_artifact (
+                        artifactId TEXT NOT NULL PRIMARY KEY,
+                        jobId TEXT NOT NULL,
+                        conversationId TEXT NOT NULL,
+                        artifactType TEXT NOT NULL,
+                        contentJson TEXT NOT NULL,
+                        createdAt TEXT NOT NULL,
+                        expiresAt TEXT NOT NULL
+                    )
+                    """.trimIndent(),
+                )
+                database.execSQL(
+                    "CREATE INDEX IF NOT EXISTS index_local_ai_artifact_jobId " +
+                        "ON local_ai_artifact (jobId)",
+                )
+                database.execSQL(
+                    """
+                    CREATE TABLE IF NOT EXISTS local_ai_action_item (
+                        actionItemId TEXT NOT NULL PRIMARY KEY,
+                        sourceJobId TEXT,
+                        ownerUserId TEXT NOT NULL,
+                        conversationId TEXT NOT NULL,
+                        assigneeUserId TEXT,
+                        title TEXT NOT NULL,
+                        details TEXT NOT NULL,
+                        dueAt TEXT,
+                        priority TEXT NOT NULL,
+                        confidence REAL NOT NULL,
+                        sourceMessageIdsJson TEXT NOT NULL,
+                        status TEXT NOT NULL,
+                        createdAt TEXT NOT NULL,
+                        completedAt TEXT
+                    )
+                    """.trimIndent(),
+                )
+                database.execSQL(
+                    "CREATE INDEX IF NOT EXISTS index_local_ai_action_item_conversationId " +
+                        "ON local_ai_action_item (conversationId)",
+                )
+                database.execSQL(
+                    "CREATE INDEX IF NOT EXISTS index_local_ai_action_item_status " +
+                        "ON local_ai_action_item (status)",
+                )
             }
         }
 

@@ -1,5 +1,6 @@
 package com.jitong.im.android.message
 
+import com.google.gson.JsonElement
 import retrofit2.Response
 import retrofit2.http.Body
 import retrofit2.http.GET
@@ -44,7 +45,42 @@ internal interface SyncApi {
         @retrofit2.http.Path("conversationId") conversationId: UUID,
         @Body request: ReadStateRequest,
     ): Response<ReadStatePageResponse>
+
+    @GET("api/v1/ai/artifacts")
+    suspend fun aiArtifacts(): Response<List<AiArtifactResponse>>
+
+    @GET("api/v1/ai/action-items")
+    suspend fun aiActionItems(): Response<List<AiActionItemResponse>>
 }
+
+internal data class AiArtifactResponse(
+    val version: Int,
+    val artifactId: UUID,
+    val jobId: UUID,
+    val conversationId: UUID,
+    val artifactType: String,
+    val content: JsonElement,
+    val createdAt: String,
+    val expiresAt: String,
+)
+
+internal data class AiActionItemResponse(
+    val version: Int,
+    val actionItemId: UUID,
+    val sourceJobId: UUID?,
+    val ownerUserId: UUID,
+    val conversationId: UUID,
+    val assigneeUserId: UUID?,
+    val title: String,
+    val details: String,
+    val dueAt: String?,
+    val priority: String,
+    val confidence: Double,
+    val sourceMessageIds: List<UUID>,
+    val status: String,
+    val createdAt: String,
+    val completedAt: String?,
+)
 
 internal data class SyncPageResponse(
     val version: Int,

@@ -201,6 +201,50 @@ class LocalDatabaseManager(
                         "ALTER TABLE local_conversations ADD COLUMN IF NOT EXISTS search_visible BOOLEAN NOT NULL DEFAULT TRUE")
                     statement.executeUpdate(
                         "ALTER TABLE local_conversations ADD COLUMN IF NOT EXISTS search_visible_after_seq BIGINT NOT NULL DEFAULT 0")
+                    statement.executeUpdate(
+                        """
+                        CREATE TABLE IF NOT EXISTS local_ai_artifacts (
+                            artifact_id VARCHAR(36) PRIMARY KEY,
+                            job_id VARCHAR(36) NOT NULL,
+                            conversation_id VARCHAR(36) NOT NULL,
+                            artifact_type VARCHAR(32) NOT NULL,
+                            content_json CLOB NOT NULL,
+                            created_at VARCHAR(64) NOT NULL,
+                            expires_at VARCHAR(64) NOT NULL
+                        )
+                        """.trimIndent())
+                    statement.executeUpdate(
+                        "ALTER TABLE local_ai_artifacts ADD COLUMN IF NOT EXISTS " +
+                            "conversation_id VARCHAR(36) NOT NULL DEFAULT ''")
+                    statement.executeUpdate(
+                        """
+                        CREATE INDEX IF NOT EXISTS local_ai_artifacts_job_idx
+                        ON local_ai_artifacts (job_id)
+                        """.trimIndent())
+                    statement.executeUpdate(
+                        """
+                        CREATE TABLE IF NOT EXISTS local_ai_action_items (
+                            action_item_id VARCHAR(36) PRIMARY KEY,
+                            source_job_id VARCHAR(36),
+                            owner_user_id VARCHAR(36) NOT NULL,
+                            conversation_id VARCHAR(36) NOT NULL,
+                            assignee_user_id VARCHAR(36),
+                            title VARCHAR(500) NOT NULL,
+                            details CLOB NOT NULL,
+                            due_at VARCHAR(64),
+                            priority VARCHAR(16) NOT NULL,
+                            confidence DOUBLE PRECISION NOT NULL,
+                            source_message_ids_json CLOB NOT NULL,
+                            status VARCHAR(16) NOT NULL,
+                            created_at VARCHAR(64) NOT NULL,
+                            completed_at VARCHAR(64)
+                        )
+                        """.trimIndent())
+                    statement.executeUpdate(
+                        """
+                        CREATE INDEX IF NOT EXISTS local_ai_action_items_conversation_idx
+                        ON local_ai_action_items (conversation_id, status, created_at)
+                        """.trimIndent())
                 }
             }
         } catch (exception: RuntimeException) {
@@ -373,6 +417,173 @@ class LocalDatabase internal constructor(
                     statement.setLong(1, syncSeq)
                     statement.executeUpdate()
                 }
+        }
+    }
+
+    fun upsertAiArtifact(artifact: LocalAiArtifact) {
+        pool.connection.use { connection ->
+            connection.prepareStatement(
+                """
+                MERGE INTO local_ai_artifacts (
+                    artifact_id, job_id, conversation_id, artifact_type,
+                    content_json, created_at, expires_at
+                ) KEY(artifact_id) VALUES (?, ?, ?, ?, ?, ?, ?)
+                """.trimIndent()).use { statement ->
+                    statement.setString(1, artifact.artifactId)
+                    statement.setString(2, artifact.jobId)
+                    statement.setString(3, artifact.conversationId)
+                    statement.setString(4, artifact.artifactType)
+                    statement.setString(5, artifact.contentJson)
+                    statement.setString(6, artifact.createdAt)
+                    statement.setString(7, artifact.expiresAt)
+                    statement.executeUpdate()
+                }
+        }
+    }
+
+    fun listAiArtifacts(now: String = java.time.Instant.now().toString()): List<LocalAiArtifact> {
+        pool.connection.use { connection ->
+            connection.prepareStatement(
+                "DELETE FROM local_ai_artifacts WHERE expires_at <= ?").use { statement ->
+                    statement.setString(1, now)
+                    statement.executeUpdate()
+                }
+            connection.prepareStatement(
+                """
+                SELECT artifact_id, job_id, conversation_id, artifact_type,
+                       content_json, created_at, expires_at
+                FROM local_ai_artifacts
+                WHERE expires_at > ?
+                ORDER BY created_at DESC, artifact_id
+                """.trimIndent()).use { statement ->
+                    statement.setString(1, now)
+                    statement.executeQuery().use { result ->
+                        return buildList {
+                            while (result.next()) {
+                                add(LocalAiArtifact(
+                                    artifactId = result.getString("artifact_id"),
+                                    jobId = result.getString("job_id"),
+                                    conversationId = result.getString("conversation_id"),
+                                    artifactType = result.getString("artifact_type"),
+                                    contentJson = result.getString("content_json"),
+                                    createdAt = result.getString("created_at"),
+                                    expiresAt = result.getString("expires_at")))
+                            }
+                        }
+                    }
+                }
+        }
+    }
+
+    fun deleteAiArtifact(artifactId: String) {
+        pool.connection.use { connection ->
+            connection.prepareStatement(
+                "DELETE FROM local_ai_artifacts WHERE artifact_id = ?").use { statement ->
+                    statement.setString(1, artifactId)
+                    statement.executeUpdate()
+                }
+        }
+    }
+
+    fun deleteAiArtifactsForJob(jobId: String) {
+        pool.connection.use { connection ->
+            connection.prepareStatement(
+                "DELETE FROM local_ai_artifacts WHERE job_id = ?").use { statement ->
+                    statement.setString(1, jobId)
+                    statement.executeUpdate()
+                }
+        }
+    }
+
+    fun clearAiArtifacts() {
+        pool.connection.use { connection ->
+            connection.createStatement().use { statement ->
+                statement.executeUpdate("DELETE FROM local_ai_artifacts")
+            }
+        }
+    }
+
+    fun upsertAiActionItem(item: LocalAiActionItem) {
+        pool.connection.use { connection ->
+            connection.prepareStatement(
+                """
+                MERGE INTO local_ai_action_items (
+                    action_item_id, source_job_id, owner_user_id, conversation_id,
+                    assignee_user_id, title, details, due_at, priority, confidence,
+                    source_message_ids_json, status, created_at, completed_at
+                ) KEY(action_item_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """.trimIndent()).use { statement ->
+                    statement.setString(1, item.actionItemId)
+                    statement.setString(2, item.sourceJobId)
+                    statement.setString(3, item.ownerUserId)
+                    statement.setString(4, item.conversationId)
+                    statement.setString(5, item.assigneeUserId)
+                    statement.setString(6, item.title)
+                    statement.setString(7, item.details)
+                    statement.setString(8, item.dueAt)
+                    statement.setString(9, item.priority)
+                    statement.setDouble(10, item.confidence)
+                    statement.setString(11, item.sourceMessageIdsJson)
+                    statement.setString(12, item.status)
+                    statement.setString(13, item.createdAt)
+                    statement.setString(14, item.completedAt)
+                    statement.executeUpdate()
+                }
+        }
+    }
+
+    fun listAiActionItems(conversationId: String? = null): List<LocalAiActionItem> {
+        pool.connection.use { connection ->
+            val sql = """
+                SELECT action_item_id, source_job_id, owner_user_id, conversation_id,
+                       assignee_user_id, title, details, due_at, priority, confidence,
+                       source_message_ids_json, status, created_at, completed_at
+                FROM local_ai_action_items
+                ${if (conversationId == null) "" else "WHERE conversation_id = ?"}
+                ORDER BY status, created_at DESC, action_item_id
+                """.trimIndent()
+            connection.prepareStatement(sql).use { statement ->
+                if (conversationId != null) statement.setString(1, conversationId)
+                statement.executeQuery().use { result ->
+                    return buildList {
+                        while (result.next()) {
+                            add(LocalAiActionItem(
+                                actionItemId = result.getString("action_item_id"),
+                                sourceJobId = result.getString("source_job_id"),
+                                ownerUserId = result.getString("owner_user_id"),
+                                conversationId = result.getString("conversation_id"),
+                                assigneeUserId = result.getString("assignee_user_id"),
+                                title = result.getString("title"),
+                                details = result.getString("details"),
+                                dueAt = result.getString("due_at"),
+                                priority = result.getString("priority"),
+                                confidence = result.getDouble("confidence"),
+                                sourceMessageIdsJson = result.getString("source_message_ids_json"),
+                                status = result.getString("status"),
+                                createdAt = result.getString("created_at"),
+                                completedAt = result.getString("completed_at")))
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    fun deleteAiActionItem(actionItemId: String) {
+        pool.connection.use { connection ->
+            connection.prepareStatement(
+                "DELETE FROM local_ai_action_items WHERE action_item_id = ?").use { statement ->
+                    statement.setString(1, actionItemId)
+                    statement.executeUpdate()
+                }
+        }
+    }
+
+    fun clearAiActionItems() {
+        pool.connection.use { connection ->
+            connection.createStatement().use { statement ->
+                statement.executeUpdate("DELETE FROM local_ai_action_items")
+            }
         }
     }
 
@@ -965,6 +1176,8 @@ class LocalDatabase internal constructor(
                     statement.executeUpdate("DELETE FROM local_conversations")
                     statement.executeUpdate("DELETE FROM local_read_states")
                     statement.executeUpdate("DELETE FROM local_group_profiles")
+                    statement.executeUpdate("DELETE FROM local_ai_artifacts")
+                    statement.executeUpdate("DELETE FROM local_ai_action_items")
                 }
                 connection.commit()
             } catch (exception: RuntimeException) {
@@ -1499,6 +1712,33 @@ data class LocalGroupProfile(
     val conversationId: String,
     val avatarUrl: String?,
     val avatarVersion: Long,
+)
+
+data class LocalAiArtifact(
+    val artifactId: String,
+    val jobId: String,
+    val conversationId: String,
+    val artifactType: String,
+    val contentJson: String,
+    val createdAt: String,
+    val expiresAt: String,
+)
+
+data class LocalAiActionItem(
+    val actionItemId: String,
+    val sourceJobId: String?,
+    val ownerUserId: String,
+    val conversationId: String,
+    val assigneeUserId: String?,
+    val title: String,
+    val details: String,
+    val dueAt: String?,
+    val priority: String,
+    val confidence: Double,
+    val sourceMessageIdsJson: String,
+    val status: String,
+    val createdAt: String,
+    val completedAt: String?,
 )
 
 data class LocalMessage(

@@ -152,6 +152,7 @@ class AiServiceTest {
                 eq(DEVICE_ID),
                 eq(CONVERSATION_ID),
                 eq(requestId),
+                eq("SUMMARY"),
                 eq(2L),
                 eq(2L),
                 any(),
@@ -203,6 +204,7 @@ class AiServiceTest {
                 new AiRepository.AiArtifactDeletionRecord(
                         artifactId,
                         jobId,
+                        USER_ID,
                         CONVERSATION_ID,
                         "cache-key");
         when(repository.findArtifactDeletionContext(USER_ID, artifactId)).thenReturn(artifact);

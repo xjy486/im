@@ -4,6 +4,8 @@ import android.content.Context
 import com.google.gson.Gson
 import com.google.firebase.messaging.FirebaseMessaging
 import com.jitong.im.android.auth.AuthApi
+import com.jitong.im.android.ai.AiApi
+import com.jitong.im.android.ai.AiRepository
 import com.jitong.im.android.auth.AuthRepository
 import com.jitong.im.android.auth.InstallationIdentity
 import com.jitong.im.android.auth.SessionAuthenticator
@@ -56,6 +58,7 @@ internal class AppContainer(context: Context) {
     private val authenticatedContactApi = authenticatedRetrofit.create(ContactApi::class.java)
     private val authenticatedGroupApi = authenticatedRetrofit.create(GroupApi::class.java)
     private val authenticatedMessageApi = authenticatedRetrofit.create(MessageApi::class.java)
+    private val authenticatedAiApi = authenticatedRetrofit.create(AiApi::class.java)
     private val authenticatedMediaApi = authenticatedRetrofit.create(MediaApi::class.java)
     private val authenticatedSyncApi = authenticatedRetrofit.create(com.jitong.im.android.message.SyncApi::class.java)
     private val authenticatedPushTokenApi = authenticatedRetrofit.create(PushTokenApi::class.java)
@@ -91,6 +94,10 @@ internal class AppContainer(context: Context) {
         mediaApi = authenticatedMediaApi,
         mediaCache = { localStore.activeMediaCache() },
     )
+    val aiRepository = AiRepository(
+        api = authenticatedAiApi,
+        database = { localStore.activeDatabase() },
+    )
     fun sessionSnapshot() = sessionManager.snapshot()
     private var notificationSyncPending = false
 
@@ -124,6 +131,9 @@ internal class AppContainer(context: Context) {
                             "user.profile.updated", "group.profile.updated",
                             "membership.revoked", "membership.granted", "group.dissolved", "error" ->
                                 messageRepository.apply(event, userId)
+                            "ai.job.updated", "ai.artifact.deleted", "ai.job.deleted",
+                            "ai.action-item.updated", "ai.action-item.deleted" ->
+                                aiRepository.refresh()
                         }
                     }
                 } else {

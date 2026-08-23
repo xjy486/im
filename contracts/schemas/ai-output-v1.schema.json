@@ -1,0 +1,90 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://jitong.example/schemas/ai-output-v1.schema.json",
+  "title": "Jitong private AI structured output v1",
+  "oneOf": [
+    { "$ref": "#/$defs/summary" },
+    { "$ref": "#/$defs/smartReplies" },
+    { "$ref": "#/$defs/extraction" }
+  ],
+  "$defs": {
+    "evidence": {
+      "type": "array",
+      "minItems": 1,
+      "items": { "type": "string", "format": "uuid" }
+    },
+    "summary": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["overview", "keyPoints", "decisions", "openQuestions", "sourceMessageIds"],
+      "properties": {
+        "overview": { "type": "string", "minLength": 1, "maxLength": 4000 },
+        "keyPoints": { "type": "array", "maxItems": 20, "items": { "type": "string", "minLength": 1 } },
+        "decisions": { "type": "array", "maxItems": 20, "items": { "type": "string", "minLength": 1 } },
+        "openQuestions": { "type": "array", "maxItems": 20, "items": { "type": "string", "minLength": 1 } },
+        "sourceMessageIds": { "type": "array", "items": { "type": "string", "format": "uuid" } }
+      }
+    },
+    "smartReplies": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["replies"],
+      "properties": {
+        "replies": {
+          "type": "array",
+          "minItems": 3,
+          "maxItems": 3,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["text", "tone"],
+            "properties": {
+              "text": { "type": "string", "minLength": 1, "maxLength": 2000 },
+              "tone": { "type": "string", "minLength": 1, "maxLength": 40 }
+            }
+          }
+        }
+      }
+    },
+    "extraction": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["actionItems", "keyFacts"],
+      "properties": {
+        "actionItems": {
+          "type": "array",
+          "maxItems": 100,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["title", "details", "assigneeUserId", "dueAt", "priority", "confidence", "sourceMessageIds"],
+            "properties": {
+              "title": { "type": "string", "minLength": 1, "maxLength": 500 },
+              "details": { "type": "string", "maxLength": 4000 },
+              "assigneeUserId": { "type": ["string", "null"], "format": "uuid" },
+              "dueAt": { "type": ["string", "null"], "format": "date-time" },
+              "priority": { "type": "string", "enum": ["LOW", "MEDIUM", "HIGH"] },
+              "confidence": { "type": "number", "minimum": 0, "maximum": 1 },
+              "sourceMessageIds": { "$ref": "#/$defs/evidence" }
+            }
+          }
+        },
+        "keyFacts": {
+          "type": "array",
+          "maxItems": 100,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["category", "content", "confidence", "sourceMessageIds"],
+            "properties": {
+              "category": { "type": "string", "minLength": 1, "maxLength": 80 },
+              "content": { "type": "string", "minLength": 1, "maxLength": 4000 },
+              "confidence": { "type": "number", "minimum": 0, "maximum": 1 },
+              "sourceMessageIds": { "$ref": "#/$defs/evidence" }
+            }
+          }
+        }
+      }
+    }
+  }
+}

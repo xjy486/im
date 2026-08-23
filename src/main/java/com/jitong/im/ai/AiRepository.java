@@ -1,5 +1,8 @@
 package com.jitong.im.ai;
 
+import com.fasterxml.jackson.core.JsonProcessingException;
+import com.fasterxml.jackson.core.type.TypeReference;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import com.jitong.im.auth.UuidV7;
 import org.springframework.jdbc.core.simple.JdbcClient;
 import org.springframework.stereotype.Repository;
@@ -16,9 +19,11 @@ import java.util.UUID;
 class AiRepository {
 
     private final JdbcClient jdbc;
+    private final ObjectMapper objectMapper;
 
-    AiRepository(JdbcClient jdbc) {
+    AiRepository(JdbcClient jdbc, ObjectMapper objectMapper) {
         this.jdbc = jdbc;
+        this.objectMapper = objectMapper;
     }
 
     boolean lockActiveOwnerForUpdate(UUID ownerUserId) {
@@ -225,6 +230,33 @@ class AiRepository {
                 .reversed();
     }
 
+    List<AiContextMessage> listContextByMessageIds(
+            UUID conversationId,
+            List<UUID> messageIds,
+            int limit
+    ) {
+        return jdbc.sql("""
+                        SELECT id, conversation_seq, sender_id, text_content
+                        FROM messages
+                        WHERE conversation_id = :conversationId
+                          AND id IN (:messageIds)
+                          AND type = 'TEXT'
+                          AND state = 'ACTIVE'
+                          AND text_content IS NOT NULL
+                        ORDER BY conversation_seq
+                        LIMIT :limit
+                        """)
+                .param("conversationId", conversationId)
+                .param("messageIds", messageIds)
+                .param("limit", limit)
+                .query((row, rowNum) -> new AiContextMessage(
+                        row.getObject("id", UUID.class),
+                        row.getLong("conversation_seq"),
+                        row.getObject("sender_id", UUID.class),
+                        row.getString("text_content")))
+                .list();
+    }
+
     AiJobRecord findJob(UUID ownerUserId, UUID jobId) {
         return jdbc.sql(selectJobSql() + " WHERE id = :jobId AND owner_user_id = :ownerUserId")
                 .param("jobId", jobId)
@@ -268,6 +300,7 @@ class AiRepository {
             UUID requestingDeviceId,
             UUID conversationId,
             UUID requestId,
+            String kind,
             long fromSeq,
             long toSeq,
             String contextDigest,
@@ -289,7 +322,7 @@ class AiRepository {
                             model, prompt_version, expires_at
                         ) VALUES (
                             :id, :ownerUserId, :requestingDeviceId, :conversationId,
-                            :requestId, 'SUMMARY', 'QUEUED', :fromSeq, :toSeq,
+                            :requestId, :kind, 'QUEUED', :fromSeq, :toSeq,
                             :contextDigest, CAST(:contextJson AS jsonb), :policyVersion,
                             :cacheKey, :budgetDate, :reservedTokens,
                             :model, :promptVersion, :expiresAt
@@ -300,6 +333,7 @@ class AiRepository {
                 .param("requestingDeviceId", requestingDeviceId)
                 .param("conversationId", conversationId)
                 .param("requestId", requestId)
+                .param("kind", kind)
                 .param("fromSeq", fromSeq)
                 .param("toSeq", toSeq)
                 .param("contextDigest", contextDigest)
@@ -321,6 +355,7 @@ class AiRepository {
             UUID requestingDeviceId,
             UUID conversationId,
             UUID requestId,
+            String kind,
             long fromSeq,
             long toSeq,
             String contextDigest,
@@ -343,7 +378,7 @@ class AiRepository {
                             started_at, finished_at, expires_at
                         ) VALUES (
                             :id, :ownerUserId, :requestingDeviceId, :conversationId,
-                            :requestId, 'SUMMARY', 'SUCCEEDED', :fromSeq, :toSeq,
+                            :requestId, :kind, 'SUCCEEDED', :fromSeq, :toSeq,
                             :contextDigest, NULL, :policyVersion,
                             :cacheKey, :budgetDate, 0,
                             :model, :promptVersion, CAST(:resultJson AS jsonb),
@@ -355,6 +390,7 @@ class AiRepository {
                 .param("requestingDeviceId", requestingDeviceId)
                 .param("conversationId", conversationId)
                 .param("requestId", requestId)
+                .param("kind", kind)
                 .param("fromSeq", fromSeq)
                 .param("toSeq", toSeq)
                 .param("contextDigest", contextDigest)
@@ -458,6 +494,18 @@ class AiRepository {
                         FROM ai_jobs
                         WHERE owner_user_id = :ownerUserId
                           AND status = 'QUEUED'
+                        """)
+                .param("ownerUserId", ownerUserId)
+                .query(Long.class)
+                .single();
+    }
+
+    long countActiveJobs(UUID ownerUserId) {
+        return jdbc.sql("""
+                        SELECT COUNT(*)
+                        FROM ai_jobs
+                        WHERE owner_user_id = :ownerUserId
+                          AND status IN ('QUEUED', 'RUNNING')
                         """)
                 .param("ownerUserId", ownerUserId)
                 .query(Long.class)
@@ -635,6 +683,7 @@ class AiRepository {
     int createArtifact(
             UUID jobId,
             UUID ownerUserId,
+            String artifactType,
             String resultJson,
             Instant expiresAt
     ) {
@@ -643,7 +692,7 @@ class AiRepository {
                             id, job_id, owner_user_id, artifact_type,
                             content_json, expires_at
                         ) VALUES (
-                            :id, :jobId, :ownerUserId, 'SUMMARY',
+                            :id, :jobId, :ownerUserId, :artifactType,
                             CAST(:contentJson AS jsonb), :expiresAt
                         )
                         ON CONFLICT (job_id)
@@ -653,10 +702,39 @@ class AiRepository {
                 .param("id", UuidV7.random())
                 .param("jobId", jobId)
                 .param("ownerUserId", ownerUserId)
+                .param("artifactType", artifactType)
                 .param("contentJson", resultJson)
                 .param("expiresAt", utc(expiresAt), Types.TIMESTAMP_WITH_TIMEZONE)
                 .update();
         return 1;
+    }
+
+    void createActionItems(AiJobRecord job, AiExtraction extraction) {
+        for (AiExtraction.ActionItem item : extraction.actionItems()) {
+            jdbc.sql("""
+                            INSERT INTO ai_action_items (
+                                id, source_job_id, owner_user_id, conversation_id, assignee_user_id,
+                                title, details, due_at, priority, confidence,
+                                source_message_ids
+                            ) VALUES (
+                                :id, :jobId, :ownerUserId, :conversationId, :assigneeUserId,
+                                :title, :details, :dueAt, :priority, :confidence,
+                                CAST(:sourceMessageIds AS jsonb)
+                            )
+                            """)
+                    .param("id", UuidV7.random())
+                    .param("jobId", job.jobId())
+                    .param("ownerUserId", job.ownerUserId())
+                    .param("conversationId", job.conversationId())
+                    .param("assigneeUserId", item.assigneeUserId(), Types.OTHER)
+                    .param("title", item.title())
+                    .param("details", item.details())
+                    .param("dueAt", item.dueAt() == null ? null : utc(item.dueAt()), Types.TIMESTAMP_WITH_TIMEZONE)
+                    .param("priority", item.priority())
+                    .param("confidence", item.confidence())
+                    .param("sourceMessageIds", writeJson(item.sourceMessageIds()))
+                    .update();
+        }
     }
 
     int fail(
@@ -715,9 +793,34 @@ class AiRepository {
                 .update();
     }
 
-    int deleteExpiredArtifacts(Instant now) {
-        return jdbc.sql("DELETE FROM ai_artifacts WHERE expires_at <= :now")
+    List<AiArtifactDeletionRecord> findExpiredArtifactsForUpdate(Instant now, int limit) {
+        return jdbc.sql("""
+                        SELECT artifact.id AS artifact_id,
+                               artifact.job_id,
+                               artifact.owner_user_id,
+                               job.conversation_id,
+                               job.cache_key
+                        FROM ai_artifacts artifact
+                        JOIN ai_jobs job ON job.id = artifact.job_id
+                        WHERE artifact.expires_at <= :now
+                        ORDER BY artifact.expires_at, artifact.id
+                        FOR UPDATE OF artifact SKIP LOCKED
+                        LIMIT :limit
+                        """)
                 .param("now", utc(now), Types.TIMESTAMP_WITH_TIMEZONE)
+                .param("limit", limit)
+                .query((row, rowNumber) -> new AiArtifactDeletionRecord(
+                        row.getObject("artifact_id", UUID.class),
+                        row.getObject("job_id", UUID.class),
+                        row.getObject("owner_user_id", UUID.class),
+                        row.getObject("conversation_id", UUID.class),
+                        row.getString("cache_key")))
+                .list();
+    }
+
+    int deleteArtifactById(UUID artifactId) {
+        return jdbc.sql("DELETE FROM ai_artifacts WHERE id = :artifactId")
+                .param("artifactId", artifactId)
                 .update();
     }
 
@@ -771,6 +874,9 @@ class AiRepository {
                         """)
                 .param("ownerUserId", ownerUserId)
                 .update();
+        jdbc.sql("DELETE FROM ai_action_items WHERE owner_user_id = :ownerUserId")
+                .param("ownerUserId", ownerUserId)
+                .update();
         jdbc.sql("DELETE FROM ai_artifacts WHERE owner_user_id = :ownerUserId")
                 .param("ownerUserId", ownerUserId)
                 .update();
@@ -787,18 +893,21 @@ class AiRepository {
 
     List<AiArtifactRecord> listArtifacts(UUID ownerUserId, Instant now) {
         return jdbc.sql("""
-                        SELECT id, job_id, artifact_type, content_json::text,
-                               created_at, expires_at
-                        FROM ai_artifacts
-                        WHERE owner_user_id = :ownerUserId
-                          AND expires_at > :now
-                        ORDER BY created_at DESC
+                        SELECT artifact.id, artifact.job_id, job.conversation_id,
+                               artifact.artifact_type, artifact.content_json::text,
+                               artifact.created_at, artifact.expires_at
+                        FROM ai_artifacts artifact
+                        JOIN ai_jobs job ON job.id = artifact.job_id
+                        WHERE artifact.owner_user_id = :ownerUserId
+                          AND artifact.expires_at > :now
+                        ORDER BY artifact.created_at DESC
                         """)
                 .param("ownerUserId", ownerUserId)
                 .param("now", utc(now), Types.TIMESTAMP_WITH_TIMEZONE)
                 .query((row, rowNum) -> new AiArtifactRecord(
                         row.getObject("id", UUID.class),
                         row.getObject("job_id", UUID.class),
+                        row.getObject("conversation_id", UUID.class),
                         row.getString("artifact_type"),
                         row.getString("content_json"),
                         row.getObject("created_at", OffsetDateTime.class).toInstant(),
@@ -806,10 +915,63 @@ class AiRepository {
                 .list();
     }
 
+    List<AiActionItemRecord> listActionItems(UUID ownerUserId) {
+        return jdbc.sql(selectActionItemSql() + """
+                         WHERE owner_user_id = :ownerUserId
+                         ORDER BY created_at DESC, id
+                        """)
+                .param("ownerUserId", ownerUserId)
+                .query(this::mapActionItem)
+                .list();
+    }
+
+    AiActionItemRecord findActionItem(UUID ownerUserId, UUID actionItemId) {
+        return jdbc.sql(selectActionItemSql() + """
+                         WHERE owner_user_id = :ownerUserId AND id = :actionItemId
+                        """)
+                .param("ownerUserId", ownerUserId)
+                .param("actionItemId", actionItemId)
+                .query(this::mapActionItem)
+                .optional()
+                .orElse(null);
+    }
+
+    int updateActionItemStatus(
+            UUID ownerUserId,
+            UUID actionItemId,
+            String status,
+            Instant completedAt
+    ) {
+        return jdbc.sql("""
+                        UPDATE ai_action_items
+                        SET status = :status,
+                            completed_at = :completedAt
+                        WHERE owner_user_id = :ownerUserId AND id = :actionItemId
+                        """)
+                .param("ownerUserId", ownerUserId)
+                .param("actionItemId", actionItemId)
+                .param("status", status)
+                .param("completedAt",
+                        completedAt == null ? null : utc(completedAt),
+                        Types.TIMESTAMP_WITH_TIMEZONE)
+                .update();
+    }
+
+    int deleteActionItem(UUID ownerUserId, UUID actionItemId) {
+        return jdbc.sql("""
+                        DELETE FROM ai_action_items
+                        WHERE owner_user_id = :ownerUserId AND id = :actionItemId
+                        """)
+                .param("ownerUserId", ownerUserId)
+                .param("actionItemId", actionItemId)
+                .update();
+    }
+
     AiArtifactDeletionRecord findArtifactDeletionContext(UUID ownerUserId, UUID artifactId) {
         return jdbc.sql("""
                         SELECT artifact.id AS artifact_id,
                                artifact.job_id,
+                               artifact.owner_user_id,
                                job.conversation_id,
                                job.cache_key
                         FROM ai_artifacts artifact
@@ -824,6 +986,7 @@ class AiRepository {
                 .query((row, rowNumber) -> new AiArtifactDeletionRecord(
                         row.getObject("artifact_id", UUID.class),
                         row.getObject("job_id", UUID.class),
+                        row.getObject("owner_user_id", UUID.class),
                         row.getObject("conversation_id", UUID.class),
                         row.getString("cache_key")))
                 .optional()
@@ -859,6 +1022,7 @@ class AiRepository {
         return jdbc.sql("""
                         SELECT artifact.id AS artifact_id,
                                artifact.job_id,
+                               artifact.owner_user_id,
                                job.conversation_id,
                                job.cache_key
                         FROM ai_artifacts artifact
@@ -879,6 +1043,7 @@ class AiRepository {
                 .query((row, rowNumber) -> new AiArtifactDeletionRecord(
                         row.getObject("artifact_id", UUID.class),
                         row.getObject("job_id", UUID.class),
+                        row.getObject("owner_user_id", UUID.class),
                         row.getObject("conversation_id", UUID.class),
                         row.getString("cache_key")))
                 .list();
@@ -890,6 +1055,21 @@ class AiRepository {
             String cacheKey,
             Instant deletedAt
     ) {
+        jdbc.sql("""
+                        DELETE FROM ai_action_items item
+                        USING ai_jobs job
+                        WHERE item.source_job_id = job.id
+                          AND item.owner_user_id = :ownerUserId
+                          AND job.owner_user_id = :ownerUserId
+                          AND (
+                              job.id = :jobId
+                              OR (:cacheKey IS NOT NULL AND job.cache_key = :cacheKey)
+                          )
+                        """)
+                .param("ownerUserId", ownerUserId)
+                .param("jobId", jobId)
+                .param("cacheKey", cacheKey)
+                .update();
         jdbc.sql("""
                         DELETE FROM ai_artifacts artifact
                         USING ai_jobs job
@@ -950,6 +1130,16 @@ class AiRepository {
                 .update();
     }
 
+    void deleteActionItemsForJob(UUID ownerUserId, UUID jobId) {
+        jdbc.sql("""
+                        DELETE FROM ai_action_items
+                        WHERE owner_user_id = :ownerUserId AND source_job_id = :jobId
+                        """)
+                .param("ownerUserId", ownerUserId)
+                .param("jobId", jobId)
+                .update();
+    }
+
     void deleteArtifactsForJob(UUID ownerUserId, UUID jobId) {
         jdbc.sql("""
                         DELETE FROM ai_artifacts
@@ -970,6 +1160,16 @@ class AiRepository {
                        model, prompt_version, result_json::text, error_code,
                        created_at, started_at, finished_at, expires_at
                 FROM ai_jobs
+                """;
+    }
+
+    private String selectActionItemSql() {
+        return """
+                SELECT id, source_job_id, owner_user_id, conversation_id,
+                       assignee_user_id, title, details, due_at, priority,
+                       confidence, source_message_ids::text, status,
+                       created_at, completed_at
+                FROM ai_action_items
                 """;
     }
 
@@ -1003,6 +1203,27 @@ class AiRepository {
                 nullableInstant(row, "expires_at"));
     }
 
+    private AiActionItemRecord mapActionItem(
+            java.sql.ResultSet row,
+            int rowNum
+    ) throws java.sql.SQLException {
+        return new AiActionItemRecord(
+                row.getObject("id", UUID.class),
+                row.getObject("source_job_id", UUID.class),
+                row.getObject("owner_user_id", UUID.class),
+                row.getObject("conversation_id", UUID.class),
+                row.getObject("assignee_user_id", UUID.class),
+                row.getString("title"),
+                row.getString("details"),
+                nullableInstant(row, "due_at"),
+                row.getString("priority"),
+                row.getDouble("confidence"),
+                readUuidList(row.getString("source_message_ids")),
+                row.getString("status"),
+                row.getObject("created_at", OffsetDateTime.class).toInstant(),
+                nullableInstant(row, "completed_at"));
+    }
+
     private static Instant nullableInstant(java.sql.ResultSet row, String column) throws java.sql.SQLException {
         OffsetDateTime value = row.getObject(column, OffsetDateTime.class);
         return value == null ? null : value.toInstant();
@@ -1012,9 +1233,26 @@ class AiRepository {
         return OffsetDateTime.ofInstant(value, ZoneOffset.UTC);
     }
 
+    private String writeJson(Object value) {
+        try {
+            return objectMapper.writeValueAsString(value);
+        } catch (JsonProcessingException exception) {
+            throw new IllegalStateException("AI data could not be serialized", exception);
+        }
+    }
+
+    private List<UUID> readUuidList(String json) {
+        try {
+            return objectMapper.readValue(json, new TypeReference<>() { });
+        } catch (JsonProcessingException exception) {
+            throw new IllegalStateException("AI data could not be read", exception);
+        }
+    }
+
     record AiArtifactRecord(
             UUID artifactId,
             UUID jobId,
+            UUID conversationId,
             String artifactType,
             String contentJson,
             Instant createdAt,
@@ -1025,8 +1263,27 @@ class AiRepository {
     record AiArtifactDeletionRecord(
             UUID artifactId,
             UUID jobId,
+            UUID ownerUserId,
             UUID conversationId,
             String cacheKey
+    ) {
+    }
+
+    record AiActionItemRecord(
+            UUID actionItemId,
+            UUID sourceJobId,
+            UUID ownerUserId,
+            UUID conversationId,
+            UUID assigneeUserId,
+            String title,
+            String details,
+            Instant dueAt,
+            String priority,
+            double confidence,
+            List<UUID> sourceMessageIds,
+            String status,
+            Instant createdAt,
+            Instant completedAt
     ) {
     }
 }

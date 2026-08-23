@@ -58,6 +58,7 @@ internal fun JitongApp(
     viewModel: AuthViewModel,
     contactViewModel: ContactViewModel,
     messageViewModel: MessageViewModel,
+    aiViewModel: AiViewModel,
     avatarViewModel: AvatarViewModel,
     groupViewModel: GroupViewModel,
 ) {
@@ -67,6 +68,7 @@ internal fun JitongApp(
             SessionState.SignedOut -> {
                 LaunchedEffect(Unit) {
                     messageViewModel.clearForLogout()
+                    aiViewModel.clearForLogout()
                 }
                 LoginScreen(viewModel)
             }
@@ -77,6 +79,7 @@ internal fun JitongApp(
                 viewModel,
                 contactViewModel,
                 messageViewModel,
+                aiViewModel,
                 avatarViewModel,
                 groupViewModel,
             )
@@ -187,12 +190,14 @@ private fun HomeScreen(
     viewModel: AuthViewModel,
     contactViewModel: ContactViewModel,
     messageViewModel: MessageViewModel,
+    aiViewModel: AiViewModel,
     avatarViewModel: AvatarViewModel,
     groupViewModel: GroupViewModel,
 ) {
     val contactState by contactViewModel.state.collectAsStateWithLifecycle()
     val avatarState by avatarViewModel.state.collectAsStateWithLifecycle()
     val messageState by messageViewModel.state.collectAsStateWithLifecycle()
+    val aiState by aiViewModel.state.collectAsStateWithLifecycle()
     val groupState by groupViewModel.state.collectAsStateWithLifecycle()
     var selectedTab by rememberSaveable { mutableStateOf("contacts") }
     var selectedConversationId by rememberSaveable { mutableStateOf<String?>(null) }
@@ -203,6 +208,7 @@ private fun HomeScreen(
         selectedGroupConversationId = null
         selectedMessageId = null
         messageViewModel.clearForLogout()
+        aiViewModel.clearForLogout()
         contactViewModel.refresh()
         avatarViewModel.refresh()
         groupViewModel.refresh()
@@ -222,6 +228,8 @@ private fun HomeScreen(
         ConversationScreen(
             conversation = selectedConversation,
             viewModel = messageViewModel,
+            aiState = aiState,
+            aiViewModel = aiViewModel,
             loadAvatar = avatarViewModel::loadUserAvatar,
             initialMessageId = selectedMessageId,
             onBack = {
@@ -828,6 +836,8 @@ private fun ContactListPanel(
 private fun ConversationScreen(
     conversation: ConversationSummary,
     viewModel: MessageViewModel,
+    aiState: AiUiState,
+    aiViewModel: AiViewModel,
     loadAvatar: suspend (UUID, Long) -> ByteArray?,
     initialMessageId: String?,
     onBack: () -> Unit,
@@ -846,6 +856,7 @@ private fun ConversationScreen(
     }
     LaunchedEffect(conversation.conversationId) {
         viewModel.open(conversation.conversationId)
+        aiViewModel.open(conversation.conversationId)
     }
     LaunchedEffect(state.messages, initialMessageId) {
         val messageId = initialMessageId ?: return@LaunchedEffect
@@ -933,8 +944,96 @@ private fun ConversationScreen(
                                 Text("重试")
                             }
                         }
+                        if (message.state == "ACTIVE" && message.messageId.isNotBlank()) {
+                            val messageId = runCatching { UUID.fromString(message.messageId) }.getOrNull()
+                            if (messageId != null) {
+                                OutlinedButton(onClick = { aiViewModel.toggleMessage(messageId) }) {
+                                    Text(if (messageId in aiState.selectedMessageIds) "已选作证据" else "选择作证据")
+                                }
+                            }
+                        }
                     }
                 }
+            }
+        }
+        Card(Modifier.fillMaxWidth()) {
+            Column(
+                Modifier
+                    .fillMaxWidth()
+                    .heightIn(max = 320.dp)
+                    .verticalScroll(rememberScrollState())
+                    .padding(14.dp),
+                verticalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                Text("私人 AI", style = MaterialTheme.typography.titleMedium)
+                Text(
+                    when {
+                        aiState.enabledForBoth -> "双方已同意，结果仅自己可见"
+                        aiState.consentEnabled -> "已同意，等待对方开启"
+                        else -> "需要双方同意后才能使用"
+                    },
+                )
+                OutlinedButton(
+                    onClick = { aiViewModel.updateConsent(!aiState.consentEnabled) },
+                    enabled = !aiState.loading,
+                ) { Text(if (aiState.consentEnabled) "关闭我的同意" else "开启我的同意") }
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Button(
+                        onClick = aiViewModel::requestSmartReplies,
+                        enabled = aiState.enabledForBoth && !aiState.loading,
+                    ) { Text("生成 3 条回复") }
+                    Button(
+                        onClick = aiViewModel::extractSelected,
+                        enabled = aiState.enabledForBoth &&
+                            aiState.selectedMessageIds.isNotEmpty() &&
+                            !aiState.loading,
+                    ) { Text("提取所选信息") }
+                }
+                aiState.drafts.forEachIndexed { index, reply ->
+                    OutlinedTextField(
+                        value = reply.text,
+                        onValueChange = { aiViewModel.updateDraft(index, it) },
+                        label = { Text("${reply.tone} 可编辑草稿") },
+                        modifier = Modifier.fillMaxWidth(),
+                    )
+                    Button(onClick = { viewModel.setDraft(reply.text) }) { Text("放入输入框") }
+                }
+                aiState.keyFacts.forEach { fact ->
+                    Card(Modifier.fillMaxWidth()) {
+                        Column(Modifier.padding(10.dp)) {
+                            Text("${fact.category} · 置信度 ${fact.confidence}")
+                            Text(fact.content)
+                            Text("证据 ${fact.sourceMessageIds.joinToString()}", style = MaterialTheme.typography.bodySmall)
+                            TextButton(onClick = { aiViewModel.deleteArtifact(fact.artifactId) }) {
+                                Text("删除关键信息")
+                            }
+                        }
+                    }
+                }
+                aiState.actionItems.forEach { item ->
+                    Card(Modifier.fillMaxWidth()) {
+                        Column(Modifier.padding(10.dp)) {
+                            Text("${item.title} · ${item.priority}")
+                            Text(item.details)
+                            item.assigneeUserId?.let {
+                                Text("AI 识别负责人 $it；待办仍只属于你")
+                            }
+                            Text("证据 ${item.sourceMessageIdsJson}", style = MaterialTheme.typography.bodySmall)
+                            Row {
+                                TextButton(onClick = {
+                                    aiViewModel.setActionItemCompleted(
+                                        item.actionItemId,
+                                        item.status != "COMPLETED",
+                                    )
+                                }) { Text(if (item.status == "COMPLETED") "重新打开" else "完成") }
+                                TextButton(onClick = { aiViewModel.deleteActionItem(item.actionItemId) }) {
+                                    Text("删除")
+                                }
+                            }
+                        }
+                    }
+                }
+                aiState.message?.let { Text(it, color = MaterialTheme.colorScheme.error) }
             }
         }
         OutlinedTextField(
