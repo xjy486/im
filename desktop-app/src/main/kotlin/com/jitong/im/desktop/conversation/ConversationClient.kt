@@ -333,7 +333,7 @@ data class DesktopAiJob(
     val kind: String,
     val status: String,
     val errorCode: String?,
-    val result: JsonElement?,
+    val result: JsonElement? = null,
     val createdAt: String? = null,
     val expiresAt: String? = null,
 )
@@ -789,6 +789,7 @@ class ConversationClient(
         require(highWatermark >= 0) { "highWatermark must not be negative" }
         val conversations = list(accessToken)
         val groups = listGroups(accessToken)
+        val aiJobs = listAiJobs(accessToken)
         val aiArtifacts = listAiArtifacts(accessToken)
         val aiActionItems = listAiActionItems(accessToken)
         local.clearMessageData()
@@ -816,6 +817,7 @@ class ConversationClient(
             local,
             (conversations.map { it.conversationId } + groups.map { it.conversationId })
                 .distinct())
+        aiJobs.forEach { applyAiJob(local, it) }
         aiArtifacts.forEach { local.upsertAiArtifact(it.toLocal()) }
         aiActionItems.forEach { local.upsertAiActionItem(it.toLocal()) }
         acknowledge(accessToken, highWatermark)
@@ -841,6 +843,9 @@ class ConversationClient(
 
     fun listAiArtifacts(accessToken: String): List<DesktopAiArtifact> =
         requestJson(get("/api/v1/ai/artifacts", accessToken))
+
+    fun listAiJobs(accessToken: String): List<DesktopAiJob> =
+        requestJson(get("/api/v1/ai/jobs", accessToken))
 
     fun listAiActionItems(accessToken: String): List<DesktopAiActionItem> =
         requestJson(get("/api/v1/ai/action-items", accessToken))
@@ -947,10 +952,13 @@ class ConversationClient(
     }
 
     fun refreshAiData(accessToken: String, local: LocalDatabase) {
+        val jobs = listAiJobs(accessToken)
         val artifacts = listAiArtifacts(accessToken)
         val actionItems = listAiActionItems(accessToken)
+        local.clearAiJobs()
         local.clearAiArtifacts()
         local.clearAiActionItems()
+        jobs.forEach { applyAiJob(local, it) }
         artifacts.forEach { local.upsertAiArtifact(it.toLocal()) }
         actionItems.forEach { local.upsertAiActionItem(it.toLocal()) }
     }
@@ -960,33 +968,7 @@ class ConversationClient(
         local: LocalDatabase,
         events: List<DesktopSyncEvent>,
     ) {
-        val aiEvents = events.filter { it.eventType.startsWith("AI_") }
-        aiEvents
-            .filter { it.eventType == "AI_JOB_DELETED" }
-            .forEach { local.deleteAiJob(it.entityId) }
-        aiEvents
-            .filter {
-                it.eventType == "AI_JOB_QUEUED"
-                    || it.eventType == "AI_JOB_STARTED"
-                    || it.eventType == "AI_JOB_COMPLETED"
-                    || it.eventType == "AI_JOB_FAILED"
-            }
-            .map { it.entityId }
-            .distinct()
-            .forEach { jobId ->
-                try {
-                    applyAiJob(
-                        local,
-                        requestJson(get("/api/v1/ai/jobs/$jobId", accessToken)))
-                } catch (exception: ConversationApiException) {
-                    if (exception.statusCode == 404) {
-                        local.deleteAiJob(jobId)
-                    } else {
-                        throw exception
-                    }
-                }
-            }
-        if (aiEvents.isNotEmpty()) refreshAiData(accessToken, local)
+        if (events.any { it.eventType.startsWith("AI_") }) refreshAiData(accessToken, local)
     }
 
     fun applyAiJob(local: LocalDatabase, job: DesktopAiJob) {

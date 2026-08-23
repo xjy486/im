@@ -144,6 +144,21 @@ class AiSummaryContractTest extends ContractTestEnvironment {
         assertThat(completed.get("result").get("sourceMessageIds").get(0).asText())
                 .isEqualTo(firstMessageId.toString());
 
+        JsonNode ownerJobs = exchange(
+                "/api/v1/ai/jobs",
+                HttpMethod.GET,
+                aliceToken,
+                null).getBody();
+        assertThat(ownerJobs).singleElement().satisfies(job -> {
+            assertThat(job.get("jobId").asText()).isEqualTo(jobId.toString());
+            assertThat(job.get("status").asText()).isEqualTo("SUCCEEDED");
+        });
+        assertThat(exchange(
+                "/api/v1/ai/jobs",
+                HttpMethod.GET,
+                bobToken,
+                null).getBody()).isEmpty();
+
         JsonNode ownerSync = exchange(
                 "/api/v1/sync?after=0&limit=200",
                 HttpMethod.GET,

@@ -560,6 +560,8 @@ Android 搜索使用 Room FTS4。英文使用规范化词项，中文使用二�
     )
 
 并建立 `INDEX(term, message_local_id)`。PC 支持离线浏览和搜索，但不支持离线发送。
+PC 还保存 `local_ai_jobs`、`local_ai_artifacts` 和 `local_ai_action_items`，并通过 owner
+私有同步事件与 `GET /ai/jobs` 权威列表在增量同步和同步重置后对齐；过期任务和结果在读取时清理。
 
 ### 17.3 数据生命周期
 
@@ -967,6 +969,7 @@ PostgreSQL 与 MinIO 使用独立持久卷、分别备份、加密存储，并�
 - `POST /conversations/{id}/ai/summary`
 - `POST /conversations/{id}/ai/smart-replies`
 - `POST /conversations/{id}/ai/extract`
+- `GET /ai/jobs`
 - `GET /ai/jobs/{id}`
 - `GET /ai/artifacts`
 - `DELETE /ai/artifacts/{id}`

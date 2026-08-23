@@ -23,10 +23,16 @@ class AiController {
 
     private final AuthService authService;
     private final AiService service;
+    private final AiJobQueryService jobQueryService;
 
-    AiController(AuthService authService, AiService service) {
+    AiController(
+            AuthService authService,
+            AiService service,
+            AiJobQueryService jobQueryService
+    ) {
         this.authService = authService;
         this.service = service;
+        this.jobQueryService = jobQueryService;
     }
 
     @GetMapping("/conversations/{conversationId}/ai/consent")
@@ -85,6 +91,13 @@ class AiController {
             @PathVariable UUID jobId
     ) {
         return service.job(authService.requireUserId(authorization), jobId);
+    }
+
+    @GetMapping("/ai/jobs")
+    List<AiJobStatusResponse> jobs(
+            @RequestHeader(value = "Authorization", required = false) String authorization
+    ) {
+        return jobQueryService.listActiveForOwner(authService.requireUserId(authorization));
     }
 
     @GetMapping("/ai/artifacts")

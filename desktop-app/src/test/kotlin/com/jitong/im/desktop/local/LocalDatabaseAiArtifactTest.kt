@@ -15,7 +15,7 @@ class LocalDatabaseAiArtifactTest {
         val server = MockWebServer()
         server.enqueue(
             MockResponse().setBody(
-                """{"version":1,"jobId":"job-1","conversationId":"conversation-1","kind":"SUMMARY","status":"SUCCEEDED","errorCode":null,"result":{"overview":"Synced from mobile","keyPoints":[],"decisions":[],"openQuestions":[],"sourceMessageIds":[]},"createdAt":"2026-08-23T00:00:00Z","expiresAt":"2027-09-22T00:00:00Z"}"""))
+                """[{"version":1,"jobId":"job-1","conversationId":"conversation-1","kind":"SUMMARY","status":"SUCCEEDED","errorCode":null,"createdAt":"2026-08-23T00:00:00Z","expiresAt":"2027-09-22T00:00:00Z"}]"""))
         server.enqueue(
             MockResponse().setBody(
                 """[{"version":1,"artifactId":"artifact-1","jobId":"job-1","conversationId":"conversation-1","artifactType":"SUMMARY","content":{"overview":"Synced from mobile","keyPoints":[],"decisions":[],"openQuestions":[],"sourceMessageIds":[]},"createdAt":"2026-08-23T00:00:00Z","expiresAt":"2027-09-22T00:00:00Z"}]"""))
@@ -39,6 +39,9 @@ class LocalDatabaseAiArtifactTest {
 
                 assertEquals("SUCCEEDED", database.listAiJobs().single().status)
                 assertEquals("artifact-1", database.listAiArtifacts().single().artifactId)
+                assertEquals(
+                    listOf("/api/v1/ai/jobs", "/api/v1/ai/artifacts", "/api/v1/ai/action-items"),
+                    (1..3).map { server.takeRequest().path })
             }
 
             manager.open("12345678903").use { reopened ->
@@ -117,6 +120,7 @@ class LocalDatabaseAiArtifactTest {
     @Test
     fun desktop_sync_deletion_events_remove_private_ai_copies() {
         val server = MockWebServer()
+        server.enqueue(MockResponse().setBody("[]"))
         server.enqueue(MockResponse().setBody("[]"))
         server.enqueue(MockResponse().setBody("[]"))
         server.start()

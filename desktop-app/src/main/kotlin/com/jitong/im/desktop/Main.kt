@@ -152,6 +152,13 @@ private data class DesktopAiSummary(
     val sourceMessageIds: List<String>,
 )
 
+private data class DesktopAiSelectionContext(
+    val consent: DesktopAiConsent?,
+    val groupPolicy: DesktopGroupAiPolicy?,
+    val summaryAfterSeq: Long,
+    val summaryUntilSeq: Long,
+)
+
 @Composable
 private fun DesktopApp(
     authStore: DesktopAuthStore,
@@ -174,6 +181,8 @@ private fun DesktopApp(
     var aiGroupPolicy by remember { mutableStateOf<DesktopGroupAiPolicy?>(null) }
     var aiDrafts by remember { mutableStateOf<List<DesktopAiDraft>>(emptyList()) }
     var aiDraftArtifactId by remember { mutableStateOf<String?>(null) }
+    var aiSummaryAfterSeq by remember { mutableStateOf<Long?>(null) }
+    var aiSummaryUntilSeq by remember { mutableStateOf<Long?>(null) }
     var selectedAiMessageIds by remember { mutableStateOf<Set<String>>(emptySet()) }
     var aiLoading by remember { mutableStateOf(false) }
     var online by remember { mutableStateOf(false) }
@@ -690,6 +699,9 @@ private fun DesktopApp(
             aiConsent = aiConsent,
             aiGroupPolicy = aiGroupPolicy,
             aiDrafts = aiDrafts,
+            canRequestAiSummary = aiSummaryAfterSeq != null
+                && aiSummaryUntilSeq != null
+                && aiSummaryUntilSeq!! > aiSummaryAfterSeq!!,
             selectedAiMessageIds = selectedAiMessageIds,
             aiLoading = aiLoading,
             error = error,
@@ -992,6 +1004,8 @@ private fun DesktopApp(
                 selectedAiMessageIds = emptySet()
                 aiDrafts = emptyList()
                 aiDraftArtifactId = null
+                aiSummaryAfterSeq = null
+                aiSummaryUntilSeq = null
                 aiConsent = null
                 aiGroupPolicy = null
                 uiScope.launch {
@@ -1012,21 +1026,29 @@ private fun DesktopApp(
                                 ?: session!!.accessToken
                             val conversation = local.listConversations()
                                 .first { it.conversationId == conversationId }
+                            val consent: DesktopAiConsent?
+                            val groupPolicy: DesktopGroupAiPolicy?
                             if (conversation.kind == "GROUP") {
-                                null to conversationClient.groupAiPolicy(
-                                    accessToken,
-                                    conversationId)
+                                consent = null
+                                groupPolicy = conversationClient.groupAiPolicy(
+                                    accessToken, conversationId)
                             } else {
-                                conversationClient.aiConsent(
-                                    accessToken,
-                                    conversationId) to null
+                                consent = conversationClient.aiConsent(accessToken, conversationId)
+                                groupPolicy = null
                             }
+                            DesktopAiSelectionContext(
+                                consent = consent,
+                                groupPolicy = groupPolicy,
+                                summaryAfterSeq = conversation.readSeq,
+                                summaryUntilSeq = local.lastConversationSeq(conversationId))
                         }
                         refreshLocal()
                         policy
-                    }.onSuccess { (consent, groupPolicy) ->
-                        aiConsent = consent
-                        aiGroupPolicy = groupPolicy
+                    }.onSuccess { context ->
+                        aiConsent = context.consent
+                        aiGroupPolicy = context.groupPolicy
+                        aiSummaryAfterSeq = context.summaryAfterSeq
+                        aiSummaryUntilSeq = context.summaryUntilSeq
                     }
                         .onFailure { error = messageFor(it) }
                 }
@@ -1072,6 +1094,9 @@ private fun DesktopApp(
             onRequestAiSummary = {
                 val conversationId = selectedConversationId ?: return@MainScreen
                 val current = authStore.session ?: session ?: return@MainScreen
+                val afterSeq = aiSummaryAfterSeq ?: return@MainScreen
+                val untilSeq = aiSummaryUntilSeq ?: return@MainScreen
+                if (untilSeq <= afterSeq) return@MainScreen
                 uiScope.launch {
                     aiLoading = true
                     runCatching {
@@ -1081,10 +1106,15 @@ private fun DesktopApp(
                             conversationClient.requestSummary(
                                 current.accessToken,
                                 conversationId,
+                                afterSeq = afterSeq,
+                                untilSeq = untilSeq,
                                 onJobUpdate = { conversationClient.applyAiJob(local, it) })
                             conversationClient.refreshAiData(current.accessToken, local)
                         }
-                    }.onSuccess { refreshLocal() }
+                    }.onSuccess {
+                        aiSummaryAfterSeq = untilSeq
+                        refreshLocal()
+                    }
                         .onFailure { error = messageFor(it) }
                     aiLoading = false
                 }
@@ -1478,6 +1508,7 @@ private fun MainScreen(
     aiConsent: DesktopAiConsent?,
     aiGroupPolicy: DesktopGroupAiPolicy?,
     aiDrafts: List<DesktopAiDraft>,
+    canRequestAiSummary: Boolean,
     selectedAiMessageIds: Set<String>,
     aiLoading: Boolean,
     error: String?,
@@ -1745,6 +1776,7 @@ private fun MainScreen(
                 aiConsent = aiConsent,
                 aiGroupPolicy = aiGroupPolicy,
                 aiDrafts = aiDrafts,
+                canRequestAiSummary = canRequestAiSummary,
                 aiJobs = data.aiJobs.filter {
                     it.conversationId == selectedConversationId
                 },
@@ -1954,6 +1986,7 @@ private fun ConversationPane(
     aiConsent: DesktopAiConsent?,
     aiGroupPolicy: DesktopGroupAiPolicy?,
     aiDrafts: List<DesktopAiDraft>,
+    canRequestAiSummary: Boolean,
     aiJobs: List<LocalAiJob>,
     aiArtifacts: List<LocalAiArtifact>,
     aiActionItems: List<LocalAiActionItem>,
@@ -2064,9 +2097,7 @@ private fun ConversationPane(
                         message.conversationSeq?.let {
                             Text("Message #$it")
                         }
-                        if (message.state == "ACTIVE" &&
-                            message.localState == "SENT" &&
-                            runCatching { UUID.fromString(message.messageId) }.isSuccess) {
+                        if (message.isEligibleForAiEvidence()) {
                             OutlinedButton(onClick = {
                                 onToggleAiMessage(message.messageId)
                             }) {
@@ -2089,6 +2120,7 @@ private fun ConversationPane(
             consent = aiConsent,
             groupPolicy = aiGroupPolicy,
             drafts = aiDrafts,
+            canRequestSummary = canRequestAiSummary,
             jobs = aiJobs,
             artifacts = aiArtifacts,
             actionItems = aiActionItems,
@@ -2149,6 +2181,7 @@ private fun AiAssistantPanel(
     consent: DesktopAiConsent?,
     groupPolicy: DesktopGroupAiPolicy?,
     drafts: List<DesktopAiDraft>,
+    canRequestSummary: Boolean,
     jobs: List<LocalAiJob>,
     artifacts: List<LocalAiArtifact>,
     actionItems: List<LocalAiActionItem>,
@@ -2222,7 +2255,7 @@ private fun AiAssistantPanel(
                 item {
                     Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                         Button(
-                            enabled = online && !loading,
+                            enabled = online && !loading && canRequestSummary,
                             onClick = onRequestSummary,
                         ) { Text("Summarize unread") }
                         Button(
