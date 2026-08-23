@@ -356,6 +356,111 @@ class AiSummaryContractTest extends ContractTestEnvironment {
     }
 
     @Test
+    void deleting_ai_content_invalidates_every_result_copy_and_syncs_the_deletion() {
+        TestUser alice = createUser("Delete AI Alice");
+        TestUser bob = createUser("Delete AI Bob");
+        String aliceToken = login(alice.accountNo(), "delete-ai-alice", "PC");
+        String bobToken = login(bob.accountNo(), "delete-ai-bob", "MOBILE");
+        UUID conversationId = acceptContact(aliceToken, bob, bobToken);
+        enableAi(aliceToken, bobToken, conversationId);
+        post(
+                "/api/v1/conversations/" + conversationId + "/messages",
+                bobToken,
+                Map.of("clientMsgId", UUID.randomUUID(), "text", "Delete every copy of this summary."));
+
+        AtomicInteger calls = new AtomicInteger();
+        when(provider.summarize(any(AiSummaryContext.class))).thenAnswer(invocation -> {
+            AiSummaryContext context = invocation.getArgument(0);
+            if (context.conversationId().equals(conversationId)) {
+                calls.incrementAndGet();
+            }
+            return withUsage(new AiSummary(
+                    "Deletable summary.",
+                    List.of(),
+                    List.of(),
+                    List.of(),
+                    context.messages().stream().map(AiContextMessage::messageId).toList()));
+        });
+
+        JsonNode first = requestSummary(aliceToken, conversationId).getBody();
+        UUID firstJobId = UUID.fromString(first.get("jobId").asText());
+        awaitJob(aliceToken, firstJobId);
+        UUID artifactId = jdbc.sql("SELECT id FROM ai_artifacts WHERE job_id = :jobId")
+                .param("jobId", firstJobId)
+                .query(UUID.class)
+                .single();
+        JsonNode cached = requestSummary(aliceToken, conversationId).getBody();
+        UUID cachedJobId = UUID.fromString(cached.get("jobId").asText());
+        assertThat(cached.get("status").asText()).isEqualTo("SUCCEEDED");
+        assertThat(calls).hasValue(1);
+
+        assertThat(exchange(
+                "/api/v1/ai/artifacts/" + artifactId,
+                HttpMethod.DELETE,
+                aliceToken,
+                null).getStatusCode()).isEqualTo(HttpStatus.NO_CONTENT);
+        assertThat(jdbc.sql("SELECT COUNT(*) FROM ai_artifacts WHERE owner_user_id = :ownerUserId")
+                .param("ownerUserId", alice.userId())
+                .query(Long.class)
+                .single()).isZero();
+        assertThat(jdbc.sql("""
+                        SELECT COUNT(*)
+                        FROM ai_jobs
+                        WHERE id IN (:firstJobId, :cachedJobId)
+                          AND result_json IS NOT NULL
+                        """)
+                .param("firstJobId", firstJobId)
+                .param("cachedJobId", cachedJobId)
+                .query(Long.class)
+                .single()).isZero();
+        assertThat(jdbc.sql("SELECT COUNT(*) FROM ai_cache_entries WHERE owner_user_id = :ownerUserId")
+                .param("ownerUserId", alice.userId())
+                .query(Long.class)
+                .single()).isZero();
+        assertThat(jdbc.sql("""
+                        SELECT COUNT(*)
+                        FROM user_sync_events
+                        WHERE user_id = :ownerUserId
+                          AND event_type = 'AI_ARTIFACT_DELETED'
+                          AND entity_id = :artifactId
+                        """)
+                .param("ownerUserId", alice.userId())
+                .param("artifactId", artifactId)
+                .query(Long.class)
+                .single()).isOne();
+
+        JsonNode regenerated = requestSummary(aliceToken, conversationId).getBody();
+        UUID regeneratedJobId = UUID.fromString(regenerated.get("jobId").asText());
+        awaitJob(aliceToken, regeneratedJobId);
+        assertThat(calls).hasValue(2);
+
+        assertThat(exchange(
+                "/api/v1/ai/jobs/" + regeneratedJobId,
+                HttpMethod.DELETE,
+                aliceToken,
+                null).getStatusCode()).isEqualTo(HttpStatus.NO_CONTENT);
+        assertThat(jdbc.sql("SELECT COUNT(*) FROM ai_cache_entries WHERE owner_user_id = :ownerUserId")
+                .param("ownerUserId", alice.userId())
+                .query(Long.class)
+                .single()).isZero();
+        assertThat(jdbc.sql("""
+                        SELECT COUNT(*)
+                        FROM user_sync_events
+                        WHERE user_id = :ownerUserId
+                          AND event_type = 'AI_JOB_DELETED'
+                          AND entity_id = :jobId
+                        """)
+                .param("ownerUserId", alice.userId())
+                .param("jobId", regeneratedJobId)
+                .query(Long.class)
+                .single()).isOne();
+
+        JsonNode afterJobDeletion = requestSummary(aliceToken, conversationId).getBody();
+        awaitJob(aliceToken, UUID.fromString(afterJobDeletion.get("jobId").asText()));
+        assertThat(calls).hasValue(3);
+    }
+
+    @Test
     void recalling_a_message_changes_the_content_digest_and_invalidates_the_old_cache() {
         TestUser alice = createUser("Recall Cache Alice");
         TestUser bob = createUser("Recall Cache Bob");

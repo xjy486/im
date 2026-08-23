@@ -793,13 +793,137 @@ class AiRepository {
                 .list();
     }
 
-    int deleteArtifact(UUID ownerUserId, UUID artifactId) {
+    AiArtifactDeletionRecord findArtifactDeletionContext(UUID ownerUserId, UUID artifactId) {
         return jdbc.sql("""
-                        DELETE FROM ai_artifacts
-                        WHERE id = :artifactId AND owner_user_id = :ownerUserId
+                        SELECT artifact.id AS artifact_id,
+                               artifact.job_id,
+                               job.conversation_id,
+                               job.cache_key
+                        FROM ai_artifacts artifact
+                        JOIN ai_jobs job
+                          ON job.id = artifact.job_id
+                         AND job.owner_user_id = artifact.owner_user_id
+                        WHERE artifact.id = :artifactId
+                          AND artifact.owner_user_id = :ownerUserId
                         """)
                 .param("artifactId", artifactId)
                 .param("ownerUserId", ownerUserId)
+                .query((row, rowNumber) -> new AiArtifactDeletionRecord(
+                        row.getObject("artifact_id", UUID.class),
+                        row.getObject("job_id", UUID.class),
+                        row.getObject("conversation_id", UUID.class),
+                        row.getString("cache_key")))
+                .optional()
+                .orElse(null);
+    }
+
+    List<AiJobRecord> findJobsForContentDeletionForUpdate(
+            UUID ownerUserId,
+            UUID jobId,
+            String cacheKey
+    ) {
+        return jdbc.sql(selectJobSql() + """
+                         WHERE owner_user_id = :ownerUserId
+                           AND (
+                               id = :jobId
+                               OR (:cacheKey IS NOT NULL AND cache_key = :cacheKey)
+                           )
+                         ORDER BY id
+                         FOR UPDATE
+                        """)
+                .param("ownerUserId", ownerUserId)
+                .param("jobId", jobId)
+                .param("cacheKey", cacheKey)
+                .query(this::mapJob)
+                .list();
+    }
+
+    List<AiArtifactDeletionRecord> findArtifactsForContentDeletionForUpdate(
+            UUID ownerUserId,
+            UUID jobId,
+            String cacheKey
+    ) {
+        return jdbc.sql("""
+                        SELECT artifact.id AS artifact_id,
+                               artifact.job_id,
+                               job.conversation_id,
+                               job.cache_key
+                        FROM ai_artifacts artifact
+                        JOIN ai_jobs job
+                          ON job.id = artifact.job_id
+                         AND job.owner_user_id = artifact.owner_user_id
+                        WHERE artifact.owner_user_id = :ownerUserId
+                          AND (
+                              job.id = :jobId
+                              OR (:cacheKey IS NOT NULL AND job.cache_key = :cacheKey)
+                          )
+                        ORDER BY artifact.id
+                        FOR UPDATE OF artifact
+                        """)
+                .param("ownerUserId", ownerUserId)
+                .param("jobId", jobId)
+                .param("cacheKey", cacheKey)
+                .query((row, rowNumber) -> new AiArtifactDeletionRecord(
+                        row.getObject("artifact_id", UUID.class),
+                        row.getObject("job_id", UUID.class),
+                        row.getObject("conversation_id", UUID.class),
+                        row.getString("cache_key")))
+                .list();
+    }
+
+    void eraseResultCopies(
+            UUID ownerUserId,
+            UUID jobId,
+            String cacheKey,
+            Instant deletedAt
+    ) {
+        jdbc.sql("""
+                        DELETE FROM ai_artifacts artifact
+                        USING ai_jobs job
+                        WHERE artifact.job_id = job.id
+                          AND artifact.owner_user_id = :ownerUserId
+                          AND job.owner_user_id = :ownerUserId
+                          AND (
+                              job.id = :jobId
+                              OR (:cacheKey IS NOT NULL AND job.cache_key = :cacheKey)
+                          )
+                        """)
+                .param("ownerUserId", ownerUserId)
+                .param("jobId", jobId)
+                .param("cacheKey", cacheKey)
+                .update();
+        jdbc.sql("""
+                        UPDATE ai_jobs
+                        SET status = 'CANCELLED',
+                            context_json = NULL,
+                            result_json = NULL,
+                            error_code = 'AI_USER_DELETED',
+                            reserved_tokens = 0,
+                            finished_at = COALESCE(finished_at, :deletedAt)
+                        WHERE owner_user_id = :ownerUserId
+                          AND (
+                              id = :jobId
+                              OR (:cacheKey IS NOT NULL AND cache_key = :cacheKey)
+                          )
+                        """)
+                .param("ownerUserId", ownerUserId)
+                .param("jobId", jobId)
+                .param("cacheKey", cacheKey)
+                .param("deletedAt", utc(deletedAt), Types.TIMESTAMP_WITH_TIMEZONE)
+                .update();
+        deleteCacheEntry(ownerUserId, cacheKey);
+    }
+
+    void deleteCacheEntry(UUID ownerUserId, String cacheKey) {
+        if (cacheKey == null) {
+            return;
+        }
+        jdbc.sql("""
+                        DELETE FROM ai_cache_entries
+                        WHERE owner_user_id = :ownerUserId AND cache_key = :cacheKey
+                        """)
+                .param("ownerUserId", ownerUserId)
+                .param("cacheKey", cacheKey)
                 .update();
     }
 
@@ -882,6 +1006,14 @@ class AiRepository {
             String contentJson,
             Instant createdAt,
             Instant expiresAt
+    ) {
+    }
+
+    record AiArtifactDeletionRecord(
+            UUID artifactId,
+            UUID jobId,
+            UUID conversationId,
+            String cacheKey
     ) {
     }
 }

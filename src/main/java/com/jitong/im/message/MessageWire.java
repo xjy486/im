@@ -178,6 +178,30 @@ final class MessageWire {
                         syncSeq));
     }
 
+    static WireEnvelope aiArtifactDeleted(
+            UUID artifactId,
+            UUID conversationId,
+            long syncSeq
+    ) {
+        return new WireEnvelope(
+                1,
+                "ai.artifact.deleted",
+                null,
+                new AiDeletionBody(artifactId, conversationId, syncSeq));
+    }
+
+    static WireEnvelope aiJobDeleted(
+            UUID jobId,
+            UUID conversationId,
+            long syncSeq
+    ) {
+        return new WireEnvelope(
+                1,
+                "ai.job.deleted",
+                null,
+                new AiDeletionBody(jobId, conversationId, syncSeq));
+    }
+
     record WireEnvelope(
             int version,
             String operation,
@@ -260,6 +284,13 @@ final class MessageWire {
             String status,
             String errorCode,
             AiSummary result,
+            long syncSeq
+    ) {
+    }
+
+    record AiDeletionBody(
+            UUID entityId,
+            UUID conversationId,
             long syncSeq
     ) {
     }

@@ -203,6 +203,14 @@ class MessageOutboxDelivery implements OutboxDelivery {
                 }
                 yield MessageWire.aiJob(job, record.syncSeq());
             }
+            case "AI_ARTIFACT_DELETED" -> MessageWire.aiArtifactDeleted(
+                    record.entityId(),
+                    record.conversationId(),
+                    record.syncSeq());
+            case "AI_JOB_DELETED" -> MessageWire.aiJobDeleted(
+                    record.entityId(),
+                    record.conversationId(),
+                    record.syncSeq());
             default -> null;
         };
         if (envelope == null) {

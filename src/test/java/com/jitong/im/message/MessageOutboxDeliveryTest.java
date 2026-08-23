@@ -11,6 +11,7 @@ import org.springframework.web.socket.WebSocketSession;
 import java.io.IOException;
 import java.time.Instant;
 import java.util.UUID;
+import java.util.concurrent.atomic.AtomicReference;
 
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
@@ -139,6 +140,32 @@ class MessageOutboxDeliveryTest {
         assertThat(delivery.deliver(record)).isTrue();
 
         verify(pushTokenService).clearIfCurrent(record.targetDeviceId(), "stale-token");
+    }
+
+    @Test
+    void delivers_private_ai_deletion_events_without_reloading_deleted_content() throws Exception {
+        assertDeletionEnvelope("AI_ARTIFACT_DELETED", "ai.artifact.deleted");
+        assertDeletionEnvelope("AI_JOB_DELETED", "ai.job.deleted");
+    }
+
+    private void assertDeletionEnvelope(String eventType, String operation) throws Exception {
+        OutboxRecord record = record(eventType);
+        WebSocketSession session = mock(WebSocketSession.class);
+        AtomicReference<String> payload = new AtomicReference<>();
+        when(messageRepository.findUserIdForDevice(record.targetDeviceId())).thenReturn(UUID.randomUUID());
+        when(session.isOpen()).thenReturn(true);
+        doAnswer(invocation -> {
+            org.springframework.web.socket.TextMessage message = invocation.getArgument(0);
+            payload.set(message.getPayload());
+            return null;
+        }).when(session).sendMessage(any());
+        delivery.register(record.targetDeviceId(), session);
+
+        assertThat(delivery.deliver(record)).isTrue();
+
+        assertThat(objectMapper.readTree(payload.get()).get("operation").asText()).isEqualTo(operation);
+        assertThat(objectMapper.readTree(payload.get()).get("body").get("entityId").asText())
+                .isEqualTo(record.entityId().toString());
     }
 
     private OutboxRecord record(String eventType) {

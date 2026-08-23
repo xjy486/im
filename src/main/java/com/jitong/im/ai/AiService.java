@@ -253,10 +253,35 @@ public class AiService {
 
     @Transactional
     public void deleteArtifact(UUID ownerUserId, UUID artifactId) {
-        int deleted = repository.deleteArtifact(ownerUserId, artifactId);
-        if (deleted == 0) {
+        AiRepository.AiArtifactDeletionRecord target = repository.findArtifactDeletionContext(
+                ownerUserId,
+                artifactId);
+        if (target == null) {
             throw new AiException(ApiErrorDefinition.AI_NOT_FOUND);
         }
+        List<AiJobRecord> jobs = repository.findJobsForContentDeletionForUpdate(
+                ownerUserId,
+                target.jobId(),
+                target.cacheKey());
+        List<AiRepository.AiArtifactDeletionRecord> artifacts =
+                repository.findArtifactsForContentDeletionForUpdate(
+                        ownerUserId,
+                        target.jobId(),
+                        target.cacheKey());
+        if (artifacts.stream().noneMatch(artifact -> artifact.artifactId().equals(artifactId))) {
+            throw new AiException(ApiErrorDefinition.AI_NOT_FOUND);
+        }
+        jobs.forEach(repository::releaseBudget);
+        repository.eraseResultCopies(
+                ownerUserId,
+                target.jobId(),
+                target.cacheKey(),
+                clock.instant());
+        artifacts.forEach(artifact -> syncService.recordEventForUsers(
+                List.of(ownerUserId),
+                "AI_ARTIFACT_DELETED",
+                artifact.artifactId(),
+                artifact.conversationId()));
     }
 
     @Transactional
@@ -266,10 +291,16 @@ public class AiService {
             throw new AiException(ApiErrorDefinition.AI_NOT_FOUND);
         }
         repository.deleteArtifactsForJob(ownerUserId, jobId);
+        repository.deleteCacheEntry(ownerUserId, job.cacheKey());
         repository.releaseBudget(job);
         if (repository.deleteJob(ownerUserId, jobId) == 0) {
             throw new AiException(ApiErrorDefinition.AI_NOT_FOUND);
         }
+        syncService.recordEventForUsers(
+                List.of(ownerUserId),
+                "AI_JOB_DELETED",
+                jobId,
+                job.conversationId());
     }
 
     private AiArtifactResponse artifactResponse(AiRepository.AiArtifactRecord record) {

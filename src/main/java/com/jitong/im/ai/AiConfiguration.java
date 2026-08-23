@@ -39,6 +39,7 @@ class AiConfiguration {
                 .baseUrl(normalizeBaseUrl(properties.provider().baseUrl()))
                 .apiKey(properties.provider().apiKey())
                 .restClientBuilder(RestClient.builder().requestFactory(requestFactory))
+                .responseErrorHandler(new AiProviderResponseErrorHandler())
                 .build();
     }
 

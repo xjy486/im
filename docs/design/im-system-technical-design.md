@@ -694,7 +694,9 @@ AI 业务由项目自己实现，Spring AI 2.0 只作为模型适配层：
 - AI_JOB_QUEUED；
 - AI_JOB_STARTED；
 - AI_JOB_COMPLETED；
-- AI_JOB_FAILED。
+- AI_JOB_FAILED；
+- AI_ARTIFACT_DELETED；
+- AI_JOB_DELETED。
 
 ### 19.5 输出协议
 
