@@ -1,5 +1,6 @@
 package com.jitong.im.message;
 
+import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.jitong.im.auth.DevicePushTokenService;
 import com.jitong.im.push.FcmDeliveryResult;
@@ -9,7 +10,10 @@ import org.junit.jupiter.api.Test;
 import org.springframework.web.socket.WebSocketSession;
 
 import java.io.IOException;
+import java.nio.file.Path;
 import java.time.Instant;
+import java.util.HashSet;
+import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.atomic.AtomicReference;
 
@@ -166,6 +170,40 @@ class MessageOutboxDeliveryTest {
         assertThat(objectMapper.readTree(payload.get()).get("operation").asText()).isEqualTo(operation);
         assertThat(objectMapper.readTree(payload.get()).get("body").get("entityId").asText())
                 .isEqualTo(record.entityId().toString());
+        assertDeletionPayloadMatchesSchema(objectMapper.readTree(payload.get()));
+    }
+
+    private void assertDeletionPayloadMatchesSchema(JsonNode payload) throws IOException {
+        JsonNode schema = objectMapper.readTree(
+                Path.of("contracts/schemas/realtime-v1.schema.json").toFile());
+        JsonNode definitions = schema.required("$defs");
+        JsonNode baseEnvelope = definitions.required("baseEnvelope");
+        JsonNode deletionEnvelope = definitions.required("aiDeletionEnvelope");
+        JsonNode deletionBody = definitions.required("aiDeletionBody");
+
+        assertThat(schema.required("oneOf"))
+                .anySatisfy(candidate -> assertThat(candidate.required("$ref").asText())
+                        .isEqualTo("#/$defs/aiDeletionEnvelope"));
+        assertThat(fieldNames(payload)).isEqualTo(fieldNames(baseEnvelope.required("properties")));
+        assertThat(payload.required("version").asInt())
+                .isEqualTo(baseEnvelope.required("properties").required("version").required("const").asInt());
+        assertThat(deletionEnvelope.required("allOf").get(1)
+                .required("properties").required("operation").required("enum"))
+                .anySatisfy(operation -> assertThat(operation.asText())
+                        .isEqualTo(payload.required("operation").asText()));
+        assertThat(payload.get("requestId").isNull()).isTrue();
+
+        JsonNode body = payload.required("body");
+        assertThat(fieldNames(body)).isEqualTo(fieldNames(deletionBody.required("properties")));
+        UUID.fromString(body.required("entityId").asText());
+        UUID.fromString(body.required("conversationId").asText());
+        assertThat(body.required("syncSeq").asLong()).isPositive();
+    }
+
+    private Set<String> fieldNames(JsonNode object) {
+        Set<String> names = new HashSet<>();
+        object.fieldNames().forEachRemaining(names::add);
+        return names;
     }
 
     private OutboxRecord record(String eventType) {

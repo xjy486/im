@@ -1,7 +1,8 @@
 package com.jitong.im.ai;
 
 import com.sun.net.httpserver.HttpServer;
-import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.ValueSource;
 import org.springframework.ai.openai.api.OpenAiApi;
 import org.springframework.ai.retry.TransientAiException;
 
@@ -14,12 +15,13 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 class AiConfigurationTest {
 
-    @Test
-    void configured_open_ai_api_preserves_429_as_a_retryable_failure() throws Exception {
+    @ParameterizedTest
+    @ValueSource(ints = {408, 429})
+    void configured_open_ai_api_preserves_retryable_http_failures(int responseStatus) throws Exception {
         HttpServer server = HttpServer.create(new InetSocketAddress(0), 0);
         server.createContext("/v1/chat/completions", exchange -> {
             byte[] response = "rate limited".getBytes(StandardCharsets.UTF_8);
-            exchange.sendResponseHeaders(429, response.length);
+            exchange.sendResponseHeaders(responseStatus, response.length);
             exchange.getResponseBody().write(response);
             exchange.close();
         });

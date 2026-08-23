@@ -17,6 +17,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.inOrder;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
@@ -164,5 +165,98 @@ class AiServiceTest {
                 eq("AI_JOB_QUEUED"),
                 any(),
                 eq(CONVERSATION_ID));
+    }
+
+    @Test
+    void artifact_deletion_shares_the_conversation_lock_with_cache_hits() {
+        AiRepository repository = mock(AiRepository.class);
+        SyncService syncService = mock(SyncService.class);
+        AiService service = service(repository, syncService);
+        UUID jobId = UUID.randomUUID();
+        UUID artifactId = UUID.randomUUID();
+        AiRepository.AiArtifactDeletionRecord artifact =
+                new AiRepository.AiArtifactDeletionRecord(
+                        artifactId,
+                        jobId,
+                        CONVERSATION_ID,
+                        "cache-key");
+        when(repository.findArtifactDeletionContext(USER_ID, artifactId)).thenReturn(artifact);
+        when(repository.findJobsForContentDeletionForUpdate(USER_ID, jobId, "cache-key"))
+                .thenReturn(List.of());
+        when(repository.findArtifactsForContentDeletionForUpdate(USER_ID, jobId, "cache-key"))
+                .thenReturn(List.of(artifact));
+
+        service.deleteArtifact(USER_ID, artifactId);
+
+        var ordered = inOrder(repository);
+        ordered.verify(repository).findArtifactDeletionContext(USER_ID, artifactId);
+        ordered.verify(repository).findConversationForUpdate(CONVERSATION_ID, USER_ID);
+        ordered.verify(repository).findJobsForContentDeletionForUpdate(USER_ID, jobId, "cache-key");
+    }
+
+    @Test
+    void job_deletion_shares_the_conversation_lock_with_cache_hits() {
+        AiRepository repository = mock(AiRepository.class);
+        SyncService syncService = mock(SyncService.class);
+        AiService service = service(repository, syncService);
+        UUID jobId = UUID.randomUUID();
+        AiJobRecord job = job(jobId);
+        when(repository.findJob(USER_ID, jobId)).thenReturn(job);
+        when(repository.findJobForUpdate(USER_ID, jobId)).thenReturn(job);
+        when(repository.deleteJob(USER_ID, jobId)).thenReturn(1);
+
+        service.deleteJob(USER_ID, jobId);
+
+        var ordered = inOrder(repository);
+        ordered.verify(repository).findJob(USER_ID, jobId);
+        ordered.verify(repository).findConversationForUpdate(CONVERSATION_ID, USER_ID);
+        ordered.verify(repository).findJobForUpdate(USER_ID, jobId);
+    }
+
+    private AiService service(AiRepository repository, SyncService syncService) {
+        return new AiService(
+                repository,
+                syncService,
+                new AiProperties(
+                        "summary-v1",
+                        new AiProperties.Provider(
+                                true,
+                                "http://provider.test/v1",
+                                "secret",
+                                "test-model"),
+                        new AiProperties.Worker(250),
+                        null),
+                new ObjectMapper().findAndRegisterModules(),
+                Clock.fixed(Instant.EPOCH, ZoneOffset.UTC));
+    }
+
+    private AiJobRecord job(UUID jobId) {
+        return new AiJobRecord(
+                jobId,
+                USER_ID,
+                DEVICE_ID,
+                CONVERSATION_ID,
+                UUID.randomUUID(),
+                "SUMMARY",
+                "SUCCEEDED",
+                1,
+                1,
+                "digest",
+                null,
+                1,
+                "cache-key",
+                LocalDate.of(1970, 1, 1),
+                0,
+                1,
+                1,
+                1,
+                "test-model",
+                "summary-v1",
+                "{}",
+                null,
+                Instant.EPOCH,
+                Instant.EPOCH,
+                Instant.EPOCH,
+                Instant.EPOCH.plusSeconds(60));
     }
 }

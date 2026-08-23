@@ -28,6 +28,9 @@
       "$ref": "#/$defs/aiJobEnvelope"
     },
     {
+      "$ref": "#/$defs/aiDeletionEnvelope"
+    },
+    {
       "$ref": "#/$defs/errorEnvelope"
     }
   ],
@@ -209,6 +212,24 @@
             },
             "body": {
               "$ref": "#/$defs/aiJobBody"
+            }
+          }
+        }
+      ]
+    },
+    "aiDeletionEnvelope": {
+      "allOf": [
+        {
+          "$ref": "#/$defs/baseEnvelope"
+        },
+        {
+          "type": "object",
+          "properties": {
+            "operation": {
+              "enum": ["ai.artifact.deleted", "ai.job.deleted"]
+            },
+            "body": {
+              "$ref": "#/$defs/aiDeletionBody"
             }
           }
         }
@@ -456,6 +477,16 @@
             { "type": "null" }
           ]
         },
+        "syncSeq": { "type": "integer", "minimum": 1 }
+      }
+    },
+    "aiDeletionBody": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["entityId", "conversationId", "syncSeq"],
+      "properties": {
+        "entityId": { "type": "string", "format": "uuid" },
+        "conversationId": { "type": "string", "format": "uuid" },
         "syncSeq": { "type": "integer", "minimum": 1 }
       }
     },

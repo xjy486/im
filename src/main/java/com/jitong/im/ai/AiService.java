@@ -259,6 +259,10 @@ public class AiService {
         if (target == null) {
             throw new AiException(ApiErrorDefinition.AI_NOT_FOUND);
         }
+        // Enqueue holds the same row lock from cache lookup through cached-result
+        // insertion. Taking it here prevents a request that already observed the
+        // cache from recreating private content after deletion returns.
+        repository.findConversationForUpdate(target.conversationId(), ownerUserId);
         List<AiJobRecord> jobs = repository.findJobsForContentDeletionForUpdate(
                 ownerUserId,
                 target.jobId(),
@@ -286,6 +290,11 @@ public class AiService {
 
     @Transactional
     public void deleteJob(UUID ownerUserId, UUID jobId) {
+        AiJobRecord candidate = repository.findJob(ownerUserId, jobId);
+        if (candidate == null) {
+            throw new AiException(ApiErrorDefinition.AI_NOT_FOUND);
+        }
+        repository.findConversationForUpdate(candidate.conversationId(), ownerUserId);
         AiJobRecord job = repository.findJobForUpdate(ownerUserId, jobId);
         if (job == null) {
             throw new AiException(ApiErrorDefinition.AI_NOT_FOUND);

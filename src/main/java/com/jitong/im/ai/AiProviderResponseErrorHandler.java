@@ -30,7 +30,7 @@ final class AiProviderResponseErrorHandler implements ResponseErrorHandler {
     public void handleError(ClientHttpResponse response) throws IOException {
         int status = response.getStatusCode().value();
         String message = "AI provider returned HTTP " + status;
-        if (status == 429 || status >= 500 && status <= 599) {
+        if (status == 408 || status == 429 || status >= 500 && status <= 599) {
             throw new TransientAiException(message);
         }
         throw new NonTransientAiException(message);
