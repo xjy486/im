@@ -30,6 +30,11 @@ public enum ApiErrorDefinition {
     USER_NOT_FOUND(HttpStatus.NOT_FOUND, "Requested user was not found"),
     UNSUPPORTED_MEDIA_TYPE(HttpStatus.UNSUPPORTED_MEDIA_TYPE, "Request media type is not supported"),
     RATE_LIMITED(HttpStatus.TOO_MANY_REQUESTS, "Request rate limit was exceeded"),
+    AI_CONSENT_REQUIRED(HttpStatus.FORBIDDEN, "Both C2C participants must enable the private AI assistant"),
+    AI_NOT_FOUND(HttpStatus.NOT_FOUND, "The private AI resource was not found"),
+    AI_CONTEXT_CHANGED(HttpStatus.CONFLICT, "The authorized AI context changed before the result was saved"),
+    AI_PROVIDER_UNAVAILABLE(HttpStatus.SERVICE_UNAVAILABLE, "The AI provider is unavailable"),
+    AI_INVALID_RESULT(HttpStatus.BAD_GATEWAY, "The AI provider returned an invalid structured result"),
     SERVICE_UNAVAILABLE(HttpStatus.SERVICE_UNAVAILABLE, "Service dependencies are not ready"),
     INTERNAL_ERROR(HttpStatus.INTERNAL_SERVER_ERROR, "The service could not process the request");
 

@@ -1,5 +1,7 @@
 package com.jitong.im.message;
 
+import com.jitong.im.ai.AiDelivery;
+import com.jitong.im.ai.AiSummary;
 import com.jitong.im.platform.error.ApiErrorDefinition;
 
 import java.util.UUID;
@@ -161,6 +163,21 @@ final class MessageWire {
                 new MembershipBody(conversationId, syncSeq));
     }
 
+    static WireEnvelope aiJob(AiDelivery delivery, long syncSeq) {
+        return new WireEnvelope(
+                1,
+                "ai.job.updated",
+                null,
+                new AiJobBody(
+                        delivery.jobId(),
+                        delivery.conversationId(),
+                        delivery.kind(),
+                        delivery.status(),
+                        delivery.errorCode(),
+                        delivery.result(),
+                        syncSeq));
+    }
+
     record WireEnvelope(
             int version,
             String operation,
@@ -232,6 +249,17 @@ final class MessageWire {
 
     record MembershipBody(
             UUID conversationId,
+            long syncSeq
+    ) {
+    }
+
+    record AiJobBody(
+            UUID jobId,
+            UUID conversationId,
+            String kind,
+            String status,
+            String errorCode,
+            AiSummary result,
             long syncSeq
     ) {
     }

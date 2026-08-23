@@ -1090,6 +1090,143 @@ paths:
         '410':
           $ref: '#/components/responses/ApiError'
 
+  /api/v1/conversations/{conversationId}/ai/consent:
+    get:
+      operationId: getC2cAiConsent
+      summary: Read the authenticated user's C2C private AI consent
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { $ref: '#/components/parameters/ConversationId' }
+      responses:
+        '200':
+          description: Current consent and effective bilateral state
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/AiConsentResponse' }
+        '401':
+          $ref: '#/components/responses/ApiError'
+        '403':
+          $ref: '#/components/responses/ApiError'
+    patch:
+      operationId: updateC2cAiConsent
+      summary: Enable or disable the authenticated user's C2C private AI consent
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { $ref: '#/components/parameters/ConversationId' }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [enabled]
+              properties:
+                enabled: { type: boolean }
+      responses:
+        '200':
+          description: Updated consent and effective bilateral state
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/AiConsentResponse' }
+        '401':
+          $ref: '#/components/responses/ApiError'
+        '403':
+          $ref: '#/components/responses/ApiError'
+  /api/v1/conversations/{conversationId}/ai/summary:
+    post:
+      operationId: enqueueC2cAiSummary
+      summary: Queue a private C2C summary for the authenticated user
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { $ref: '#/components/parameters/ConversationId' }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [requestId]
+              properties:
+                requestId: { type: string, format: uuid }
+                afterSeq: { type: [integer, 'null'], format: int64, minimum: 0 }
+                untilSeq: { type: [integer, 'null'], format: int64, minimum: 0 }
+      responses:
+        '200':
+          description: Idempotent queued private summary job
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/AiJobResponse' }
+        '400':
+          $ref: '#/components/responses/ApiError'
+        '401':
+          $ref: '#/components/responses/ApiError'
+        '403':
+          $ref: '#/components/responses/ApiError'
+        '409':
+          $ref: '#/components/responses/ApiError'
+  /api/v1/ai/jobs/{jobId}:
+    get:
+      operationId: getPrivateAiJob
+      summary: Read one private AI job owned by the authenticated user
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { $ref: '#/components/parameters/JobId' }
+      responses:
+        '200':
+          description: Private AI job and optional structured result
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/AiJobResponse' }
+        '401':
+          $ref: '#/components/responses/ApiError'
+        '404':
+          $ref: '#/components/responses/ApiError'
+    delete:
+      operationId: deletePrivateAiJob
+      summary: Delete the authenticated user's private AI job result
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { $ref: '#/components/parameters/JobId' }
+      responses:
+        '204': { description: Private AI job result deleted }
+        '401':
+          $ref: '#/components/responses/ApiError'
+        '404':
+          $ref: '#/components/responses/ApiError'
+  /api/v1/ai/artifacts:
+    get:
+      operationId: listPrivateAiArtifacts
+      summary: List unexpired private AI summaries owned by the authenticated user
+      security: [{ bearerAuth: [] }]
+      responses:
+        '200':
+          description: Private AI summary artifacts
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: '#/components/schemas/AiArtifactResponse' }
+        '401':
+          $ref: '#/components/responses/ApiError'
+  /api/v1/ai/artifacts/{artifactId}:
+    delete:
+      operationId: deletePrivateAiArtifact
+      summary: Delete one private AI artifact owned by the authenticated user
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - name: artifactId
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        '204': { description: Private AI artifact deleted }
+        '401':
+          $ref: '#/components/responses/ApiError'
+        '404':
+          $ref: '#/components/responses/ApiError'
+
   /api/v1/sync:
     get:
       operationId: getUserSyncPage
@@ -1182,6 +1319,11 @@ components:
       schema: { type: integer, minimum: 1 }
     ConversationId:
       name: conversationId
+      in: path
+      required: true
+      schema: { type: string, format: uuid }
+    JobId:
+      name: jobId
       in: path
       required: true
       schema: { type: string, format: uuid }
@@ -1580,6 +1722,76 @@ components:
         version: { const: 1 }
         deviceId: { type: string, format: uuid }
         ackedSeq: { type: integer, format: int64, minimum: 0 }
+    AiConsentResponse:
+      type: object
+      additionalProperties: false
+      required: [version, conversationId, userId, enabled, enabledForBoth, policyVersion]
+      properties:
+        version: { const: 1 }
+        conversationId: { type: string, format: uuid }
+        userId: { type: string, format: uuid }
+        enabled: { type: boolean }
+        enabledForBoth: { type: boolean }
+        policyVersion: { type: integer, format: int64, minimum: 1 }
+    AiSummary:
+      type: object
+      additionalProperties: false
+      required: [overview, keyPoints, decisions, openQuestions, sourceMessageIds]
+      properties:
+        overview: { type: string, minLength: 1, maxLength: 4000 }
+        keyPoints:
+          type: array
+          maxItems: 20
+          items: { type: string, minLength: 1 }
+        decisions:
+          type: array
+          maxItems: 20
+          items: { type: string, minLength: 1 }
+        openQuestions:
+          type: array
+          maxItems: 20
+          items: { type: string, minLength: 1 }
+        sourceMessageIds:
+          type: array
+          items: { type: string, format: uuid }
+    AiJobResponse:
+      type: object
+      additionalProperties: false
+      required:
+        [version, jobId, ownerUserId, requestingDeviceId, conversationId, requestId,
+         kind, status, fromSeq, toSeq, model, promptVersion, errorCode,
+         createdAt, startedAt, finishedAt, expiresAt, result]
+      properties:
+        version: { const: 1 }
+        jobId: { type: string, format: uuid }
+        ownerUserId: { type: string, format: uuid }
+        requestingDeviceId: { type: string, format: uuid }
+        conversationId: { type: string, format: uuid }
+        requestId: { type: string, format: uuid }
+        kind: { const: SUMMARY }
+        status: { type: string, enum: [QUEUED, RUNNING, SUCCEEDED, FAILED, CANCELLED, EXPIRED] }
+        fromSeq: { type: integer, format: int64, minimum: 1 }
+        toSeq: { type: integer, format: int64, minimum: 1 }
+        model: { type: string, minLength: 1 }
+        promptVersion: { type: string, minLength: 1 }
+        errorCode: { type: [string, 'null'] }
+        createdAt: { type: string, format: date-time }
+        startedAt: { type: [string, 'null'], format: date-time }
+        finishedAt: { type: [string, 'null'], format: date-time }
+        expiresAt: { type: [string, 'null'], format: date-time }
+        result: { oneOf: [{ $ref: '#/components/schemas/AiSummary' }, { type: 'null' }] }
+    AiArtifactResponse:
+      type: object
+      additionalProperties: false
+      required: [version, artifactId, jobId, artifactType, content, createdAt, expiresAt]
+      properties:
+        version: { const: 1 }
+        artifactId: { type: string, format: uuid }
+        jobId: { type: string, format: uuid }
+        artifactType: { const: SUMMARY }
+        content: { $ref: '#/components/schemas/AiSummary' }
+        createdAt: { type: string, format: date-time }
+        expiresAt: { type: string, format: date-time }
   responses:
     ApiError:
       description: Versioned error response

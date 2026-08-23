@@ -52,6 +52,14 @@ jitong:
     project-id: ${FCM_PROJECT_ID:}
     service-account-json: ${FCM_SERVICE_ACCOUNT_JSON:}
     token-encryption-key: ${FCM_TOKEN_ENCRYPTION_KEY:}
+  ai:
+    prompt-version: ${AI_PROMPT_VERSION:summary-v1}
+    provider:
+      base-url: ${AI_PROVIDER_BASE_URL:}
+      api-key: ${AI_PROVIDER_API_KEY:}
+      model: ${AI_PROVIDER_MODEL:gpt-4o-mini}
+    worker:
+      poll-interval: ${AI_WORKER_POLL_INTERVAL:250}
 
 management:
   endpoints:

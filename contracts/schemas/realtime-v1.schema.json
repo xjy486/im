@@ -25,6 +25,9 @@
       "$ref": "#/$defs/membershipEnvelope"
     },
     {
+      "$ref": "#/$defs/aiJobEnvelope"
+    },
+    {
       "$ref": "#/$defs/errorEnvelope"
     }
   ],
@@ -188,6 +191,24 @@
             },
             "body": {
               "$ref": "#/$defs/membershipBody"
+            }
+          }
+        }
+      ]
+    },
+    "aiJobEnvelope": {
+      "allOf": [
+        {
+          "$ref": "#/$defs/baseEnvelope"
+        },
+        {
+          "type": "object",
+          "properties": {
+            "operation": {
+              "const": "ai.job.updated"
+            },
+            "body": {
+              "$ref": "#/$defs/aiJobBody"
             }
           }
         }
@@ -397,6 +418,44 @@
       "required": ["conversationId", "syncSeq"],
       "properties": {
         "conversationId": { "type": "string", "format": "uuid" },
+        "syncSeq": { "type": "integer", "minimum": 1 }
+      }
+    },
+    "aiJobBody": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "jobId",
+        "conversationId",
+        "kind",
+        "status",
+        "errorCode",
+        "result",
+        "syncSeq"
+      ],
+      "properties": {
+        "jobId": { "type": "string", "format": "uuid" },
+        "conversationId": { "type": "string", "format": "uuid" },
+        "kind": { "const": "SUMMARY" },
+        "status": { "type": "string", "enum": ["QUEUED", "RUNNING", "SUCCEEDED", "FAILED", "CANCELLED", "EXPIRED"] },
+        "errorCode": { "type": ["string", "null"] },
+        "result": {
+          "oneOf": [
+            {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["overview", "keyPoints", "decisions", "openQuestions", "sourceMessageIds"],
+              "properties": {
+                "overview": { "type": "string", "minLength": 1, "maxLength": 4000 },
+                "keyPoints": { "type": "array", "maxItems": 20, "items": { "type": "string", "minLength": 1 } },
+                "decisions": { "type": "array", "maxItems": 20, "items": { "type": "string", "minLength": 1 } },
+                "openQuestions": { "type": "array", "maxItems": 20, "items": { "type": "string", "minLength": 1 } },
+                "sourceMessageIds": { "type": "array", "items": { "type": "string", "format": "uuid" } }
+              }
+            },
+            { "type": "null" }
+          ]
+        },
         "syncSeq": { "type": "integer", "minimum": 1 }
       }
     },

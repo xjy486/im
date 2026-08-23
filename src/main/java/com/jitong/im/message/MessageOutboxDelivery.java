@@ -6,6 +6,8 @@ import com.jitong.im.sync.OutboxRecord;
 import com.jitong.im.push.FcmSender;
 import com.jitong.im.push.FcmDeliveryResult;
 import com.jitong.im.auth.DevicePushTokenService;
+import com.jitong.im.ai.AiDelivery;
+import com.jitong.im.ai.AiService;
 import com.jitong.im.media.AvatarService;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Component;
@@ -26,6 +28,7 @@ class MessageOutboxDelivery implements OutboxDelivery {
     private final DevicePushTokenService pushTokenService;
     private final FcmSender fcmSender;
     private final AvatarService avatarService;
+    private final AiService aiService;
     private final ConcurrentHashMap<UUID, Set<WebSocketSession>> sessionsByDevice = new ConcurrentHashMap<>();
     private final Object sessionsLock = new Object();
 
@@ -36,7 +39,8 @@ class MessageOutboxDelivery implements OutboxDelivery {
             ReadStateRepository readStateRepository,
             DevicePushTokenService pushTokenService,
             FcmSender fcmSender,
-            AvatarService avatarService
+            AvatarService avatarService,
+            AiService aiService
     ) {
         this.objectMapper = objectMapper;
         this.messageRepository = messageRepository;
@@ -44,6 +48,7 @@ class MessageOutboxDelivery implements OutboxDelivery {
         this.pushTokenService = pushTokenService;
         this.fcmSender = fcmSender;
         this.avatarService = avatarService;
+        this.aiService = aiService;
     }
 
     MessageOutboxDelivery(
@@ -59,7 +64,26 @@ class MessageOutboxDelivery implements OutboxDelivery {
                 readStateRepository,
                 pushTokenService,
                 fcmSender,
+                null,
                 null);
+    }
+
+    MessageOutboxDelivery(
+            ObjectMapper objectMapper,
+            MessageRepository messageRepository,
+            ReadStateRepository readStateRepository,
+            DevicePushTokenService pushTokenService,
+            FcmSender fcmSender,
+            AiService aiService
+    ) {
+        this(
+                objectMapper,
+                messageRepository,
+                readStateRepository,
+                pushTokenService,
+                fcmSender,
+                null,
+                aiService);
     }
 
     void register(UUID deviceId, WebSocketSession session) {
@@ -165,6 +189,20 @@ class MessageOutboxDelivery implements OutboxDelivery {
                     MessageWire.membershipGranted(record.conversationId(), record.syncSeq());
             case "GROUP_DISSOLVED" ->
                     MessageWire.groupDissolved(record.conversationId(), record.syncSeq());
+            case "AI_JOB_QUEUED", "AI_JOB_STARTED", "AI_JOB_COMPLETED", "AI_JOB_FAILED" -> {
+                if (aiService == null) {
+                    yield null;
+                }
+                AiDelivery job = aiService.deliveryForSync(
+                        messageRepository.findUserIdForDevice(record.targetDeviceId()),
+                        record.entityId());
+                if (job == null) {
+                    yield MessageWire.error(
+                            null,
+                            com.jitong.im.platform.error.ApiErrorDefinition.AI_NOT_FOUND);
+                }
+                yield MessageWire.aiJob(job, record.syncSeq());
+            }
             default -> null;
         };
         if (envelope == null) {

@@ -14,6 +14,7 @@ import com.jitong.im.message.MessageException;
 import com.jitong.im.media.MediaException;
 import com.jitong.im.group.GroupException;
 import com.jitong.im.sync.SyncException;
+import com.jitong.im.ai.AiException;
 import jakarta.servlet.http.HttpServletRequest;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -141,6 +142,14 @@ class ApiExceptionHandler {
     @ExceptionHandler(SyncException.class)
     ResponseEntity<ApiErrorResponse> syncFailure(
             SyncException exception,
+            HttpServletRequest request
+    ) {
+        return response(exception.definition(), request);
+    }
+
+    @ExceptionHandler(AiException.class)
+    ResponseEntity<ApiErrorResponse> aiFailure(
+            AiException exception,
             HttpServletRequest request
     ) {
         return response(exception.definition(), request);
