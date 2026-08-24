@@ -4,6 +4,11 @@ import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.jitong.im.auth.AuthenticatedDevice;
 import com.jitong.im.auth.UuidV7;
+import com.jitong.im.audit.AuditOutcome;
+import com.jitong.im.audit.AuditSubjectType;
+import com.jitong.im.audit.SecurityAuditEvent;
+import com.jitong.im.audit.SecurityAuditEventType;
+import com.jitong.im.audit.SecurityAuditSink;
 import com.jitong.im.platform.error.ApiErrorDefinition;
 import com.jitong.im.sync.SyncService;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -37,6 +42,7 @@ public class AiService {
     private final AiProperties properties;
     private final ObjectMapper objectMapper;
     private final AiProvider provider;
+    private final SecurityAuditSink auditSink;
     private final Clock clock;
 
     @Autowired
@@ -45,9 +51,17 @@ public class AiService {
             SyncService syncService,
             AiProperties properties,
             ObjectMapper objectMapper,
-            AiProvider provider
+            AiProvider provider,
+            SecurityAuditSink auditSink
     ) {
-        this(repository, syncService, properties, objectMapper, provider, Clock.systemUTC());
+        this(
+                repository,
+                syncService,
+                properties,
+                objectMapper,
+                provider,
+                auditSink,
+                Clock.systemUTC());
     }
 
     AiService(
@@ -57,7 +71,15 @@ public class AiService {
             ObjectMapper objectMapper,
             Clock clock
     ) {
-        this(repository, syncService, properties, objectMapper, new UnavailableAiProvider(), clock);
+        this(
+                repository,
+                syncService,
+                properties,
+                objectMapper,
+                new UnavailableAiProvider(),
+                event -> {
+                },
+                clock);
     }
 
     AiService(
@@ -68,11 +90,32 @@ public class AiService {
             AiProvider provider,
             Clock clock
     ) {
+        this(
+                repository,
+                syncService,
+                properties,
+                objectMapper,
+                provider,
+                event -> {
+                },
+                clock);
+    }
+
+    AiService(
+            AiRepository repository,
+            SyncService syncService,
+            AiProperties properties,
+            ObjectMapper objectMapper,
+            AiProvider provider,
+            SecurityAuditSink auditSink,
+            Clock clock
+    ) {
         this.repository = repository;
         this.syncService = syncService;
         this.properties = properties;
         this.objectMapper = objectMapper;
         this.provider = provider;
+        this.auditSink = auditSink;
         this.clock = clock;
     }
 
@@ -80,13 +123,34 @@ public class AiService {
     public AiConsentResponse updateConsent(
             UUID userId,
             UUID conversationId,
-            boolean enabled
+            boolean enabled,
+            UUID requestId
     ) {
         AiConversation conversation = repository.findConversationForUpdate(conversationId, userId);
         if (conversation == null || !"C2C".equals(conversation.type())) {
             throw new AiException(ApiErrorDefinition.NOT_CONTACT);
         }
-        return repository.updateConsent(conversationId, userId, enabled);
+        AiConsentResponse response = repository.updateConsent(conversationId, userId, enabled);
+        auditSink.record(new SecurityAuditEvent(
+                UuidV7.random(),
+                SecurityAuditEventType.C2C_AI_POLICY_CHANGE,
+                AuditOutcome.SUCCEEDED,
+                userId,
+                null,
+                AuditSubjectType.CONVERSATION,
+                conversationId,
+                requestId,
+                null,
+                clock.instant()));
+        return response;
+    }
+
+    public AiConsentResponse updateConsent(
+            UUID userId,
+            UUID conversationId,
+            boolean enabled
+    ) {
+        return updateConsent(userId, conversationId, enabled, null);
     }
 
     @Transactional(readOnly = true)

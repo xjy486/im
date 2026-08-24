@@ -236,6 +236,48 @@ paths:
           $ref: '#/components/responses/ApiError'
         '409':
           $ref: '#/components/responses/ApiError'
+  /api/v1/admin/audit-logs:
+    get:
+      operationId: listAuditLogs
+      summary: Query content-free security audit metadata
+      security: [{ adminApiKey: [] }]
+      parameters:
+        - name: eventType
+          in: query
+          schema: { type: string }
+        - name: outcome
+          in: query
+          schema: { type: string, enum: [SUCCEEDED, REJECTED, FAILED] }
+        - name: actorUserId
+          in: query
+          schema: { type: string, format: uuid }
+        - name: subjectType
+          in: query
+          schema: { type: string }
+        - name: subjectId
+          in: query
+          schema: { type: string, format: uuid }
+        - name: requestId
+          in: query
+          schema: { type: string, format: uuid }
+        - name: occurredBefore
+          in: query
+          schema: { type: string, format: date-time }
+        - name: limit
+          in: query
+          schema: { type: integer, minimum: 1, maximum: 200, default: 100 }
+      responses:
+        '200':
+          description: Content-free audit metadata
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: '#/components/schemas/AuditLogRecord' }
+        '400':
+          $ref: '#/components/responses/ApiError'
+        '403':
+          $ref: '#/components/responses/ApiError'
   /api/v1/system/health:
     get:
       operationId: getServiceHealth
@@ -1818,6 +1860,23 @@ components:
           type: string
           maxLength: 64
           pattern: '^[A-Za-z][A-Za-z0-9_]{0,63}$'
+    AuditLogRecord:
+      type: object
+      additionalProperties: false
+      required:
+        [id, eventType, outcome, actorUserId, actorDeviceId, subjectType,
+         subjectId, requestId, errorCode, occurredAt]
+      properties:
+        id: { type: string, format: uuid }
+        eventType: { type: string }
+        outcome: { type: string, enum: [SUCCEEDED, REJECTED, FAILED] }
+        actorUserId: { type: [string, 'null'], format: uuid }
+        actorDeviceId: { type: [string, 'null'], format: uuid }
+        subjectType: { type: [string, 'null'] }
+        subjectId: { type: [string, 'null'], format: uuid }
+        requestId: { type: [string, 'null'], format: uuid }
+        errorCode: { type: [string, 'null'] }
+        occurredAt: { type: string, format: date-time }
     AccountDeletionRequest:
       type: object
       additionalProperties: false

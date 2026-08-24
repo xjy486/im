@@ -3,7 +3,15 @@ package com.jitong.im.ai;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.jitong.im.platform.error.ApiErrorDefinition;
+import com.jitong.im.platform.observability.OperationalMetrics;
 import com.jitong.im.sync.SyncService;
+import com.jitong.im.audit.AuditOutcome;
+import com.jitong.im.audit.AuditSubjectType;
+import com.jitong.im.audit.SecurityAuditEvent;
+import com.jitong.im.audit.SecurityAuditEventType;
+import com.jitong.im.audit.SecurityAuditSink;
+import com.jitong.im.auth.UuidV7;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -16,17 +24,43 @@ class AiJobLifecycle {
     private final AiRepository repository;
     private final SyncService syncService;
     private final ObjectMapper objectMapper;
+    private final OperationalMetrics metrics;
+    private final SecurityAuditSink auditSink;
 
-    AiJobLifecycle(AiRepository repository, SyncService syncService, ObjectMapper objectMapper) {
+    @Autowired
+    AiJobLifecycle(
+            AiRepository repository,
+            SyncService syncService,
+            ObjectMapper objectMapper,
+            OperationalMetrics metrics,
+            SecurityAuditSink auditSink
+    ) {
         this.repository = repository;
         this.syncService = syncService;
         this.objectMapper = objectMapper;
+        this.metrics = metrics;
+        this.auditSink = auditSink;
+    }
+
+    AiJobLifecycle(
+            AiRepository repository,
+            SyncService syncService,
+            ObjectMapper objectMapper
+    ) {
+        this(
+                repository,
+                syncService,
+                objectMapper,
+                new OperationalMetrics(new io.micrometer.core.instrument.simple.SimpleMeterRegistry()),
+                event -> {
+                });
     }
 
     @Transactional
     AiJobRecord claim(Instant startedAt) {
         AiJobRecord job = repository.claimNextQueued(startedAt);
         if (job != null) {
+            updateQueueMetrics();
             syncService.recordEventForUsers(
                     List.of(job.ownerUserId()),
                     "AI_JOB_STARTED",
@@ -57,6 +91,18 @@ class AiJobLifecycle {
         if (updated == 0) {
             return;
         }
+        metrics.recordAiUsage(providerResult.totalTokens(), providerResult.usageReported());
+        auditSink.record(new SecurityAuditEvent(
+                UuidV7.random(),
+                SecurityAuditEventType.AI_MODEL_USAGE,
+                AuditOutcome.SUCCEEDED,
+                job.ownerUserId(),
+                job.requestingDeviceId(),
+                AuditSubjectType.AI_JOB,
+                job.jobId(),
+                job.requestId(),
+                null,
+                finishedAt));
         long tokensToSettle = providerResult.usageReported()
                 ? providerResult.totalTokens()
                 : job.reservedTokens();
@@ -91,7 +137,10 @@ class AiJobLifecycle {
 
     @Transactional
     void retry(AiJobRecord job) {
-        repository.requeue(job.jobId(), job.ownerUserId(), job.attemptCount());
+        if (repository.requeue(job.jobId(), job.ownerUserId(), job.attemptCount()) == 1) {
+            metrics.aiRetryCount().incrementAndGet();
+            updateQueueMetrics();
+        }
     }
 
     @Transactional
@@ -104,6 +153,8 @@ class AiJobLifecycle {
                 finishedAt) == 0) {
             return;
         }
+        metrics.aiFailureCount().incrementAndGet();
+        recordFailureAudit(job, errorCode, finishedAt);
         repository.releaseBudget(job);
         syncService.recordEventForUsers(
                 List.of(job.ownerUserId()),
@@ -122,11 +173,33 @@ class AiJobLifecycle {
                 finishedAt) == 0) {
             return;
         }
+        metrics.aiFailureCount().incrementAndGet();
+        recordFailureAudit(job, ApiErrorDefinition.AI_EXPIRED.code(), finishedAt);
         repository.releaseBudget(job);
         syncService.recordEventForUsers(
                 List.of(job.ownerUserId()),
                 "AI_JOB_FAILED",
                 job.jobId(),
                 job.conversationId());
+    }
+
+    private void updateQueueMetrics() {
+        AiRepository.AiQueueDepth depth = repository.queueDepth();
+        metrics.updateAiQueue(depth.queued(), depth.running());
+    }
+
+    private void recordFailureAudit(AiJobRecord job, String errorCode, Instant occurredAt) {
+        auditSink.record(new SecurityAuditEvent(
+                UuidV7.random(),
+                SecurityAuditEventType.AI_MODEL_FAILURE,
+                AuditOutcome.FAILED,
+                job.ownerUserId(),
+                job.requestingDeviceId(),
+                AuditSubjectType.AI_JOB,
+                job.jobId(),
+                job.requestId(),
+                null,
+                errorCode,
+                occurredAt));
     }
 }

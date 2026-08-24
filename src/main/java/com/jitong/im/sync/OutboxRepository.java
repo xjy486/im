@@ -22,6 +22,16 @@ class OutboxRepository {
         this.jdbc = jdbc;
     }
 
+    long pendingCount() {
+        return jdbc.sql("""
+                        SELECT COUNT(*)
+                        FROM outbox
+                        WHERE status <> 'COMPLETED'
+                        """)
+                .query(Long.class)
+                .single();
+    }
+
     List<OutboxRecord> claimDue(int limit, Instant now) {
         Instant leaseUntil = now.plus(LEASE);
         return jdbc.sql("""

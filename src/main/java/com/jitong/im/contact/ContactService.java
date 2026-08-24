@@ -2,6 +2,11 @@ package com.jitong.im.contact;
 
 import com.jitong.im.auth.AuthService;
 import com.jitong.im.auth.UuidV7;
+import com.jitong.im.audit.AuditOutcome;
+import com.jitong.im.audit.AuditSubjectType;
+import com.jitong.im.audit.SecurityAuditEvent;
+import com.jitong.im.audit.SecurityAuditEventType;
+import com.jitong.im.audit.SecurityAuditSink;
 import org.springframework.beans.factory.annotation.Autowired;
 import com.jitong.im.platform.error.ApiErrorDefinition;
 import org.springframework.stereotype.Service;
@@ -21,15 +26,31 @@ public class ContactService {
     private final ContactRepository repository;
     private final AuthService authService;
     private final ContactRateLimiter rateLimiter;
+    private final SecurityAuditSink auditSink;
     private final Clock clock;
 
     @Autowired
     public ContactService(
             ContactRepository repository,
             AuthService authService,
-            ContactRateLimiter rateLimiter
+            ContactRateLimiter rateLimiter,
+            SecurityAuditSink auditSink
     ) {
-        this(repository, authService, rateLimiter, Clock.systemUTC());
+        this(repository, authService, rateLimiter, auditSink, Clock.systemUTC());
+    }
+
+    ContactService(
+            ContactRepository repository,
+            AuthService authService,
+            ContactRateLimiter rateLimiter,
+            SecurityAuditSink auditSink,
+            Clock clock
+    ) {
+        this.repository = repository;
+        this.authService = authService;
+        this.rateLimiter = rateLimiter;
+        this.auditSink = auditSink;
+        this.clock = clock;
     }
 
     ContactService(
@@ -38,10 +59,8 @@ public class ContactService {
             ContactRateLimiter rateLimiter,
             Clock clock
     ) {
-        this.repository = repository;
-        this.authService = authService;
-        this.rateLimiter = rateLimiter;
-        this.clock = clock;
+        this(repository, authService, rateLimiter, event -> {
+        }, clock);
     }
 
     public ContactSearchResult search(String authorization, String accountNo, String ipAddress) {
@@ -213,7 +232,7 @@ public class ContactService {
     }
 
     @Transactional
-    public void block(String authorization, UUID blockedUserId) {
+    public void block(String authorization, UUID blockedUserId, UUID requestId) {
         UUID blockerId = authService.requireUserId(authorization);
         ensureDifferentUsers(blockerId, blockedUserId);
         lockUsers(blockerId, blockedUserId);
@@ -222,13 +241,45 @@ public class ContactService {
         repository.insertBlock(blockerId, blockedUserId);
         repository.removeContact(blockerId, blockedUserId, now);
         repository.cancelPendingRequests(blockerId, blockedUserId, now);
+        auditSink.record(new SecurityAuditEvent(
+                UuidV7.random(),
+                SecurityAuditEventType.CONTACT_BLOCK,
+                AuditOutcome.SUCCEEDED,
+                blockerId,
+                null,
+                AuditSubjectType.USER,
+                blockedUserId,
+                requestId,
+                null,
+                now));
+    }
+
+    @Transactional
+    public void block(String authorization, UUID blockedUserId) {
+        block(authorization, blockedUserId, null);
+    }
+
+    @Transactional
+    public void unblock(String authorization, UUID blockedUserId, UUID requestId) {
+        UUID blockerId = authService.requireUserId(authorization);
+        ensureDifferentUsers(blockerId, blockedUserId);
+        repository.deleteBlock(blockerId, blockedUserId);
+        auditSink.record(new SecurityAuditEvent(
+                UuidV7.random(),
+                SecurityAuditEventType.CONTACT_UNBLOCK,
+                AuditOutcome.SUCCEEDED,
+                blockerId,
+                null,
+                AuditSubjectType.USER,
+                blockedUserId,
+                requestId,
+                null,
+                clock.instant()));
     }
 
     @Transactional
     public void unblock(String authorization, UUID blockedUserId) {
-        UUID blockerId = authService.requireUserId(authorization);
-        ensureDifferentUsers(blockerId, blockedUserId);
-        repository.deleteBlock(blockerId, blockedUserId);
+        unblock(authorization, blockedUserId, null);
     }
 
     @Transactional(readOnly = true)

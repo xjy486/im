@@ -2,9 +2,12 @@ package com.jitong.im.ai;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.jitong.im.platform.error.ApiErrorDefinition;
+import com.jitong.im.platform.observability.OperationalMetrics;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Component;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 import java.time.Clock;
 import java.time.Duration;
@@ -14,12 +17,14 @@ import java.util.List;
 @Component
 class AiWorker {
 
+    private static final Logger log = LoggerFactory.getLogger(AiWorker.class);
     private final AiRepository repository;
     private final AiProvider provider;
     private final AiJobLifecycle lifecycle;
     private final ObjectMapper objectMapper;
     private final AiContextImageLoader imageLoader;
     private final AiProperties properties;
+    private final OperationalMetrics metrics;
     private final Clock clock;
 
     @Autowired
@@ -29,7 +34,8 @@ class AiWorker {
             AiJobLifecycle lifecycle,
             ObjectMapper objectMapper,
             AiContextImageLoader imageLoader,
-            AiProperties properties
+            AiProperties properties,
+            OperationalMetrics metrics
     ) {
         this(
                 repository,
@@ -38,6 +44,7 @@ class AiWorker {
                 objectMapper,
                 imageLoader,
                 properties,
+                metrics,
                 Clock.systemUTC());
     }
 
@@ -50,18 +57,50 @@ class AiWorker {
             AiProperties properties,
             Clock clock
     ) {
+        this(
+                repository,
+                provider,
+                lifecycle,
+                objectMapper,
+                imageLoader,
+                properties,
+                new OperationalMetrics(new io.micrometer.core.instrument.simple.SimpleMeterRegistry()),
+                clock);
+    }
+
+    AiWorker(
+            AiRepository repository,
+            AiProvider provider,
+            AiJobLifecycle lifecycle,
+            ObjectMapper objectMapper,
+            AiContextImageLoader imageLoader,
+            AiProperties properties,
+            OperationalMetrics metrics,
+            Clock clock
+    ) {
         this.repository = repository;
         this.provider = provider;
         this.lifecycle = lifecycle;
         this.objectMapper = objectMapper;
         this.imageLoader = imageLoader;
         this.properties = properties;
+        this.metrics = metrics;
         this.clock = clock;
     }
 
     @Scheduled(fixedDelayString = "${jitong.ai.worker.poll-interval:250}")
     void processOne() {
-        AiJobRecord job = lifecycle.claim(clock.instant());
+        AiJobRecord job;
+        try {
+            updateQueueMetrics();
+            job = lifecycle.claim(clock.instant());
+        } catch (RuntimeException exception) {
+            log.warn(
+                    "ai_worker_claim_failed requestId={} exceptionType={}",
+                    requestId(),
+                    exception.getClass().getName());
+            return;
+        }
         if (job == null) {
             return;
         }
@@ -115,7 +154,30 @@ class AiWorker {
                 lifecycle.fail(job, exception.code(), clock.instant());
             }
         } catch (Exception exception) {
+            log.warn(
+                    "ai_worker_failed jobId={} errorCode={} requestId={}",
+                    job.jobId(),
+                    ApiErrorDefinition.INTERNAL_ERROR.code(),
+                    requestId());
             lifecycle.fail(job, ApiErrorDefinition.INTERNAL_ERROR.code(), clock.instant());
+        } finally {
+            updateQueueMetrics();
+        }
+    }
+
+    private String requestId() {
+        return com.jitong.im.platform.observability.RequestContextFilter.requestIdOrNull();
+    }
+
+    private void updateQueueMetrics() {
+        try {
+            AiRepository.AiQueueDepth depth = repository.queueDepth();
+            metrics.updateAiQueue(depth.queued(), depth.running());
+        } catch (RuntimeException exception) {
+            log.warn(
+                    "ai_queue_metrics_refresh_failed requestId={} exceptionType={}",
+                    requestId(),
+                    exception.getClass().getName());
         }
     }
 

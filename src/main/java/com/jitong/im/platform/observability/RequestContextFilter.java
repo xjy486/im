@@ -49,6 +49,24 @@ public class RequestContextFilter extends OncePerRequestFilter {
         return requestId instanceof String value ? value : UUID.randomUUID().toString();
     }
 
+    public static UUID currentRequestId() {
+        String requestId = MDC.get("requestId");
+        if (requestId == null) {
+            return null;
+        }
+        try {
+            UUID parsed = UUID.fromString(requestId);
+            return parsed.version() == 4 && requestId.equals(parsed.toString()) ? parsed : null;
+        } catch (IllegalArgumentException ignored) {
+            return null;
+        }
+    }
+
+    public static String requestIdOrNull() {
+        String requestId = MDC.get("requestId");
+        return requestId == null ? null : requestId;
+    }
+
     private String requestIdFrom(HttpServletRequest request) {
         String candidate = request.getHeader(REQUEST_ID_HEADER);
         if (candidate != null) {

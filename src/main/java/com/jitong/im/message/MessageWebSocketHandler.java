@@ -7,6 +7,7 @@ import com.jitong.im.auth.AuthenticatedDevice;
 import com.jitong.im.platform.error.ApiErrorDefinition;
 import com.jitong.im.media.MediaException;
 import com.jitong.im.sync.SyncService;
+import com.jitong.im.platform.observability.OperationalMetrics;
 import org.springframework.stereotype.Component;
 import org.springframework.web.socket.CloseStatus;
 import org.springframework.web.socket.TextMessage;
@@ -25,6 +26,7 @@ class MessageWebSocketHandler extends TextWebSocketHandler {
     private final MessageService messageService;
     private final SyncService syncService;
     private final MessageOutboxDelivery outboxDelivery;
+    private final OperationalMetrics metrics;
     private final ConcurrentHashMap<String, UUID> devicesBySession = new ConcurrentHashMap<>();
 
     MessageWebSocketHandler(
@@ -32,13 +34,15 @@ class MessageWebSocketHandler extends TextWebSocketHandler {
             AuthService authService,
             MessageService messageService,
             SyncService syncService,
-            MessageOutboxDelivery outboxDelivery
+            MessageOutboxDelivery outboxDelivery,
+            OperationalMetrics metrics
     ) {
         this.objectMapper = objectMapper;
         this.authService = authService;
         this.messageService = messageService;
         this.syncService = syncService;
         this.outboxDelivery = outboxDelivery;
+        this.metrics = metrics;
     }
 
     @Override
@@ -49,6 +53,7 @@ class MessageWebSocketHandler extends TextWebSocketHandler {
         try {
             device = authService.requireAuthenticatedDevice(authorization);
             outboxDelivery.register(device.deviceId(), session);
+            metrics.activeWebSocketConnections().incrementAndGet();
             send(session, MessageWire.syncReady(
                     device.deviceId(),
                     device.deviceClass(),
@@ -56,6 +61,7 @@ class MessageWebSocketHandler extends TextWebSocketHandler {
         } catch (RuntimeException exception) {
             if (device != null) {
                 outboxDelivery.unregister(device.deviceId(), session);
+                metrics.activeWebSocketConnections().decrementAndGet();
             }
             session.close(CloseStatus.POLICY_VIOLATION);
             return;
@@ -87,6 +93,7 @@ class MessageWebSocketHandler extends TextWebSocketHandler {
             UUID conversationId = UUID.fromString(body.get("conversationId").asText());
             UUID clientMessageId = UUID.fromString(body.get("clientMsgId").asText());
             MessageSendResult result;
+            long startedAt = System.nanoTime();
             String type = body.path("type").asText("TEXT");
             if ("IMAGE".equals(type)) {
                 result = messageService.sendImage(
@@ -103,6 +110,9 @@ class MessageWebSocketHandler extends TextWebSocketHandler {
             } else {
                 throw new MessageException(ApiErrorDefinition.INVALID_REQUEST);
             }
+            metrics.messageAckLatency().record(
+                    System.nanoTime() - startedAt,
+                    java.util.concurrent.TimeUnit.NANOSECONDS);
             send(session, MessageWire.ack(requestId, result.message()));
         } catch (MessageException exception) {
             sendError(session, requestId, exception.definition());
@@ -120,6 +130,7 @@ class MessageWebSocketHandler extends TextWebSocketHandler {
             return;
         }
         outboxDelivery.unregister(deviceId, session);
+        metrics.activeWebSocketConnections().decrementAndGet();
     }
 
     private void validateEnvelope(JsonNode envelope) {

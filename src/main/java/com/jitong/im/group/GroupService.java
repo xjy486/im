@@ -608,6 +608,11 @@ public class GroupService {
                     "REJECTED",
                     actorId,
                     clock.instant());
+            recordAudit(
+                    SecurityAuditEventType.GROUP_MEMBERSHIP_CHANGE,
+                    actorId,
+                    conversationId,
+                    AuditOutcome.SUCCEEDED);
             return toJoinRequestResponse(repository.findJoinRequest(requestId));
         }
         if (repository.isActiveMember(conversationId, request.userId())) {
@@ -616,6 +621,11 @@ public class GroupService {
                     "APPROVED",
                     actorId,
                     clock.instant());
+            recordAudit(
+                    SecurityAuditEventType.GROUP_MEMBERSHIP_CHANGE,
+                    actorId,
+                    conversationId,
+                    AuditOutcome.SUCCEEDED);
             return toJoinRequestResponse(repository.findJoinRequest(requestId));
         }
         try {
@@ -632,6 +642,11 @@ public class GroupService {
                 conversationId,
                 actorId,
                 request.userId());
+        recordAudit(
+                SecurityAuditEventType.GROUP_MEMBERSHIP_CHANGE,
+                actorId,
+                conversationId,
+                AuditOutcome.SUCCEEDED);
         return toJoinRequestResponse(repository.findJoinRequest(requestId));
     }
 
@@ -654,6 +669,11 @@ public class GroupService {
             return toJoinRequestResponse(request);
         }
         repository.updateJoinRequestStatus(requestId, "REJECTED", actorId, clock.instant());
+        recordAudit(
+                SecurityAuditEventType.GROUP_MEMBERSHIP_CHANGE,
+                actorId,
+                conversationId,
+                AuditOutcome.SUCCEEDED);
         return toJoinRequestResponse(repository.findJoinRequest(requestId));
     }
 
@@ -674,6 +694,11 @@ public class GroupService {
             return toJoinRequestResponse(request);
         }
         repository.updateJoinRequestStatus(requestId, "CANCELLED", userId, clock.instant());
+        recordAudit(
+                SecurityAuditEventType.GROUP_MEMBERSHIP_CHANGE,
+                userId,
+                conversationId,
+                AuditOutcome.SUCCEEDED);
         return toJoinRequestResponse(repository.findJoinRequest(requestId));
     }
 

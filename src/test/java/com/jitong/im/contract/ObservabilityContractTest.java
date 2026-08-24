@@ -57,6 +57,10 @@ class ObservabilityContractTest extends ContractTestEnvironment {
             assertThat(metrics)
                     .contains("jitong_wss_connections_active")
                     .contains("jitong_outbox_backlog")
+                    .contains("jitong_fcm_failures_total")
+                    .contains("jitong_sync_resets_total")
+                    .contains("jitong_message_ack_latency_seconds_count")
+                    .contains("jitong_ai_queue_depth")
                     .contains("jvm_memory_used_bytes")
                     .doesNotContain(TOKEN, MESSAGE, MEDIA_URL, "private-object");
             assertThat(renderedLogs)

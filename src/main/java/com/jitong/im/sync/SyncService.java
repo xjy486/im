@@ -3,6 +3,8 @@ package com.jitong.im.sync;
 import com.jitong.im.auth.AuthenticatedDevice;
 import com.jitong.im.auth.UuidV7;
 import com.jitong.im.platform.error.ApiErrorDefinition;
+import com.jitong.im.platform.observability.OperationalMetrics;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -13,9 +15,18 @@ import java.util.UUID;
 public class SyncService {
 
     private final SyncRepository repository;
+    private final OperationalMetrics metrics;
+
+    @Autowired
+    SyncService(SyncRepository repository, OperationalMetrics metrics) {
+        this.repository = repository;
+        this.metrics = metrics;
+    }
 
     SyncService(SyncRepository repository) {
-        this.repository = repository;
+        this(
+                repository,
+                new OperationalMetrics(new io.micrometer.core.instrument.simple.SimpleMeterRegistry()));
     }
 
     @Transactional
@@ -32,21 +43,25 @@ public class SyncService {
         if (afterSeq != requestedUntil) {
             long oldest = repository.retainedWindowStart(userId);
             if (afterSeq < oldest - 1) {
+                metrics.syncResets().increment();
                 throw new SyncException(ApiErrorDefinition.SYNC_RESET_REQUIRED);
             }
         }
         List<SyncEventRecord> events = repository.listEvents(userId, afterSeq, requestedUntil, limit);
         if (!events.isEmpty() && events.get(0).syncSeq() != afterSeq + 1) {
+            metrics.syncResets().increment();
             throw new SyncException(ApiErrorDefinition.SYNC_RESET_REQUIRED);
         }
         for (int index = 1; index < events.size(); index++) {
             if (events.get(index).syncSeq() != events.get(index - 1).syncSeq() + 1) {
+                metrics.syncResets().increment();
                 throw new SyncException(ApiErrorDefinition.SYNC_RESET_REQUIRED);
             }
         }
         long nextAfter = events.isEmpty() ? afterSeq : events.get(events.size() - 1).syncSeq();
         boolean hasMore = nextAfter < requestedUntil;
         if (hasMore && events.isEmpty()) {
+            metrics.syncResets().increment();
             throw new SyncException(ApiErrorDefinition.SYNC_RESET_REQUIRED);
         }
         return new SyncPage(

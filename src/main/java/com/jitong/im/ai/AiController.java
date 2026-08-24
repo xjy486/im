@@ -2,6 +2,8 @@ package com.jitong.im.ai;
 
 import com.jitong.im.auth.AuthService;
 import com.jitong.im.auth.AuthenticatedDevice;
+import com.jitong.im.platform.observability.RequestContextFilter;
+import jakarta.servlet.http.HttpServletRequest;
 import jakarta.validation.Valid;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.DeleteMapping;
@@ -47,12 +49,14 @@ class AiController {
     AiConsentResponse updateConsent(
             @RequestHeader(value = "Authorization", required = false) String authorization,
             @PathVariable UUID conversationId,
-            @Valid @RequestBody AiConsentUpdate request
+            @Valid @RequestBody AiConsentUpdate request,
+            HttpServletRequest servletRequest
     ) {
         return service.updateConsent(
                 authService.requireUserId(authorization),
                 conversationId,
-                request.enabled());
+                request.enabled(),
+                UUID.fromString(RequestContextFilter.requestId(servletRequest)));
     }
 
     @PostMapping("/conversations/{conversationId}/ai/summary")

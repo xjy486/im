@@ -54,7 +54,7 @@ class JdbcSecurityAuditSink implements SecurityAuditSink {
                 .param("subjectType", event.subjectType() == null ? null : event.subjectType().name(), Types.VARCHAR)
                 .param("subjectId", event.subjectId(), Types.OTHER)
                 .param("requestId", event.requestId(), Types.OTHER)
-                .param("errorCode", event.error() == null ? null : event.error().code(), Types.VARCHAR)
+                .param("errorCode", event.errorCode(), Types.VARCHAR)
                 .param(
                         "occurredAt",
                         OffsetDateTime.ofInstant(event.occurredAt(), ZoneOffset.UTC),

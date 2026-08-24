@@ -617,6 +617,20 @@ class AiRepository {
                 .single();
     }
 
+    AiQueueDepth queueDepth() {
+        return jdbc.sql("""
+                        SELECT
+                            COUNT(*) FILTER (WHERE status = 'QUEUED') AS queued,
+                            COUNT(*) FILTER (WHERE status = 'RUNNING') AS running
+                        FROM ai_jobs
+                        WHERE status IN ('QUEUED', 'RUNNING')
+                        """)
+                .query((row, rowNumber) -> new AiQueueDepth(
+                        row.getInt("queued"),
+                        row.getInt("running")))
+                .single();
+    }
+
     AiJobRecord claimNextQueued(Instant startedAt) {
         return jdbc.sql("""
                         WITH candidate AS (
@@ -1476,5 +1490,8 @@ class AiRepository {
             Instant createdAt,
             Instant completedAt
     ) {
+    }
+
+    record AiQueueDepth(int queued, int running) {
     }
 }

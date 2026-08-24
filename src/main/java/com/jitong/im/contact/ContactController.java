@@ -2,6 +2,7 @@ package com.jitong.im.contact;
 
 import jakarta.validation.Valid;
 import jakarta.servlet.http.HttpServletRequest;
+import com.jitong.im.platform.observability.RequestContextFilter;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
@@ -103,18 +104,26 @@ class ContactController {
     @PostMapping("/blocks/{userId}")
     ResponseEntity<Void> block(
             @RequestHeader(value = "Authorization", required = false) String authorization,
-            @PathVariable UUID userId
+            @PathVariable UUID userId,
+            HttpServletRequest request
     ) {
-        service.block(authorization, userId);
+        service.block(
+                authorization,
+                userId,
+                UUID.fromString(RequestContextFilter.requestId(request)));
         return ResponseEntity.noContent().build();
     }
 
     @DeleteMapping("/blocks/{userId}")
     ResponseEntity<Void> unblock(
             @RequestHeader(value = "Authorization", required = false) String authorization,
-            @PathVariable UUID userId
+            @PathVariable UUID userId,
+            HttpServletRequest request
     ) {
-        service.unblock(authorization, userId);
+        service.unblock(
+                authorization,
+                userId,
+                UUID.fromString(RequestContextFilter.requestId(request)));
         return ResponseEntity.noContent().build();
     }
 
