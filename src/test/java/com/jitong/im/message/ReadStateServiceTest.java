@@ -30,7 +30,7 @@ class ReadStateServiceTest {
                         7L,
                         ReadStateRepository.ConversationKind.C2C,
                         List.of(READER_ID, PEER_ID)));
-        when(repository.currentReadSeq(CONVERSATION_ID, READER_ID)).thenReturn(2L);
+        when(repository.currentReadSeq(any(), eq(READER_ID))).thenReturn(2L);
         when(syncService.allocateSequence(READER_ID)).thenReturn(11L);
         when(syncService.allocateSequence(PEER_ID)).thenReturn(13L);
         when(repository.listStates(any(), eq(READER_ID))).thenReturn(List.of(
@@ -42,7 +42,7 @@ class ReadStateServiceTest {
         assertThat(result.states())
                 .extracting(ConversationReadState::readSeq)
                 .containsExactly(7L, 0L);
-        verify(repository).upsertReadSeq(CONVERSATION_ID, READER_ID, 7L);
+        verify(repository).upsertReadSeq(any(), eq(READER_ID), eq(7L));
         verify(syncService).recordEvent(
                 READER_ID, 11L, "CONVERSATION_READ", READER_ID, CONVERSATION_ID);
         verify(syncService).recordEvent(
@@ -60,7 +60,7 @@ class ReadStateServiceTest {
                         7L,
                         ReadStateRepository.ConversationKind.C2C,
                         List.of(READER_ID, PEER_ID)));
-        when(repository.currentReadSeq(CONVERSATION_ID, READER_ID)).thenReturn(7L);
+        when(repository.currentReadSeq(any(), eq(READER_ID))).thenReturn(7L);
         when(repository.listStates(any(), eq(READER_ID))).thenReturn(List.of(
                 new ConversationReadState(CONVERSATION_ID, READER_ID, 7L),
                 new ConversationReadState(CONVERSATION_ID, PEER_ID, 0L)));

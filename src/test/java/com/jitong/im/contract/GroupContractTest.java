@@ -617,6 +617,24 @@ class GroupContractTest extends ContractTestEnvironment {
                 memberToken,
                 Map.of("readSeq", latestSequence)).getBody();
         assertThat(readSeqFor(marked, member.userId())).isEqualTo(latestSequence);
+        assertThat(jdbc.sql("""
+                        SELECT read_seq
+                        FROM conversation_members
+                        WHERE conversation_id = :conversationId
+                          AND user_id = :userId
+                        """)
+                .param("conversationId", conversationId)
+                .param("userId", member.userId())
+                .query(Long.class)
+                .single()).isEqualTo(latestSequence);
+        assertThat(jdbc.sql("""
+                        SELECT COUNT(*)
+                        FROM conversation_read_states
+                        WHERE conversation_id = :conversationId
+                        """)
+                .param("conversationId", conversationId)
+                .query(Long.class)
+                .single()).isZero();
 
         JsonNode memberView = exchange(
                 HttpMethod.GET,
@@ -650,6 +668,20 @@ class GroupContractTest extends ContractTestEnvironment {
                 "/api/v1/conversations/" + conversationId + "/read",
                 outsiderToken,
                 null).getStatusCode()).isEqualTo(HttpStatus.FORBIDDEN);
+
+        assertThat(exchange(
+                HttpMethod.DELETE,
+                "/api/v1/groups/" + conversationId + "/members/" + member.userId(),
+                ownerToken,
+                null).getStatusCode()).isEqualTo(HttpStatus.NO_CONTENT);
+        assertThat(addMember(ownerToken, conversationId, member.accountNo()).getStatusCode())
+                .isEqualTo(HttpStatus.OK);
+        JsonNode rejoinedView = exchange(
+                HttpMethod.GET,
+                "/api/v1/conversations/" + conversationId + "/read",
+                memberToken,
+                null).getBody();
+        assertThat(readSeqFor(rejoinedView, member.userId())).isZero();
     }
 
     @Test

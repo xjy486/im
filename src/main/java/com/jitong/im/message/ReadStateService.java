@@ -40,9 +40,9 @@ public class ReadStateService {
             throw new MessageException(ApiErrorDefinition.INVALID_REQUEST);
         }
 
-        long currentReadSeq = repository.currentReadSeq(conversationId, userId);
+        long currentReadSeq = repository.currentReadSeq(target, userId);
         if (readSeq > currentReadSeq) {
-            repository.upsertReadSeq(conversationId, userId, readSeq);
+            repository.upsertReadSeq(target, userId, readSeq);
             for (UUID participantId : target.readEventRecipients().stream().sorted().toList()) {
                 long syncSeq = syncService.allocateSequence(participantId);
                 syncService.recordEvent(

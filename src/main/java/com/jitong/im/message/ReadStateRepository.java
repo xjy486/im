@@ -70,21 +70,53 @@ class ReadStateRepository {
                 .orElse(null);
     }
 
-    long currentReadSeq(UUID conversationId, UUID userId) {
+    long currentReadSeq(ConversationTarget target, UUID userId) {
+        if (target.kind() == ConversationKind.GROUP) {
+            return jdbc.sql("""
+                            SELECT read_seq
+                            FROM conversation_members
+                            WHERE conversation_id = :conversationId
+                              AND user_id = :userId
+                              AND status = 'ACTIVE'
+                            """)
+                    .param("conversationId", target.conversationId())
+                    .param("userId", userId)
+                    .query(Long.class)
+                    .optional()
+                    .orElse(0L);
+        }
         return jdbc.sql("""
                         SELECT read_seq
                         FROM conversation_read_states
                         WHERE conversation_id = :conversationId
                           AND user_id = :userId
                         """)
-                .param("conversationId", conversationId)
+                .param("conversationId", target.conversationId())
                 .param("userId", userId)
                 .query(Long.class)
                 .optional()
                 .orElse(0L);
     }
 
-    void upsertReadSeq(UUID conversationId, UUID userId, long readSeq) {
+    void upsertReadSeq(
+            ConversationTarget target,
+            UUID userId,
+            long readSeq
+    ) {
+        if (target.kind() == ConversationKind.GROUP) {
+            jdbc.sql("""
+                            UPDATE conversation_members
+                            SET read_seq = GREATEST(read_seq, :readSeq)
+                            WHERE conversation_id = :conversationId
+                              AND user_id = :userId
+                              AND status = 'ACTIVE'
+                            """)
+                    .param("conversationId", target.conversationId())
+                    .param("userId", userId)
+                    .param("readSeq", readSeq)
+                    .update();
+            return;
+        }
         jdbc.sql("""
                         INSERT INTO conversation_read_states (
                             conversation_id, user_id, read_seq, updated_at
@@ -98,7 +130,7 @@ class ReadStateRepository {
                             ),
                             updated_at = EXCLUDED.updated_at
                         """)
-                .param("conversationId", conversationId)
+                .param("conversationId", target.conversationId())
                 .param("userId", userId)
                 .param("readSeq", readSeq)
                 .update();
@@ -109,7 +141,7 @@ class ReadStateRepository {
             UUID requestingUserId
     ) {
         if (target.kind() == ConversationKind.GROUP) {
-            return List.of(findState(target.conversationId(), requestingUserId));
+            return List.of(findState(target, requestingUserId));
         }
         UUID conversationId = target.conversationId();
         return jdbc.sql("""
@@ -137,11 +169,39 @@ class ReadStateRepository {
                 .list();
     }
 
-    ConversationReadState findState(UUID conversationId, UUID userId) {
+    ConversationReadState findState(ConversationTarget target, UUID userId) {
         return new ConversationReadState(
-                conversationId,
+                target.conversationId(),
                 userId,
-                currentReadSeq(conversationId, userId));
+                currentReadSeq(target, userId));
+    }
+
+    ConversationReadState findState(UUID conversationId, UUID userId) {
+        return jdbc.sql("""
+                        SELECT conversation.id AS conversation_id,
+                               COALESCE(
+                                   CASE
+                                       WHEN conversation.type = 'GROUP' THEN member.read_seq
+                                       ELSE state.read_seq
+                                   END,
+                                   0
+                               ) AS read_seq
+                        FROM conversations conversation
+                        LEFT JOIN conversation_members member
+                          ON member.conversation_id = conversation.id
+                         AND member.user_id = :userId
+                        LEFT JOIN conversation_read_states state
+                          ON state.conversation_id = conversation.id
+                         AND state.user_id = :userId
+                        WHERE conversation.id = :conversationId
+                        """)
+                .param("conversationId", conversationId)
+                .param("userId", userId)
+                .query((row, rowNum) -> new ConversationReadState(
+                        row.getObject("conversation_id", UUID.class),
+                        userId,
+                        row.getLong("read_seq")))
+                .single();
     }
 
     record ConversationTarget(

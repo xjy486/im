@@ -71,7 +71,13 @@ class AiRepository {
                                    WHEN c.type = 'C2C' THEN cc.user_low_id
                                    ELSE NULL
                                END AS peer_user_id,
-                               COALESCE(read_state.read_seq, 0) AS owner_read_seq,
+                               COALESCE(
+                                   CASE
+                                       WHEN c.type = 'GROUP' THEN member.read_seq
+                                       ELSE read_state.read_seq
+                                   END,
+                                   0
+                               ) AS owner_read_seq,
                                COALESCE(settings.policy_version, 1) AS policy_version,
                                CASE
                                    WHEN c.type = 'GROUP' THEN member.membership_version

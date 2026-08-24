@@ -70,8 +70,8 @@ class GroupRepository {
             jdbc.sql("""
                             INSERT INTO conversation_members (
                                 conversation_id, user_id, role, status,
-                                history_visible_after_seq, membership_version)
-                            VALUES (:conversationId, :ownerUserId, 'OWNER', 'ACTIVE', 0, 1)
+                                history_visible_after_seq, read_seq, membership_version)
+                            VALUES (:conversationId, :ownerUserId, 'OWNER', 'ACTIVE', 0, 0, 1)
                             """)
                     .param("conversationId", conversationId)
                     .param("ownerUserId", ownerUserId)
@@ -469,12 +469,6 @@ class GroupRepository {
         // from the middle of a user's ordered sync stream would create a gap
         // and incorrectly force unrelated devices into a full reset.
         jdbc.sql("""
-                        DELETE FROM conversation_read_states
-                        WHERE conversation_id = :conversationId
-                        """)
-                .param("conversationId", conversationId)
-                .update();
-        jdbc.sql("""
                         DELETE FROM group_join_requests
                         WHERE conversation_id = :conversationId
                         """)
@@ -641,9 +635,9 @@ class GroupRepository {
                         )
                         INSERT INTO conversation_members (
                             conversation_id, user_id, role, status,
-                            history_visible_after_seq, membership_version)
+                            history_visible_after_seq, read_seq, membership_version)
                         SELECT :conversationId, :userId, 'MEMBER', 'ACTIVE',
-                               group_state.last_seq, 1
+                               group_state.last_seq, 0, 1
                         FROM group_state
                         ON CONFLICT (conversation_id, user_id)
                         DO UPDATE SET role = 'MEMBER',
@@ -655,6 +649,7 @@ class GroupRepository {
                                           FROM conversations
                                           WHERE id = :conversationId
                                       ),
+                                      read_seq = 0,
                                       membership_version = conversation_members.membership_version + 1
                         WHERE conversation_members.status <> 'ACTIVE'
                         """)
