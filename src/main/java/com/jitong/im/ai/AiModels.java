@@ -116,6 +116,7 @@ record AiJobRecord(
         int outputTokens,
         String model,
         String promptVersion,
+        boolean imageInputEnabled,
         String resultJson,
         String errorCode,
         Instant createdAt,

@@ -8,6 +8,7 @@ import org.springframework.ai.chat.model.Generation;
 import org.springframework.ai.chat.metadata.ChatResponseMetadata;
 import org.springframework.ai.chat.metadata.DefaultUsage;
 import org.springframework.ai.chat.messages.AssistantMessage;
+import org.springframework.ai.chat.messages.UserMessage;
 import org.springframework.ai.chat.prompt.Prompt;
 
 import java.util.List;
@@ -16,8 +17,10 @@ import java.util.UUID;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
+import org.mockito.ArgumentCaptor;
 
 class OpenAiCompatibleAiProviderTest {
 
@@ -102,10 +105,66 @@ class OpenAiCompatibleAiProviderTest {
         assertThat(result.totalTokens()).isZero();
     }
 
+    @Test
+    void sends_normalized_image_bytes_as_media_without_exposing_object_addresses() {
+        UUID messageId = UUID.randomUUID();
+        UUID mediaId = UUID.randomUUID();
+        byte[] imageBytes = new byte[]{1, 2, 3, 4};
+        ChatModel chatModel = mock(ChatModel.class);
+        when(chatModel.call(any(Prompt.class))).thenReturn(new ChatResponse(List.of(
+                new Generation(new AssistantMessage("""
+                        {
+                          "overview": "An image summary",
+                          "keyPoints": [],
+                          "decisions": [],
+                          "openQuestions": [],
+                          "sourceMessageIds": ["%s"]
+                        }
+                        """.formatted(messageId))))));
+        OpenAiCompatibleAiProvider provider = provider(chatModel, true);
+
+        provider.summarize(new AiSummaryContext(
+                UUID.randomUUID(),
+                List.of(new AiContextMessage(
+                        messageId,
+                        1,
+                        UUID.randomUUID(),
+                        "IMAGE",
+                        "[图片]",
+                        mediaId,
+                        "a".repeat(64))),
+                List.of(new AiContextImage(
+                        messageId,
+                        mediaId,
+                        "image/jpeg",
+                        4,
+                        2,
+                        imageBytes))));
+
+        ArgumentCaptor<Prompt> prompt = ArgumentCaptor.forClass(Prompt.class);
+        verify(chatModel).call(prompt.capture());
+        UserMessage userMessage = prompt.getValue().getUserMessage();
+        assertThat(userMessage.getMedia()).singleElement().satisfies(media ->
+                assertThat(media.getDataAsByteArray()).containsExactly(imageBytes));
+        assertThat(userMessage.getText())
+                .contains("text=[图片]", "imageInput=1")
+                .doesNotContain("message-images/", "http://", mediaId.toString());
+        assertThat(provider.supportsVision()).isTrue();
+    }
+
     private OpenAiCompatibleAiProvider provider(ChatModel chatModel) {
+        return provider(chatModel, false);
+    }
+
+    private OpenAiCompatibleAiProvider provider(ChatModel chatModel, boolean supportsVision) {
         AiProperties properties = new AiProperties(
                 "summary-v1",
-                new AiProperties.Provider(true, "http://provider.test/v1", "secret", "test-model"),
+                new AiProperties.Provider(
+                        true,
+                        "http://provider.test/v1",
+                        "secret",
+                        "test-model",
+                        supportsVision),
                 new AiProperties.Worker(250),
                 null);
         return new OpenAiCompatibleAiProvider(

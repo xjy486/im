@@ -226,6 +226,58 @@ class AiRepository {
             int limit
     ) {
         return jdbc.sql("""
+                        SELECT message.id,
+                               message.conversation_seq,
+                               message.sender_id,
+                               message.type,
+                               CASE
+                                   WHEN message.type = 'IMAGE' THEN '[图片]'
+                                   ELSE message.text_content
+                               END AS context_text,
+                               CASE
+                                   WHEN media.state = 'BOUND'
+                                    AND media.purpose = 'MESSAGE_IMAGE'
+                                    AND media.attached_message_id = message.id
+                                    AND media.expired_at IS NULL
+                                    AND media.objects_deleted_at IS NULL
+                                       THEN media.id
+                                   ELSE NULL
+                               END AS authorized_media_id,
+                               CASE
+                                   WHEN media.state = 'BOUND'
+                                    AND media.purpose = 'MESSAGE_IMAGE'
+                                    AND media.attached_message_id = message.id
+                                    AND media.expired_at IS NULL
+                                    AND media.objects_deleted_at IS NULL
+                                       THEN media.sha256
+                                   ELSE NULL
+                               END AS authorized_media_sha256
+                        FROM messages message
+                        LEFT JOIN media ON media.id = message.media_id
+                        WHERE message.conversation_id = :conversationId
+                          AND message.conversation_seq > :afterSeq
+                          AND message.conversation_seq <= :untilSeq
+                          AND message.type IN ('TEXT', 'IMAGE')
+                          AND message.state = 'ACTIVE'
+                        ORDER BY message.conversation_seq DESC
+                        LIMIT :limit
+                        """)
+                .param("conversationId", conversationId)
+                .param("afterSeq", afterSeq)
+                .param("untilSeq", untilSeq)
+                .param("limit", limit)
+                .query(this::mapContextMessage)
+                .list()
+                .reversed();
+    }
+
+    List<AiContextMessage> listTextContext(
+            UUID conversationId,
+            long afterSeq,
+            long untilSeq,
+            int limit
+    ) {
+        return jdbc.sql("""
                         SELECT id, conversation_seq, sender_id, text_content
                         FROM messages
                         WHERE conversation_id = :conversationId
@@ -257,26 +309,47 @@ class AiRepository {
             int limit
     ) {
         return jdbc.sql("""
-                        SELECT id, conversation_seq, sender_id, text_content
-                        FROM messages
-                        WHERE conversation_id = :conversationId
-                          AND id IN (:messageIds)
-                          AND conversation_seq > :afterSeq
-                          AND type = 'TEXT'
-                          AND state = 'ACTIVE'
-                          AND text_content IS NOT NULL
-                        ORDER BY conversation_seq
+                        SELECT message.id,
+                               message.conversation_seq,
+                               message.sender_id,
+                               message.type,
+                               CASE
+                                   WHEN message.type = 'IMAGE' THEN '[图片]'
+                                   ELSE message.text_content
+                               END AS context_text,
+                               CASE
+                                   WHEN media.state = 'BOUND'
+                                    AND media.purpose = 'MESSAGE_IMAGE'
+                                    AND media.attached_message_id = message.id
+                                    AND media.expired_at IS NULL
+                                    AND media.objects_deleted_at IS NULL
+                                       THEN media.id
+                                   ELSE NULL
+                               END AS authorized_media_id,
+                               CASE
+                                   WHEN media.state = 'BOUND'
+                                    AND media.purpose = 'MESSAGE_IMAGE'
+                                    AND media.attached_message_id = message.id
+                                    AND media.expired_at IS NULL
+                                    AND media.objects_deleted_at IS NULL
+                                       THEN media.sha256
+                                   ELSE NULL
+                               END AS authorized_media_sha256
+                        FROM messages message
+                        LEFT JOIN media ON media.id = message.media_id
+                        WHERE message.conversation_id = :conversationId
+                          AND message.id IN (:messageIds)
+                          AND message.conversation_seq > :afterSeq
+                          AND message.type IN ('TEXT', 'IMAGE')
+                          AND message.state = 'ACTIVE'
+                        ORDER BY message.conversation_seq
                         LIMIT :limit
                         """)
                 .param("conversationId", conversationId)
                 .param("messageIds", messageIds)
                 .param("afterSeq", afterSeq)
                 .param("limit", limit)
-                .query((row, rowNum) -> new AiContextMessage(
-                        row.getObject("id", UUID.class),
-                        row.getLong("conversation_seq"),
-                        row.getObject("sender_id", UUID.class),
-                        row.getString("text_content")))
+                .query(this::mapContextMessage)
                 .list();
     }
 
@@ -335,6 +408,7 @@ class AiRepository {
             long reservedTokens,
             String model,
             String promptVersion,
+            boolean imageInputEnabled,
             Instant expiresAt
     ) {
         jdbc.sql("""
@@ -343,13 +417,13 @@ class AiRepository {
                             request_id, kind, status, from_seq, to_seq,
                             context_digest, context_json, ai_policy_version, membership_version,
                             cache_key, budget_date, reserved_tokens,
-                            model, prompt_version, expires_at
+                            model, prompt_version, image_input_enabled, expires_at
                         ) VALUES (
                             :id, :ownerUserId, :requestingDeviceId, :conversationId,
                             :requestId, :kind, 'QUEUED', :fromSeq, :toSeq,
                             :contextDigest, CAST(:contextJson AS jsonb), :policyVersion, :membershipVersion,
                             :cacheKey, :budgetDate, :reservedTokens,
-                            :model, :promptVersion, :expiresAt
+                            :model, :promptVersion, :imageInputEnabled, :expiresAt
                         )
                         """)
                 .param("id", jobId)
@@ -369,6 +443,7 @@ class AiRepository {
                 .param("reservedTokens", reservedTokens)
                 .param("model", model)
                 .param("promptVersion", promptVersion)
+                .param("imageInputEnabled", imageInputEnabled)
                 .param("expiresAt", utc(expiresAt), Types.TIMESTAMP_WITH_TIMEZONE)
                 .update();
         return jobId;
@@ -390,6 +465,7 @@ class AiRepository {
             LocalDate budgetDate,
             String model,
             String promptVersion,
+            boolean imageInputEnabled,
             String resultJson,
             Instant finishedAt,
             Instant expiresAt
@@ -400,14 +476,14 @@ class AiRepository {
                             request_id, kind, status, from_seq, to_seq,
                             context_digest, context_json, ai_policy_version, membership_version,
                             cache_key, budget_date, reserved_tokens,
-                            model, prompt_version, result_json,
+                            model, prompt_version, image_input_enabled, result_json,
                             started_at, finished_at, expires_at
                         ) VALUES (
                             :id, :ownerUserId, :requestingDeviceId, :conversationId,
                             :requestId, :kind, 'SUCCEEDED', :fromSeq, :toSeq,
                             :contextDigest, NULL, :policyVersion, :membershipVersion,
                             :cacheKey, :budgetDate, 0,
-                            :model, :promptVersion, CAST(:resultJson AS jsonb),
+                            :model, :promptVersion, :imageInputEnabled, CAST(:resultJson AS jsonb),
                             :finishedAt, :finishedAt, :expiresAt
                         )
                         """)
@@ -426,6 +502,7 @@ class AiRepository {
                 .param("budgetDate", budgetDate)
                 .param("model", model)
                 .param("promptVersion", promptVersion)
+                .param("imageInputEnabled", imageInputEnabled)
                 .param("resultJson", resultJson)
                 .param("finishedAt", utc(finishedAt), Types.TIMESTAMP_WITH_TIMEZONE)
                 .param("expiresAt", utc(expiresAt), Types.TIMESTAMP_WITH_TIMEZONE)
@@ -461,7 +538,7 @@ class AiRepository {
                         ) VALUES (
                             :ownerUserId, :cacheKey, :conversationId, :kind,
                             :fromSeq, :toSeq, 'openai-compatible', :model, :promptVersion,
-                            FALSE, :contextDigest, CAST(:resultJson AS jsonb), :expiresAt
+                            :imageInputEnabled, :contextDigest, CAST(:resultJson AS jsonb), :expiresAt
                         )
                         ON CONFLICT (owner_user_id, cache_key)
                         DO UPDATE SET result_json = EXCLUDED.result_json,
@@ -476,6 +553,7 @@ class AiRepository {
                 .param("toSeq", job.toSeq())
                 .param("model", job.model())
                 .param("promptVersion", job.promptVersion())
+                .param("imageInputEnabled", job.imageInputEnabled())
                 .param("contextDigest", job.contextDigest())
                 .param("resultJson", resultJson)
                 .param("expiresAt", utc(expiresAt), Types.TIMESTAMP_WITH_TIMEZONE)
@@ -572,7 +650,8 @@ class AiRepository {
                                   job.membership_version,
                                   job.cache_key, job.budget_date, job.reserved_tokens,
                                   job.attempt_count, job.input_tokens, job.output_tokens,
-                                  job.model, job.prompt_version, job.result_json::text,
+                                  job.model, job.prompt_version, job.image_input_enabled,
+                                  job.result_json::text,
                                   job.error_code, job.created_at, job.started_at,
                                   job.finished_at, job.expires_at
                         """)
@@ -1240,7 +1319,7 @@ class AiRepository {
                        context_digest, context_json::text, ai_policy_version, membership_version,
                        cache_key, budget_date, reserved_tokens, attempt_count,
                        input_tokens, output_tokens,
-                       model, prompt_version, result_json::text, error_code,
+                       model, prompt_version, image_input_enabled, result_json::text, error_code,
                        created_at, started_at, finished_at, expires_at
                 FROM ai_jobs
                 """;
@@ -1279,12 +1358,27 @@ class AiRepository {
                 row.getInt("output_tokens"),
                 row.getString("model"),
                 row.getString("prompt_version"),
+                row.getBoolean("image_input_enabled"),
                 row.getString("result_json"),
                 row.getString("error_code"),
                 row.getObject("created_at", OffsetDateTime.class).toInstant(),
                 nullableInstant(row, "started_at"),
                 nullableInstant(row, "finished_at"),
                 nullableInstant(row, "expires_at"));
+    }
+
+    private AiContextMessage mapContextMessage(
+            java.sql.ResultSet row,
+            int rowNum
+    ) throws java.sql.SQLException {
+        return new AiContextMessage(
+                row.getObject("id", UUID.class),
+                row.getLong("conversation_seq"),
+                row.getObject("sender_id", UUID.class),
+                row.getString("type"),
+                row.getString("context_text"),
+                row.getObject("authorized_media_id", UUID.class),
+                row.getString("authorized_media_sha256"));
     }
 
     private AiActionItemRecord mapActionItem(

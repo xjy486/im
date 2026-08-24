@@ -6,14 +6,19 @@ import org.springframework.ai.chat.model.ChatModel;
 import org.springframework.ai.chat.model.ChatResponse;
 import org.springframework.ai.chat.metadata.Usage;
 import org.springframework.ai.chat.prompt.Prompt;
+import org.springframework.ai.content.Media;
 import org.springframework.ai.converter.BeanOutputConverter;
 import org.springframework.ai.openai.OpenAiChatOptions;
 import org.springframework.ai.openai.api.ResponseFormat;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.stereotype.Component;
+import org.springframework.core.io.ByteArrayResource;
+import org.springframework.util.MimeTypeUtils;
 
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 
 @Component
 @ConditionalOnProperty(
@@ -94,7 +99,7 @@ class OpenAiCompatibleAiProvider implements AiProvider {
                                     new org.springframework.ai.chat.messages.SystemMessage(
                                             "Return only JSON matching this schema. Do not invent message IDs.\\n"
                                                     + converter.getFormat()),
-                                    new org.springframework.ai.chat.messages.UserMessage(prompt(context, instruction))),
+                                    userMessage(context, instruction)),
                             OpenAiChatOptions.builder()
                                     .model(model())
                                     .temperature(0.0)
@@ -149,14 +154,51 @@ class OpenAiCompatibleAiProvider implements AiProvider {
         return properties.provider().model();
     }
 
-    private String prompt(AiSummaryContext context, String instruction) {
+    @Override
+    public boolean supportsVision() {
+        return properties.provider().supportsVision();
+    }
+
+    private org.springframework.ai.chat.messages.UserMessage userMessage(
+            AiSummaryContext context,
+            String instruction
+    ) {
+        List<AiContextImage> images = supportsVision() ? context.images() : List.of();
+        List<Media> media = images.stream()
+                .map(image -> Media.builder()
+                        .mimeType(MimeTypeUtils.parseMimeType(image.contentType()))
+                        .data(new ByteArrayResource(image.content()))
+                        .id(image.messageId().toString())
+                        .name("normalized-message-image")
+                        .build())
+                .toList();
+        return org.springframework.ai.chat.messages.UserMessage.builder()
+                .text(prompt(context, instruction, images))
+                .media(media)
+                .build();
+    }
+
+    private String prompt(
+            AiSummaryContext context,
+            String instruction,
+            List<AiContextImage> images
+    ) {
+        Map<java.util.UUID, Integer> imageIndexes = new HashMap<>();
+        for (int index = 0; index < images.size(); index++) {
+            imageIndexes.put(images.get(index).messageId(), index + 1);
+        }
         StringBuilder prompt = new StringBuilder(instruction).append('\n');
         for (AiContextMessage message : context.messages()) {
             prompt.append("messageId=").append(message.messageId())
                     .append(" seq=").append(message.conversationSeq())
                     .append(" sender=").append(message.senderId())
-                    .append(" text=").append(message.text())
-                    .append('\n');
+                    .append(" type=").append(message.type())
+                    .append(" text=").append(message.text());
+            Integer imageIndex = imageIndexes.get(message.messageId());
+            if (imageIndex != null) {
+                prompt.append(" imageInput=").append(imageIndex);
+            }
+            prompt.append('\n');
         }
         return prompt.toString();
     }

@@ -141,6 +141,7 @@ class AiServiceTest {
                         0,
                         "test-model",
                         "summary-v1",
+                        false,
                         null,
                         null,
                         Instant.EPOCH,
@@ -171,6 +172,7 @@ class AiServiceTest {
                 anyLong(),
                 eq("test-model"),
                 eq("summary-v1"),
+                eq(false),
                 any());
         verify(syncService).recordEventForUsers(
                 eq(List.of(USER_ID)),
@@ -288,6 +290,7 @@ class AiServiceTest {
                 1,
                 "test-model",
                 "summary-v1",
+                false,
                 "{}",
                 null,
                 Instant.EPOCH,

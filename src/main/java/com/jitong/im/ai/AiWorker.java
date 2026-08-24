@@ -18,6 +18,8 @@ class AiWorker {
     private final AiProvider provider;
     private final AiJobLifecycle lifecycle;
     private final ObjectMapper objectMapper;
+    private final AiContextImageLoader imageLoader;
+    private final AiProperties properties;
     private final Clock clock;
 
     @Autowired
@@ -25,13 +27,17 @@ class AiWorker {
             AiRepository repository,
             AiProvider provider,
             AiJobLifecycle lifecycle,
-            ObjectMapper objectMapper
+            ObjectMapper objectMapper,
+            AiContextImageLoader imageLoader,
+            AiProperties properties
     ) {
         this(
                 repository,
                 provider,
                 lifecycle,
                 objectMapper,
+                imageLoader,
+                properties,
                 Clock.systemUTC());
     }
 
@@ -40,12 +46,16 @@ class AiWorker {
             AiProvider provider,
             AiJobLifecycle lifecycle,
             ObjectMapper objectMapper,
+            AiContextImageLoader imageLoader,
+            AiProperties properties,
             Clock clock
     ) {
         this.repository = repository;
         this.provider = provider;
         this.lifecycle = lifecycle;
         this.objectMapper = objectMapper;
+        this.imageLoader = imageLoader;
+        this.properties = properties;
         this.clock = clock;
     }
 
@@ -68,7 +78,14 @@ class AiWorker {
                 lifecycle.fail(job, ApiErrorDefinition.CONTEXT_CHANGED.code(), clock.instant());
                 return;
             }
-            AiSummaryContext context = new AiSummaryContext(job.conversationId(), messages);
+            boolean sendImages = job.imageInputEnabled()
+                    && properties.imageInput().enabled()
+                    && provider.supportsVision()
+                    && !"SMART_REPLY".equals(job.kind());
+            AiSummaryContext context = new AiSummaryContext(
+                    job.conversationId(),
+                    messages,
+                    imageLoader.load(job.ownerUserId(), messages, sendImages));
             providerResult = callProvider(job.kind(), context);
             if (providerResult.usageReported()
                     && providerResult.totalTokens() > job.reservedTokens()) {
@@ -141,17 +158,24 @@ class AiWorker {
                 || conversation.lastSeq() < job.toSeq()) {
             return false;
         }
-        List<AiContextMessage> currentContext = "EXTRACTION".equals(job.kind())
-                ? repository.listContextByMessageIds(
-                        job.conversationId(),
-                        originalContext.stream().map(AiContextMessage::messageId).toList(),
-                        conversation.historyVisibleAfterSeq(),
-                        200)
-                : repository.listContext(
-                        job.conversationId(),
-                        Math.max(job.fromSeq() - 1, conversation.historyVisibleAfterSeq()),
-                        job.toSeq(),
-                        "SMART_REPLY".equals(job.kind()) ? 20 : 100);
-        return AiContextDigest.sha256(currentContext).equals(job.contextDigest());
+        List<AiContextMessage> currentContext = switch (job.kind()) {
+            case "EXTRACTION" -> repository.listContextByMessageIds(
+                    job.conversationId(),
+                    originalContext.stream().map(AiContextMessage::messageId).toList(),
+                    conversation.historyVisibleAfterSeq(),
+                    200);
+            case "SMART_REPLY" -> repository.listTextContext(
+                    job.conversationId(),
+                    Math.max(job.fromSeq() - 1, conversation.historyVisibleAfterSeq()),
+                    job.toSeq(),
+                    20);
+            default -> repository.listContext(
+                    job.conversationId(),
+                    Math.max(job.fromSeq() - 1, conversation.historyVisibleAfterSeq()),
+                    job.toSeq(),
+                    100);
+        };
+        return AiContextDigest.sha256(currentContext, job.imageInputEnabled())
+                .equals(job.contextDigest());
     }
 }

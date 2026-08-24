@@ -274,6 +274,87 @@ class MediaRepository {
                 .orElse(null);
     }
 
+    AiAccessRecord findAiAccess(
+            UUID mediaId,
+            UUID messageId,
+            UUID userId,
+            String expectedSha256
+    ) {
+        return jdbc.sql("""
+                        SELECT media.id,
+                               media.original_object_key,
+                               media.content_type,
+                               media.byte_size,
+                               media.sha256
+                        FROM media
+                        JOIN messages message
+                          ON message.id = :messageId
+                         AND message.media_id = media.id
+                         AND message.type = 'IMAGE'
+                         AND message.state = 'ACTIVE'
+                        JOIN conversations conversation
+                          ON conversation.id = message.conversation_id
+                         AND conversation.status = 'ACTIVE'
+                        JOIN users owner_user
+                          ON owner_user.id = :userId
+                         AND owner_user.status = 'ACTIVE'
+                        JOIN conversation_ai_settings ai_settings
+                          ON ai_settings.conversation_id = conversation.id
+                         AND ai_settings.enabled = TRUE
+                        LEFT JOIN c2c_conversations c2c
+                          ON c2c.conversation_id = conversation.id
+                        LEFT JOIN contacts contact
+                          ON contact.user_low_id = c2c.user_low_id
+                         AND contact.user_high_id = c2c.user_high_id
+                         AND contact.status = 'ACTIVE'
+                        LEFT JOIN groups group_chat
+                          ON group_chat.conversation_id = conversation.id
+                         AND group_chat.status = 'ACTIVE'
+                        LEFT JOIN conversation_members member
+                          ON member.conversation_id = conversation.id
+                         AND member.user_id = :userId
+                         AND member.status = 'ACTIVE'
+                        WHERE media.id = :mediaId
+                          AND media.purpose = 'MESSAGE_IMAGE'
+                          AND media.state = 'BOUND'
+                          AND media.attached_message_id = message.id
+                          AND media.expired_at IS NULL
+                          AND media.objects_deleted_at IS NULL
+                          AND media.sha256 = :expectedSha256
+                          AND (
+                              (
+                                  conversation.type = 'C2C'
+                                  AND contact.status = 'ACTIVE'
+                                  AND (:userId = c2c.user_low_id OR :userId = c2c.user_high_id)
+                                  AND (
+                                      SELECT COUNT(*)
+                                      FROM conversation_ai_consents consent
+                                      WHERE consent.conversation_id = conversation.id
+                                        AND consent.enabled = TRUE
+                                  ) = 2
+                              )
+                              OR (
+                                  conversation.type = 'GROUP'
+                                  AND group_chat.status = 'ACTIVE'
+                                  AND member.status = 'ACTIVE'
+                                  AND message.conversation_seq > member.history_visible_after_seq
+                              )
+                          )
+                        """)
+                .param("mediaId", mediaId)
+                .param("messageId", messageId)
+                .param("userId", userId)
+                .param("expectedSha256", expectedSha256)
+                .query((row, rowNum) -> new AiAccessRecord(
+                        row.getObject("id", UUID.class),
+                        row.getString("original_object_key"),
+                        row.getString("content_type"),
+                        row.getLong("byte_size"),
+                        row.getString("sha256")))
+                .optional()
+                .orElse(null);
+    }
+
     List<MediaRecord> findCleanupCandidates(Instant cutoff) {
         return jdbc.sql(selectSql() + """
                         WHERE (state = 'TEMP' AND created_at < :cutoff)
@@ -377,6 +458,15 @@ class MediaRepository {
             UUID uploaderId,
             boolean expired,
             boolean permitted
+    ) {
+    }
+
+    record AiAccessRecord(
+            UUID mediaId,
+            String originalObjectKey,
+            String contentType,
+            long byteSize,
+            String sha256
     ) {
     }
 }

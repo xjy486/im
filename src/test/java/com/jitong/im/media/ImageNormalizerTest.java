@@ -86,4 +86,30 @@ class ImageNormalizerTest {
 
         assertThat(normalizedBytes).doesNotContain("Exif", "GPSLatitude", "GPSLongitude");
     }
+
+    @Test
+    void reencodes_ai_input_without_metadata_and_caps_the_long_edge_at_1024() throws Exception {
+        BufferedImage source = new BufferedImage(1600, 800, BufferedImage.TYPE_INT_RGB);
+        ByteArrayOutputStream jpeg = new ByteArrayOutputStream();
+        ImageIO.write(source, "jpg", jpeg);
+        byte[] metadata = "Exif\0\0GPSLatitude\0GPSLongitude\0".getBytes(StandardCharsets.ISO_8859_1);
+        int app1Length = metadata.length + 2;
+        ByteArrayOutputStream withExif = new ByteArrayOutputStream();
+        withExif.write(0xFF);
+        withExif.write(0xD8);
+        withExif.write(0xFF);
+        withExif.write(0xE1);
+        withExif.write((app1Length >>> 8) & 0xFF);
+        withExif.write(app1Length & 0xFF);
+        withExif.write(metadata);
+        withExif.write(jpeg.toByteArray(), 2, jpeg.size() - 2);
+
+        ImageNormalizer.NormalizedAiImage normalized =
+                ImageNormalizer.normalizeForAi(withExif.toByteArray());
+        String normalizedBytes = new String(normalized.content(), StandardCharsets.ISO_8859_1);
+
+        assertThat(Math.max(normalized.width(), normalized.height())).isEqualTo(1024);
+        assertThat(normalized.contentType()).isEqualTo("image/jpeg");
+        assertThat(normalizedBytes).doesNotContain("Exif", "GPSLatitude", "GPSLongitude");
+    }
 }

@@ -13,6 +13,7 @@ import com.jitong.im.ai.AiSummaryContext;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.web.client.TestRestTemplate;
+import org.springframework.core.io.ByteArrayResource;
 import org.springframework.http.HttpEntity;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpMethod;
@@ -23,7 +24,15 @@ import org.springframework.jdbc.core.simple.JdbcClient;
 import org.springframework.ai.retry.TransientAiException;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.test.context.TestPropertySource;
+import org.springframework.util.LinkedMultiValueMap;
+import org.springframework.util.MultiValueMap;
 
+import javax.imageio.ImageIO;
+import java.awt.Color;
+import java.awt.image.BufferedImage;
+import java.io.ByteArrayInputStream;
+import java.io.ByteArrayOutputStream;
+import java.nio.charset.StandardCharsets;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.List;
@@ -48,7 +57,8 @@ import static org.mockito.Mockito.when;
         "jitong.ai.retention-interval=50",
         "jitong.ai.retention-initial-delay=0",
         "jitong.ai.budget.daily-token-limit=100000",
-        "jitong.ai.budget.max-output-tokens=512"
+        "jitong.ai.budget.max-output-tokens=512",
+        "jitong.ai.image-input.enabled=true"
 })
 class AiSummaryContractTest extends ContractTestEnvironment {
 
@@ -174,6 +184,159 @@ class AiSummaryContractTest extends ContractTestEnvironment {
                 bobToken,
                 null).getBody();
         assertThat(otherUser.get("code").asText()).isEqualTo("AI_NOT_FOUND");
+    }
+
+    @Test
+    void sends_at_most_four_authorized_images_normalized_to_1024_pixels() throws Exception {
+        TestUser alice = createUser("Vision Alice");
+        TestUser bob = createUser("Vision Bob");
+        String aliceToken = login(alice.accountNo(), "vision-alice", "PC");
+        String bobToken = login(bob.accountNo(), "vision-bob", "MOBILE");
+        UUID conversationId = acceptContact(aliceToken, bob, bobToken);
+        enableAi(aliceToken, bobToken, conversationId);
+
+        List<UUID> messageIds = new ArrayList<>();
+        for (int index = 0; index < 5; index++) {
+            messageIds.add(sendImage(
+                    bobToken,
+                    conversationId,
+                    png(1600, 800, index + 1),
+                    "vision-" + index + ".png").messageId());
+        }
+        when(provider.supportsVision()).thenReturn(true);
+        when(provider.summarize(any(AiSummaryContext.class))).thenAnswer(invocation -> {
+            AiSummaryContext context = invocation.getArgument(0);
+            assertThat(context.messages()).extracting(AiContextMessage::messageId)
+                    .containsExactlyElementsOf(messageIds);
+            assertThat(context.images()).hasSize(4);
+            assertThat(context.images()).allSatisfy(image -> {
+                assertThat(Math.max(image.width(), image.height())).isLessThanOrEqualTo(1024);
+                assertThat(image.contentType()).isEqualTo("image/jpeg");
+                BufferedImage decoded = ImageIO.read(new ByteArrayInputStream(image.content()));
+                assertThat(Math.max(decoded.getWidth(), decoded.getHeight())).isLessThanOrEqualTo(1024);
+                assertThat(new String(image.content(), StandardCharsets.ISO_8859_1))
+                        .doesNotContain("Exif", "GPSLatitude", "GPSLongitude");
+            });
+            return withUsage(new AiSummary(
+                    "Four authorized images were included.",
+                    List.of(),
+                    List.of(),
+                    List.of(),
+                    messageIds));
+        });
+
+        JsonNode queued = requestSummary(aliceToken, conversationId, 5).getBody();
+        UUID jobId = UUID.fromString(queued.get("jobId").asText());
+        awaitJob(aliceToken, jobId);
+
+        assertThat(jdbc.sql("SELECT image_input_enabled FROM ai_jobs WHERE id = :jobId")
+                .param("jobId", jobId)
+                .query(Boolean.class)
+                .single()).isTrue();
+        assertThat(jdbc.sql("SELECT image_input_enabled FROM ai_cache_entries WHERE owner_user_id = :ownerUserId")
+                .param("ownerUserId", alice.userId())
+                .query(Boolean.class)
+                .single()).isTrue();
+    }
+
+    @Test
+    void provider_without_vision_receives_image_placeholders_and_text_summary_still_succeeds()
+            throws Exception {
+        TestUser alice = createUser("Text fallback Alice");
+        TestUser bob = createUser("Text fallback Bob");
+        String aliceToken = login(alice.accountNo(), "fallback-alice", "PC");
+        String bobToken = login(bob.accountNo(), "fallback-bob", "MOBILE");
+        UUID conversationId = acceptContact(aliceToken, bob, bobToken);
+        enableAi(aliceToken, bobToken, conversationId);
+        UUID textMessageId = UUID.fromString(post(
+                "/api/v1/conversations/" + conversationId + "/messages",
+                bobToken,
+                Map.of("clientMsgId", UUID.randomUUID(), "text", "Keep text summaries working."))
+                .get("messageId").asText());
+        SentImage image = sendImage(
+                bobToken,
+                conversationId,
+                png(1200, 600, 7),
+                "fallback.png");
+
+        when(provider.supportsVision()).thenReturn(false);
+        when(provider.summarize(any(AiSummaryContext.class))).thenAnswer(invocation -> {
+            AiSummaryContext context = invocation.getArgument(0);
+            assertThat(context.images()).isEmpty();
+            assertThat(context.messages()).extracting(AiContextMessage::messageId)
+                    .containsExactly(textMessageId, image.messageId());
+            assertThat(context.messages().get(1).text()).isEqualTo("[图片]");
+            return withUsage(new AiSummary(
+                    "The text remains available and an image was shared.",
+                    List.of(),
+                    List.of(),
+                    List.of(),
+                    List.of(textMessageId, image.messageId())));
+        });
+
+        JsonNode queued = requestSummary(aliceToken, conversationId, 2).getBody();
+        UUID jobId = UUID.fromString(queued.get("jobId").asText());
+        awaitJob(aliceToken, jobId);
+
+        assertThat(jdbc.sql("SELECT image_input_enabled FROM ai_jobs WHERE id = :jobId")
+                .param("jobId", jobId)
+                .query(Boolean.class)
+                .single()).isFalse();
+    }
+
+    @Test
+    void recalled_and_expired_images_are_never_loaded_for_the_provider() throws Exception {
+        TestUser alice = createUser("Revoked image Alice");
+        TestUser bob = createUser("Revoked image Bob");
+        String aliceToken = login(alice.accountNo(), "revoked-image-alice", "PC");
+        String bobToken = login(bob.accountNo(), "revoked-image-bob", "MOBILE");
+        UUID conversationId = acceptContact(aliceToken, bob, bobToken);
+        enableAi(aliceToken, bobToken, conversationId);
+        SentImage expired = sendImage(
+                bobToken,
+                conversationId,
+                png(600, 300, 9),
+                "expired.png");
+        SentImage recalled = sendImage(
+                bobToken,
+                conversationId,
+                png(600, 300, 10),
+                "recalled.png");
+        jdbc.sql("""
+                        UPDATE media
+                        SET state = 'EXPIRED',
+                            attached_message_id = NULL,
+                            bound_at = NULL,
+                            expired_at = CURRENT_TIMESTAMP
+                        WHERE id = :mediaId
+                        """)
+                .param("mediaId", expired.mediaId())
+                .update();
+        assertThat(exchange(
+                "/api/v1/messages/" + recalled.messageId() + "/recall",
+                HttpMethod.POST,
+                bobToken,
+                null).getStatusCode()).isEqualTo(HttpStatus.OK);
+
+        when(provider.supportsVision()).thenReturn(true);
+        when(provider.summarize(any(AiSummaryContext.class))).thenAnswer(invocation -> {
+            AiSummaryContext context = invocation.getArgument(0);
+            assertThat(context.images()).isEmpty();
+            assertThat(context.messages()).singleElement().satisfies(message -> {
+                assertThat(message.messageId()).isEqualTo(expired.messageId());
+                assertThat(message.text()).isEqualTo("[图片]");
+                assertThat(message.mediaId()).isNull();
+            });
+            return withUsage(new AiSummary(
+                    "Only a placeholder remains.",
+                    List.of(),
+                    List.of(),
+                    List.of(),
+                    List.of(expired.messageId())));
+        });
+
+        JsonNode queued = requestSummary(aliceToken, conversationId, 2).getBody();
+        awaitJob(aliceToken, UUID.fromString(queued.get("jobId").asText()));
     }
 
     @Test
@@ -1389,6 +1552,52 @@ class AiSummaryContractTest extends ContractTestEnvironment {
                 Map.of("requestId", UUID.randomUUID(), "afterSeq", 0, "untilSeq", untilSeq));
     }
 
+    private SentImage sendImage(
+            String token,
+            UUID conversationId,
+            byte[] content,
+            String filename
+    ) {
+        UUID uploadId = UUID.randomUUID();
+        MultiValueMap<String, Object> parts = new LinkedMultiValueMap<>();
+        parts.add("file", new NamedByteArrayResource(content, filename));
+        HttpHeaders headers = new HttpHeaders();
+        headers.setBearerAuth(token);
+        headers.setContentType(MediaType.MULTIPART_FORM_DATA);
+        ResponseEntity<JsonNode> uploaded = http.exchange(
+                "/api/v1/media/images?uploadId=" + uploadId,
+                HttpMethod.POST,
+                new HttpEntity<>(parts, headers),
+                JsonNode.class);
+        assertThat(uploaded.getStatusCode()).isEqualTo(HttpStatus.OK);
+        UUID mediaId = UUID.fromString(uploaded.getBody().get("mediaId").asText());
+        JsonNode sent = post(
+                "/api/v1/conversations/" + conversationId + "/messages",
+                token,
+                Map.of(
+                        "clientMsgId", UUID.randomUUID(),
+                        "type", "IMAGE",
+                        "mediaId", mediaId));
+        return new SentImage(
+                UUID.fromString(sent.get("messageId").asText()),
+                mediaId);
+    }
+
+    private byte[] png(int width, int height, int colorSeed) throws Exception {
+        BufferedImage image = new BufferedImage(width, height, BufferedImage.TYPE_INT_RGB);
+        for (int x = 0; x < width; x++) {
+            for (int y = 0; y < height; y++) {
+                image.setRGB(x, y, new Color(
+                        (x + colorSeed) % 255,
+                        (y + colorSeed) % 255,
+                        (x + y + colorSeed) % 255).getRGB());
+            }
+        }
+        ByteArrayOutputStream output = new ByteArrayOutputStream();
+        ImageIO.write(image, "png", output);
+        return output.toByteArray();
+    }
+
     private JsonNode post(String path, String token, Object body) {
         return exchange(path, HttpMethod.POST, token, body).getBody();
     }
@@ -1441,5 +1650,22 @@ class AiSummaryContractTest extends ContractTestEnvironment {
     }
 
     private record TestUser(UUID userId, String accountNo) {
+    }
+
+    private record SentImage(UUID messageId, UUID mediaId) {
+    }
+
+    private static final class NamedByteArrayResource extends ByteArrayResource {
+        private final String filename;
+
+        private NamedByteArrayResource(byte[] content, String filename) {
+            super(content);
+            this.filename = filename;
+        }
+
+        @Override
+        public String getFilename() {
+            return filename;
+        }
     }
 }

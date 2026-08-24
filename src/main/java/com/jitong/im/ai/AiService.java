@@ -28,6 +28,7 @@ public class AiService {
     private static final int MAX_EXTRACTION_MESSAGES = 200;
     private static final int MAX_QUEUED_AI_JOBS_PER_USER = 3;
     private static final int PROMPT_OVERHEAD_TOKEN_RESERVATION = 2_048;
+    private static final int TOKENS_RESERVED_PER_IMAGE = 2_048;
     private static final Duration SUMMARY_RETENTION = Duration.ofDays(30);
     private static final ZoneId BUDGET_ZONE = ZoneId.of("Asia/Shanghai");
 
@@ -35,6 +36,7 @@ public class AiService {
     private final SyncService syncService;
     private final AiProperties properties;
     private final ObjectMapper objectMapper;
+    private final AiProvider provider;
     private final Clock clock;
 
     @Autowired
@@ -42,9 +44,10 @@ public class AiService {
             AiRepository repository,
             SyncService syncService,
             AiProperties properties,
-            ObjectMapper objectMapper
+            ObjectMapper objectMapper,
+            AiProvider provider
     ) {
-        this(repository, syncService, properties, objectMapper, Clock.systemUTC());
+        this(repository, syncService, properties, objectMapper, provider, Clock.systemUTC());
     }
 
     AiService(
@@ -54,10 +57,22 @@ public class AiService {
             ObjectMapper objectMapper,
             Clock clock
     ) {
+        this(repository, syncService, properties, objectMapper, new UnavailableAiProvider(), clock);
+    }
+
+    AiService(
+            AiRepository repository,
+            SyncService syncService,
+            AiProperties properties,
+            ObjectMapper objectMapper,
+            AiProvider provider,
+            Clock clock
+    ) {
         this.repository = repository;
         this.syncService = syncService;
         this.properties = properties;
         this.objectMapper = objectMapper;
+        this.provider = provider;
         this.clock = clock;
     }
 
@@ -145,7 +160,8 @@ public class AiService {
         }
         long fromSeq = context.get(0).conversationSeq();
         long toSeq = context.get(context.size() - 1).conversationSeq();
-        String contextDigest = AiContextDigest.sha256(context);
+        boolean imageInputEnabled = imageInputEnabled();
+        String contextDigest = AiContextDigest.sha256(context, imageInputEnabled);
         String cacheKey = AiCacheKey.summary(
                 device.userId(),
                 conversationId,
@@ -154,7 +170,7 @@ public class AiService {
                 "openai-compatible",
                 properties.provider().model(),
                 properties.promptVersion(),
-                false,
+                imageInputEnabled,
                 contextDigest);
         String contextJson = writeJson(context);
         Instant now = clock.instant();
@@ -178,6 +194,7 @@ public class AiService {
                     budgetDate,
                     properties.provider().model(),
                     properties.promptVersion(),
+                    imageInputEnabled,
                     cached.resultJson(),
                     now,
                     cached.expiresAt());
@@ -194,11 +211,7 @@ public class AiService {
                     conversationId);
             return response(repository.findJob(device.userId(), cachedJobId));
         }
-        long reservedTokens = Math.addExact(
-                Math.addExact(
-                        PROMPT_OVERHEAD_TOKEN_RESERVATION,
-                        contextJson.getBytes(StandardCharsets.UTF_8).length),
-                properties.budget().maxOutputTokens());
+        long reservedTokens = reservedTokens(contextJson, context, imageInputEnabled);
         if (!repository.reserveBudget(
                 device.userId(),
                 budgetDate,
@@ -229,6 +242,7 @@ public class AiService {
                 reservedTokens,
                 properties.provider().model(),
                 properties.promptVersion(),
+                imageInputEnabled,
                 expiresAt);
         syncService.recordEventForUsers(
                 List.of(device.userId()),
@@ -266,7 +280,7 @@ public class AiService {
             throw new AiException(ApiErrorDefinition.AI_CONSENT_REQUIRED);
         }
 
-        List<AiContextMessage> context = repository.listContext(
+        List<AiContextMessage> context = repository.listTextContext(
                 conversationId,
                 conversation.historyVisibleAfterSeq(),
                 conversation.lastSeq(),
@@ -276,7 +290,7 @@ public class AiService {
         }
         long fromSeq = context.get(0).conversationSeq();
         long toSeq = context.get(context.size() - 1).conversationSeq();
-        String contextDigest = AiContextDigest.sha256(context);
+        String contextDigest = AiContextDigest.sha256(context, false);
         String cacheKey = AiCacheKey.forContext(
                 device.userId(),
                 "SMART_REPLY",
@@ -291,11 +305,7 @@ public class AiService {
         String contextJson = writeJson(context);
         Instant now = clock.instant();
         LocalDate budgetDate = now.atZone(BUDGET_ZONE).toLocalDate();
-        long reservedTokens = Math.addExact(
-                Math.addExact(
-                        PROMPT_OVERHEAD_TOKEN_RESERVATION,
-                        contextJson.getBytes(StandardCharsets.UTF_8).length),
-                properties.budget().maxOutputTokens());
+        long reservedTokens = reservedTokens(contextJson, context, false);
         if (repository.countActiveJobs(device.userId()) > 0) {
             throw new AiException(ApiErrorDefinition.AI_BUSY);
         }
@@ -326,6 +336,7 @@ public class AiService {
                 reservedTokens,
                 properties.provider().model(),
                 properties.promptVersion(),
+                false,
                 expiresAt);
         syncService.recordEventForUsers(
                 List.of(device.userId()),
@@ -379,7 +390,8 @@ public class AiService {
         }
         long fromSeq = context.get(0).conversationSeq();
         long toSeq = context.get(context.size() - 1).conversationSeq();
-        String contextDigest = AiContextDigest.sha256(context);
+        boolean imageInputEnabled = imageInputEnabled();
+        String contextDigest = AiContextDigest.sha256(context, imageInputEnabled);
         String cacheKey = AiCacheKey.forContext(
                 device.userId(),
                 "EXTRACTION",
@@ -389,16 +401,12 @@ public class AiService {
                 "openai-compatible",
                 properties.provider().model(),
                 properties.promptVersion(),
-                false,
+                imageInputEnabled,
                 contextDigest);
         String contextJson = writeJson(context);
         Instant now = clock.instant();
         LocalDate budgetDate = now.atZone(BUDGET_ZONE).toLocalDate();
-        long reservedTokens = Math.addExact(
-                Math.addExact(
-                        PROMPT_OVERHEAD_TOKEN_RESERVATION,
-                        contextJson.getBytes(StandardCharsets.UTF_8).length),
-                properties.budget().maxOutputTokens());
+        long reservedTokens = reservedTokens(contextJson, context, imageInputEnabled);
         if (repository.countQueuedJobs(device.userId()) >= MAX_QUEUED_AI_JOBS_PER_USER) {
             throw new AiException(ApiErrorDefinition.AI_BUSY);
         }
@@ -429,6 +437,7 @@ public class AiService {
                 reservedTokens,
                 properties.provider().model(),
                 properties.promptVersion(),
+                imageInputEnabled,
                 expiresAt);
         syncService.recordEventForUsers(
                 List.of(device.userId()),
@@ -714,6 +723,30 @@ public class AiService {
         } catch (JsonProcessingException exception) {
             throw new AiException(ApiErrorDefinition.INTERNAL_ERROR, exception);
         }
+    }
+
+    private boolean imageInputEnabled() {
+        return properties.imageInput().enabled() && provider.supportsVision();
+    }
+
+    private long reservedTokens(
+            String contextJson,
+            List<AiContextMessage> context,
+            boolean imageInputEnabled
+    ) {
+        long imageCount = imageInputEnabled
+                ? context.stream()
+                        .filter(AiContextMessage::hasAuthorizedImageReference)
+                        .limit(AiContextImageLoader.MAX_IMAGES_PER_TASK)
+                        .count()
+                : 0;
+        return Math.addExact(
+                Math.addExact(
+                        Math.addExact(
+                                PROMPT_OVERHEAD_TOKEN_RESERVATION,
+                                contextJson.getBytes(StandardCharsets.UTF_8).length),
+                        properties.budget().maxOutputTokens()),
+                Math.multiplyExact(imageCount, TOKENS_RESERVED_PER_IMAGE));
     }
 
     private String writeJson(Object value) {

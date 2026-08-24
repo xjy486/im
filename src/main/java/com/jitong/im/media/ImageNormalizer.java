@@ -23,6 +23,7 @@ final class ImageNormalizer {
     static final int MAX_OUTPUT_BYTES = 5 * 1024 * 1024;
     static final int MAX_LONG_EDGE = 2048;
     static final int THUMBNAIL_LONG_EDGE = 320;
+    static final int AI_LONG_EDGE = 1024;
     static final long MAX_DECODE_PIXELS = 20_000_000L;
 
     private ImageNormalizer() {
@@ -50,6 +51,16 @@ final class ImageNormalizer {
                 normalized.getHeight(),
                 "image/jpeg",
                 sha256(original));
+    }
+
+    static NormalizedAiImage normalizeForAi(byte[] input) {
+        BufferedImage normalized = scale(decode(input), AI_LONG_EDGE);
+        byte[] content = encodeJpeg(normalized);
+        return new NormalizedAiImage(
+                content,
+                normalized.getWidth(),
+                normalized.getHeight(),
+                "image/jpeg");
     }
 
     private static BufferedImage decode(byte[] input) {
@@ -125,7 +136,7 @@ final class ImageNormalizer {
         }
     }
 
-    private static String sha256(byte[] bytes) {
+    static String sha256(byte[] bytes) {
         try {
             return java.util.HexFormat.of().formatHex(
                     MessageDigest.getInstance("SHA-256").digest(bytes));
@@ -141,6 +152,14 @@ final class ImageNormalizer {
             int height,
             String contentType,
             String sha256
+    ) {
+    }
+
+    record NormalizedAiImage(
+            byte[] content,
+            int width,
+            int height,
+            String contentType
     ) {
     }
 }

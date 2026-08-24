@@ -12,6 +12,7 @@ import java.time.Clock;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.UUID;
+import java.util.Optional;
 
 @Service
 public class MediaService {
@@ -144,6 +145,52 @@ public class MediaService {
         repository.expireMediaForMessage(messageId, clock.instant());
     }
 
+    @Transactional(readOnly = true)
+    public Optional<AiImageContent> loadAiImage(
+            UUID userId,
+            UUID messageId,
+            UUID mediaId,
+            String expectedSha256
+    ) {
+        if (userId == null || messageId == null || mediaId == null || expectedSha256 == null) {
+            return Optional.empty();
+        }
+        MediaRepository.AiAccessRecord access = repository.findAiAccess(
+                mediaId,
+                messageId,
+                userId,
+                expectedSha256);
+        if (access == null
+                || access.byteSize() < 1
+                || access.byteSize() > ImageNormalizer.MAX_OUTPUT_BYTES) {
+            return Optional.empty();
+        }
+        try {
+            MediaStorage.StoredMedia stored = storage.get(access.originalObjectKey());
+            byte[] bytes;
+            try (var input = stored.content()) {
+                if (stored.contentLength() != access.byteSize()
+                        || stored.contentLength() > ImageNormalizer.MAX_OUTPUT_BYTES) {
+                    return Optional.empty();
+                }
+                bytes = input.readNBytes(ImageNormalizer.MAX_OUTPUT_BYTES + 1);
+            }
+            if (bytes.length != access.byteSize()
+                    || !access.sha256().equals(ImageNormalizer.sha256(bytes))) {
+                return Optional.empty();
+            }
+            ImageNormalizer.NormalizedAiImage image = ImageNormalizer.normalizeForAi(bytes);
+            return Optional.of(new AiImageContent(
+                    access.mediaId(),
+                    image.contentType(),
+                    image.width(),
+                    image.height(),
+                    image.content()));
+        } catch (IOException | RuntimeException exception) {
+            return Optional.empty();
+        }
+    }
+
     MediaUploadResponse response(MediaRecord record) {
         return new MediaUploadResponse(
                 1,
@@ -155,5 +202,23 @@ public class MediaService {
                 record.height(),
                 record.byteSize(),
                 record.sha256());
+    }
+
+    public record AiImageContent(
+            UUID mediaId,
+            String contentType,
+            int width,
+            int height,
+            byte[] content
+    ) {
+
+        public AiImageContent {
+            content = content.clone();
+        }
+
+        @Override
+        public byte[] content() {
+            return content.clone();
+        }
     }
 }

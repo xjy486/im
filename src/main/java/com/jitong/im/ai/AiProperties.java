@@ -1,6 +1,7 @@
 package com.jitong.im.ai;
 
 import org.springframework.boot.context.properties.ConfigurationProperties;
+import org.springframework.boot.context.properties.bind.ConstructorBinding;
 
 import java.time.Duration;
 
@@ -9,9 +10,20 @@ public record AiProperties(
         String promptVersion,
         Provider provider,
         Worker worker,
-        Budget budget
+        Budget budget,
+        ImageInput imageInput
 ) {
 
+    public AiProperties(
+            String promptVersion,
+            Provider provider,
+            Worker worker,
+            Budget budget
+    ) {
+        this(promptVersion, provider, worker, budget, null);
+    }
+
+    @ConstructorBinding
     public AiProperties {
         promptVersion = promptVersion == null || promptVersion.isBlank() ? "summary-v1" : promptVersion;
         provider = provider == null
@@ -24,6 +36,7 @@ public record AiProperties(
                     provider.requestTimeout().plusSeconds(30));
         }
         budget = budget == null ? new Budget(100_000, 1_024) : budget;
+        imageInput = imageInput == null ? new ImageInput(false) : imageInput;
     }
 
     public record Provider(
@@ -31,10 +44,31 @@ public record AiProperties(
             String baseUrl,
             String apiKey,
             String model,
-            Duration requestTimeout
+            Duration requestTimeout,
+            boolean supportsVision
     ) {
         public Provider(boolean enabled, String baseUrl, String apiKey, String model) {
-            this(enabled, baseUrl, apiKey, model, Duration.ofSeconds(30));
+            this(enabled, baseUrl, apiKey, model, Duration.ofSeconds(30), false);
+        }
+
+        public Provider(
+                boolean enabled,
+                String baseUrl,
+                String apiKey,
+                String model,
+                Duration requestTimeout
+        ) {
+            this(enabled, baseUrl, apiKey, model, requestTimeout, false);
+        }
+
+        public Provider(
+                boolean enabled,
+                String baseUrl,
+                String apiKey,
+                String model,
+                boolean supportsVision
+        ) {
+            this(enabled, baseUrl, apiKey, model, Duration.ofSeconds(30), supportsVision);
         }
 
         public Provider {
@@ -43,6 +77,9 @@ public record AiProperties(
                     ? Duration.ofSeconds(30)
                     : requestTimeout;
         }
+    }
+
+    public record ImageInput(boolean enabled) {
     }
 
     public record Worker(long pollInterval, Duration leaseTimeout) {

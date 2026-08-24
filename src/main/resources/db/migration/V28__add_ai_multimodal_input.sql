@@ -1,0 +1,2 @@
+ALTER TABLE ai_jobs
+    ADD COLUMN image_input_enabled BOOLEAN NOT NULL DEFAULT FALSE;

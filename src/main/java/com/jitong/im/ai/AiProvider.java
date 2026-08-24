@@ -9,4 +9,8 @@ public interface AiProvider {
     AiProviderResult<AiExtraction> extractInformation(AiSummaryContext context);
 
     String model();
+
+    default boolean supportsVision() {
+        return false;
+    }
 }
