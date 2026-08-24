@@ -8,3 +8,8 @@
 .DS_Store
 target/
 *.iml
+/backups/
+/backup-evidence/
+/.backup-work-*/
+/.restore-work-*/
+/.restore-smoke-*/

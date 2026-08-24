@@ -20,6 +20,8 @@ jobs:
           cache: maven
       - name: Run contract suite
         run: ./mvnw --batch-mode --no-transfer-progress verify
+      - name: Run encrypted backup self-test
+        run: ./scripts/backup/self-test.sh
       - name: Validate production TLS configuration
         env:
           POSTGRES_PASSWORD: validation-only
