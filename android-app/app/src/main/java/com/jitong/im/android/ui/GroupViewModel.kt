@@ -7,6 +7,8 @@ import com.jitong.im.android.group.GroupRepository
 import com.jitong.im.android.group.GroupInviteResolveResponse
 import com.jitong.im.android.group.GroupInviteResponse
 import com.jitong.im.android.group.GroupJoinRequestSummary
+import com.jitong.im.android.group.GroupMemberSummary
+import com.jitong.im.android.group.GroupGovernancePolicy
 import com.jitong.im.android.group.GroupSearchResult
 import com.jitong.im.android.group.GroupSummary
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -30,12 +32,15 @@ internal data class GroupUiState(
     val createdInvite: GroupInviteResponse? = null,
     val joinRequests: List<GroupJoinRequestSummary> = emptyList(),
     val joinRequestGroupId: UUID? = null,
+    val members: List<GroupMemberSummary> = emptyList(),
+    val memberGroupId: UUID? = null,
     val directInviteAccountNo: String = "",
     val message: String? = null,
 )
 
 internal class GroupViewModel(
     private val repository: GroupRepository,
+    private val clearGroupData: suspend (UUID) -> Unit = {},
 ) : ViewModel() {
     private val _state = MutableStateFlow(GroupUiState())
     val state: StateFlow<GroupUiState> = _state.asStateFlow()
@@ -86,32 +91,52 @@ internal class GroupViewModel(
         launchRequest {
             repository.addMember(group.conversationId, accountNo)
             _state.value = _state.value.copy(directInviteAccountNo = "")
+            refreshMembersIfLoaded(group.conversationId)
             refreshData()
         }
     }
 
     fun promoteMember(group: GroupSummary, userId: UUID) {
+        if (!GroupGovernancePolicy.canChangeRole(group.role, "MEMBER")) {
+            _state.value = _state.value.copy(message = "只有群主可以调整成员角色")
+            return
+        }
         launchRequest {
             repository.changeRole(group.conversationId, userId, "ADMIN")
+            refreshMembers(group.conversationId)
             refreshData()
         }
     }
 
     fun demoteMember(group: GroupSummary, userId: UUID) {
+        if (!GroupGovernancePolicy.canChangeRole(group.role, "ADMIN")) {
+            _state.value = _state.value.copy(message = "只有群主可以调整管理员角色")
+            return
+        }
         launchRequest {
             repository.changeRole(group.conversationId, userId, "MEMBER")
+            refreshMembers(group.conversationId)
             refreshData()
         }
     }
 
     fun transferOwner(group: GroupSummary, userId: UUID) {
+        if (!GroupGovernancePolicy.canTransferOwner(group.role, "ADMIN")) {
+            _state.value = _state.value.copy(message = "只有群主可以转让群主")
+            return
+        }
         launchRequest {
             repository.transferOwner(group.conversationId, userId)
+            refreshMembers(group.conversationId)
             refreshData()
         }
     }
 
     fun updateProfile(group: GroupSummary) {
+        if (!GroupGovernancePolicy.canEditProfile(group.role)) {
+            _state.value = _state.value.copy(message = "只有群主或管理员可以修改群资料")
+            return
+        }
         val current = _state.value
         launchRequest {
             repository.updateProfile(
@@ -120,6 +145,7 @@ internal class GroupViewModel(
                 current.description.trim(),
                 current.visibility,
             )
+            refreshMembersIfLoaded(group.conversationId)
             refreshData()
         }
     }
@@ -127,7 +153,39 @@ internal class GroupViewModel(
     fun leave(group: GroupSummary) {
         launchRequest {
             repository.leave(group.conversationId)
+            clearGroupData(group.conversationId)
             refreshData()
+        }
+    }
+
+    fun dissolve(group: GroupSummary) {
+        if (group.role != "OWNER") {
+            _state.value = _state.value.copy(message = "只有群主可以解散群聊")
+            return
+        }
+        launchRequest {
+            repository.dissolve(group.conversationId)
+            clearGroupData(group.conversationId)
+            _state.value = _state.value.copy(
+                memberGroupId = null,
+                members = emptyList(),
+            )
+            refreshData()
+        }
+    }
+
+    fun loadMembers(group: GroupSummary) {
+        if (!GroupGovernancePolicy.canEditProfile(group.role)) {
+            _state.value = _state.value.copy(message = "只有群主或管理员可以打开群管理")
+            return
+        }
+        launchRequest {
+            _state.value = _state.value.copy(
+                name = group.name,
+                description = group.description,
+                visibility = group.visibility,
+            )
+            refreshMembers(group.conversationId)
         }
     }
 
@@ -170,6 +228,10 @@ internal class GroupViewModel(
     }
 
     fun loadJoinRequests(group: GroupSummary) {
+        if (!GroupGovernancePolicy.canApproveJoinRequests(group.role)) {
+            _state.value = _state.value.copy(message = "只有群主或管理员可以审批入群")
+            return
+        }
         launchRequest {
             _state.value = _state.value.copy(
                 joinRequestGroupId = group.conversationId,
@@ -182,6 +244,7 @@ internal class GroupViewModel(
         launchRequest {
             repository.approveJoinRequest(request.conversationId, request.requestId)
             refreshJoinRequests(request.conversationId)
+            refreshMembersIfLoaded(request.conversationId)
             refreshData()
         }
     }
@@ -193,11 +256,36 @@ internal class GroupViewModel(
         }
     }
 
+    fun removeMember(group: GroupSummary, member: GroupMemberSummary) {
+        if (!GroupGovernancePolicy.canRemoveMember(group.role, member.role)) {
+            _state.value = _state.value.copy(message = "当前角色不能移除该成员")
+            return
+        }
+        launchRequest {
+            repository.removeMember(group.conversationId, member.userId)
+            refreshMembers(group.conversationId)
+            refreshData()
+        }
+    }
+
     private suspend fun refreshJoinRequests(conversationId: UUID) {
         _state.value = _state.value.copy(
             joinRequestGroupId = conversationId,
             joinRequests = repository.listJoinRequests(conversationId),
         )
+    }
+
+    private suspend fun refreshMembers(conversationId: UUID) {
+        _state.value = _state.value.copy(
+            memberGroupId = conversationId,
+            members = repository.listMembers(conversationId),
+        )
+    }
+
+    private suspend fun refreshMembersIfLoaded(conversationId: UUID) {
+        if (_state.value.memberGroupId == conversationId) {
+            refreshMembers(conversationId)
+        }
     }
 
     fun create() {
@@ -254,9 +342,10 @@ internal class GroupViewModel(
 
     class Factory(
         private val repository: GroupRepository,
+        private val clearGroupData: suspend (UUID) -> Unit = {},
     ) : ViewModelProvider.Factory {
         @Suppress("UNCHECKED_CAST")
         override fun <T : ViewModel> create(modelClass: Class<T>): T =
-            GroupViewModel(repository) as T
+            GroupViewModel(repository, clearGroupData) as T
     }
 }

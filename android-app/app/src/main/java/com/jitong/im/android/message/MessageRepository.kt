@@ -132,6 +132,11 @@ internal class MessageRepository(
         restoreConversation(conversationId, currentUserId, db)
     }
 
+    suspend fun clearGroupData(conversationId: UUID) {
+        val db = database() ?: return
+        clearConversationData(conversationId, db)
+    }
+
     suspend fun markRead(conversationId: UUID, readSeq: Long) {
         require(readSeq >= 0) { "Read sequence must not be negative" }
         val db = database() ?: return

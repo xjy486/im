@@ -49,6 +49,9 @@ import com.jitong.im.desktop.conversation.DesktopContactRequestSummary
 import com.jitong.im.desktop.conversation.DesktopContactSearchResult
 import com.jitong.im.desktop.conversation.DesktopGroupInvite
 import com.jitong.im.desktop.conversation.DesktopGroupMember
+import com.jitong.im.desktop.conversation.DesktopGroupJoinRequestSummary
+import com.jitong.im.desktop.conversation.DesktopGroupGovernancePolicy
+import com.jitong.im.desktop.conversation.groupMessageText
 import com.jitong.im.desktop.conversation.DesktopGroupSearchPage
 import com.jitong.im.desktop.conversation.DesktopGroupSummary
 import com.jitong.im.desktop.conversation.DesktopMyGroupJoinRequest
@@ -129,6 +132,7 @@ private data class DesktopData(
     val groupSearch: DesktopGroupSearchPage? = null,
     val groupJoinRequests: List<DesktopMyGroupJoinRequest> = emptyList(),
     val groupMembers: List<DesktopGroupMember> = emptyList(),
+    val groupJoinRequestsForGroup: List<DesktopGroupJoinRequestSummary> = emptyList(),
     val groupInvite: DesktopGroupInvite? = null,
     val aiJobs: List<LocalAiJob> = emptyList(),
     val aiArtifacts: List<LocalAiArtifact> = emptyList(),
@@ -199,6 +203,9 @@ private fun DesktopApp(
     var groupJoinGroupNo by remember { mutableStateOf("") }
     var groupJoinToken by remember { mutableStateOf("") }
     var groupManagementAccountNo by remember { mutableStateOf("") }
+    var groupNameDraft by remember { mutableStateOf("") }
+    var groupDescriptionDraft by remember { mutableStateOf("") }
+    var groupVisibilityDraft by remember { mutableStateOf("PUBLIC") }
 
     fun refreshLocal() {
         val local = authStore.localDatabase() ?: return
@@ -718,6 +725,7 @@ private fun DesktopApp(
             groupJoinToken = groupJoinToken,
             groupJoinRequests = data.groupJoinRequests,
             groupMembers = data.groupMembers,
+            groupJoinRequestsForGroup = data.groupJoinRequestsForGroup,
             groupManagementAccountNo = groupManagementAccountNo,
             groupInvite = data.groupInvite,
             draft = draft,
@@ -818,6 +826,99 @@ private fun DesktopApp(
                 }
             },
             onRefreshGroupMembers = ::refreshGroupMembers,
+            onRefreshGroupJoinRequestsForGroup = { conversationId ->
+                val current = authStore.session ?: session ?: return@MainScreen
+                uiScope.launch {
+                    runCatching {
+                        withContext(Dispatchers.IO) {
+                            conversationClient.listGroupJoinRequests(
+                                current.accessToken,
+                                conversationId)
+                        }
+                    }.onSuccess { data = data.copy(groupJoinRequestsForGroup = it) }
+                        .onFailure { error = messageFor(it) }
+                }
+            },
+            onBeginManageGroup = { group ->
+                groupNameDraft = group.name
+                groupDescriptionDraft = group.description
+                groupVisibilityDraft = group.visibility
+                refreshGroupMembers(group.conversationId)
+                val current = authStore.session ?: session ?: return@MainScreen
+                uiScope.launch {
+                    runCatching {
+                        withContext(Dispatchers.IO) {
+                            conversationClient.listGroupJoinRequests(
+                                current.accessToken,
+                                group.conversationId)
+                        }
+                    }.onSuccess { data = data.copy(groupJoinRequestsForGroup = it) }
+                        .onFailure { error = messageFor(it) }
+                }
+            },
+            onApproveGroupJoinRequest = { conversationId, requestId ->
+                val current = authStore.session ?: session ?: return@MainScreen
+                uiScope.launch {
+                    runCatching {
+                        withContext(Dispatchers.IO) {
+                            conversationClient.approveGroupJoinRequest(
+                                current.accessToken,
+                                conversationId,
+                                requestId)
+                        }
+                        refreshGroups()
+                        refreshGroupMembers(conversationId)
+                        data = data.copy(
+                            groupJoinRequestsForGroup = withContext(Dispatchers.IO) {
+                                conversationClient.listGroupJoinRequests(
+                                    current.accessToken,
+                                    conversationId)
+                            })
+                    }.onFailure { error = messageFor(it) }
+                }
+            },
+            onRejectGroupJoinRequest = { conversationId, requestId ->
+                val current = authStore.session ?: session ?: return@MainScreen
+                uiScope.launch {
+                    runCatching {
+                        withContext(Dispatchers.IO) {
+                            conversationClient.rejectGroupJoinRequest(
+                                current.accessToken,
+                                conversationId,
+                                requestId)
+                        }
+                        data = data.copy(
+                            groupJoinRequestsForGroup = withContext(Dispatchers.IO) {
+                                conversationClient.listGroupJoinRequests(
+                                    current.accessToken,
+                                    conversationId)
+                            })
+                    }.onFailure { error = messageFor(it) }
+                }
+            },
+            groupNameDraft = groupNameDraft,
+            onGroupNameDraftChange = { groupNameDraft = it.take(128) },
+            groupDescriptionDraft = groupDescriptionDraft,
+            onGroupDescriptionDraftChange = { groupDescriptionDraft = it.take(1000) },
+            groupVisibilityDraft = groupVisibilityDraft,
+            onGroupVisibilityDraftChange = { groupVisibilityDraft = it },
+            onUpdateGroupProfile = { conversationId ->
+                val current = authStore.session ?: session ?: return@MainScreen
+                uiScope.launch {
+                    runCatching {
+                        withContext(Dispatchers.IO) {
+                            conversationClient.updateGroupProfile(
+                                current.accessToken,
+                                conversationId,
+                                groupNameDraft.trim(),
+                                groupDescriptionDraft.trim(),
+                                groupVisibilityDraft)
+                        }
+                        refreshGroups()
+                        refreshGroupMembers(conversationId)
+                    }.onFailure { error = messageFor(it) }
+                }
+            },
             onAddGroupMember = { conversationId ->
                 val current = authStore.session ?: session ?: return@MainScreen
                 uiScope.launch {
@@ -1597,7 +1698,11 @@ private fun MainScreen(
     groupJoinToken: String,
     groupJoinRequests: List<DesktopMyGroupJoinRequest>,
     groupMembers: List<DesktopGroupMember>,
+    groupJoinRequestsForGroup: List<DesktopGroupJoinRequestSummary>,
     groupManagementAccountNo: String,
+    groupNameDraft: String,
+    groupDescriptionDraft: String,
+    groupVisibilityDraft: String,
     groupInvite: DesktopGroupInvite?,
     draft: String,
     aiConsent: DesktopAiConsent?,
@@ -1623,6 +1728,14 @@ private fun MainScreen(
     onGroupManagementAccountNoChange: (String) -> Unit,
     onRefreshGroupJoinRequests: () -> Unit,
     onRefreshGroupMembers: (String) -> Unit,
+    onRefreshGroupJoinRequestsForGroup: (String) -> Unit,
+    onBeginManageGroup: (DesktopGroupSummary) -> Unit,
+    onApproveGroupJoinRequest: (String, String) -> Unit,
+    onRejectGroupJoinRequest: (String, String) -> Unit,
+    onGroupNameDraftChange: (String) -> Unit,
+    onGroupDescriptionDraftChange: (String) -> Unit,
+    onGroupVisibilityDraftChange: (String) -> Unit,
+    onUpdateGroupProfile: (String) -> Unit,
     onAddGroupMember: (String) -> Unit,
     onChangeGroupRole: (String, String, String) -> Unit,
     onTransferGroupOwner: (String, String) -> Unit,
@@ -1822,7 +1935,11 @@ private fun MainScreen(
                     groupJoinToken = groupJoinToken,
                     groupJoinRequests = groupJoinRequests,
                     groupMembers = groupMembers,
+                    groupJoinRequestsForGroup = groupJoinRequestsForGroup,
                     groupManagementAccountNo = groupManagementAccountNo,
+                    groupNameDraft = groupNameDraft,
+                    groupDescriptionDraft = groupDescriptionDraft,
+                    groupVisibilityDraft = groupVisibilityDraft,
                     groupInvite = groupInvite,
                     onGroupSearchQueryChange = onGroupSearchQueryChange,
                     onGroupSearch = onGroupSearch,
@@ -1832,6 +1949,14 @@ private fun MainScreen(
                     onGroupManagementAccountNoChange = onGroupManagementAccountNoChange,
                     onRefreshGroupJoinRequests = onRefreshGroupJoinRequests,
                     onRefreshGroupMembers = onRefreshGroupMembers,
+                    onRefreshGroupJoinRequestsForGroup = onRefreshGroupJoinRequestsForGroup,
+                    onBeginManageGroup = onBeginManageGroup,
+                    onApproveGroupJoinRequest = onApproveGroupJoinRequest,
+                    onRejectGroupJoinRequest = onRejectGroupJoinRequest,
+                    onGroupNameDraftChange = onGroupNameDraftChange,
+                    onGroupDescriptionDraftChange = onGroupDescriptionDraftChange,
+                    onGroupVisibilityDraftChange = onGroupVisibilityDraftChange,
+                    onUpdateGroupProfile = onUpdateGroupProfile,
                     onAddGroupMember = onAddGroupMember,
                     onChangeGroupRole = onChangeGroupRole,
                     onTransferGroupOwner = onTransferGroupOwner,
@@ -1941,7 +2066,11 @@ private fun GroupSidebarPanel(
     groupJoinToken: String,
     groupJoinRequests: List<DesktopMyGroupJoinRequest>,
     groupMembers: List<DesktopGroupMember>,
+    groupJoinRequestsForGroup: List<DesktopGroupJoinRequestSummary>,
     groupManagementAccountNo: String,
+    groupNameDraft: String,
+    groupDescriptionDraft: String,
+    groupVisibilityDraft: String,
     groupInvite: DesktopGroupInvite?,
     onGroupSearchQueryChange: (String) -> Unit,
     onGroupSearch: () -> Unit,
@@ -1951,6 +2080,14 @@ private fun GroupSidebarPanel(
     onGroupManagementAccountNoChange: (String) -> Unit,
     onRefreshGroupJoinRequests: () -> Unit,
     onRefreshGroupMembers: (String) -> Unit,
+    onRefreshGroupJoinRequestsForGroup: (String) -> Unit,
+    onBeginManageGroup: (DesktopGroupSummary) -> Unit,
+    onApproveGroupJoinRequest: (String, String) -> Unit,
+    onRejectGroupJoinRequest: (String, String) -> Unit,
+    onGroupNameDraftChange: (String) -> Unit,
+    onGroupDescriptionDraftChange: (String) -> Unit,
+    onGroupVisibilityDraftChange: (String) -> Unit,
+    onUpdateGroupProfile: (String) -> Unit,
     onAddGroupMember: (String) -> Unit,
     onChangeGroupRole: (String, String, String) -> Unit,
     onTransferGroupOwner: (String, String) -> Unit,
@@ -2019,13 +2156,15 @@ private fun GroupSidebarPanel(
                             onRefreshGroupMembers(group.conversationId)
                             onSelectGroup(group.conversationId)
                         }) { Text("Open") }
-                        OutlinedButton(onClick = {
-                            managedGroupId = group.conversationId
-                            onRefreshGroupMembers(group.conversationId)
-                        }) { Text("Manage") }
-                        OutlinedButton(onClick = {
-                            onCreateGroupInvite(group.conversationId)
-                        }) { Text("Invite") }
+                        if (DesktopGroupGovernancePolicy.canEditProfile(group.role)) {
+                            OutlinedButton(onClick = {
+                                managedGroupId = group.conversationId
+                                onBeginManageGroup(group)
+                            }) { Text("Manage") }
+                            OutlinedButton(onClick = {
+                                onCreateGroupInvite(group.conversationId)
+                            }) { Text("Invite") }
+                        }
                     }
                     if (group.role != "OWNER") {
                         OutlinedButton(onClick = { onLeaveGroup(group.conversationId) }) {
@@ -2039,7 +2178,71 @@ private fun GroupSidebarPanel(
                     if (groupInvite?.conversationId == group.conversationId) {
                         Text("Invite link: ${groupInvite.deepLink}")
                     }
-                    if (managedGroupId == group.conversationId) {
+                    if (managedGroupId == group.conversationId &&
+                        DesktopGroupGovernancePolicy.canEditProfile(group.role)) {
+                        OutlinedTextField(
+                            modifier = Modifier.fillMaxWidth(),
+                            value = groupNameDraft,
+                            onValueChange = onGroupNameDraftChange,
+                            label = { Text("Group name") },
+                            singleLine = true)
+                        OutlinedTextField(
+                            modifier = Modifier.fillMaxWidth(),
+                            value = groupDescriptionDraft,
+                            onValueChange = onGroupDescriptionDraftChange,
+                            label = { Text("Group description") })
+                        Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                            listOf("PUBLIC", "UNLISTED", "PRIVATE").forEach { visibility ->
+                                OutlinedButton(
+                                    onClick = { onGroupVisibilityDraftChange(visibility) }) {
+                                    Text(
+                                        if (groupVisibilityDraft == visibility) {
+                                            "✓ $visibility"
+                                        } else {
+                                            visibility
+                                        })
+                                }
+                            }
+                        }
+                        Button(onClick = { onUpdateGroupProfile(group.conversationId) }) {
+                            Text("Save group profile")
+                        }
+                        if (DesktopGroupGovernancePolicy.canApproveJoinRequests(group.role)) {
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = androidx.compose.ui.Alignment.CenterVertically) {
+                                Text("Pending join requests")
+                                OutlinedButton(onClick = {
+                                    onRefreshGroupJoinRequestsForGroup(group.conversationId)
+                                }) { Text("Refresh") }
+                            }
+                            groupJoinRequestsForGroup
+                                .filter {
+                                    it.conversationId == group.conversationId &&
+                                        it.status == "PENDING"
+                                }
+                                .forEach { request ->
+                                    Row(
+                                        modifier = Modifier.fillMaxWidth(),
+                                        horizontalArrangement = Arrangement.SpaceBetween,
+                                        verticalAlignment = androidx.compose.ui.Alignment.CenterVertically) {
+                                        Text("${request.displayName} · ${request.accountNo}")
+                                        Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                                            Button(onClick = {
+                                                onApproveGroupJoinRequest(
+                                                    request.conversationId,
+                                                    request.requestId)
+                                            }) { Text("Approve") }
+                                            OutlinedButton(onClick = {
+                                                onRejectGroupJoinRequest(
+                                                    request.conversationId,
+                                                    request.requestId)
+                                            }) { Text("Reject") }
+                                        }
+                                    }
+                                }
+                        }
                         OutlinedTextField(
                             modifier = Modifier.fillMaxWidth(),
                             value = groupManagementAccountNo,
@@ -2060,19 +2263,13 @@ private fun GroupSidebarPanel(
                                 Text(
                                     "${member.displayName} · ${member.role}",
                                     modifier = Modifier.weight(1f))
-                                if (member.role == "MEMBER" &&
-                                    (group.role == "OWNER" || group.role == "ADMIN")) {
+                                if (member.role == "MEMBER" && group.role == "OWNER") {
                                     OutlinedButton(onClick = {
                                         onChangeGroupRole(
                                             group.conversationId,
                                             member.userId,
                                             "ADMIN")
                                     }) { Text("Admin") }
-                                    OutlinedButton(onClick = {
-                                        onRemoveGroupMember(
-                                            group.conversationId,
-                                            member.userId)
-                                    }) { Text("Remove") }
                                 } else if (member.role == "ADMIN" && group.role == "OWNER") {
                                     OutlinedButton(onClick = {
                                         onChangeGroupRole(
@@ -2085,6 +2282,15 @@ private fun GroupSidebarPanel(
                                             group.conversationId,
                                             member.userId)
                                     }) { Text("Transfer") }
+                                }
+                                if (DesktopGroupGovernancePolicy.canRemoveMember(
+                                        group.role,
+                                        member.role)) {
+                                    OutlinedButton(onClick = {
+                                        onRemoveGroupMember(
+                                            group.conversationId,
+                                            member.userId)
+                                    }) { Text("Remove") }
                                 }
                             }
                         }
@@ -2189,26 +2395,9 @@ private fun ConversationPane(
                         }
                         Text(if (message.localState == "SENDING") "Sending…" else message.localState)
                         when {
-                            message.type == "SYSTEM" -> {
-                                val target = message.systemTargetUserId
-                                    ?.let { " · target $it" }
-                                    .orEmpty()
-                                val role = message.systemRole
-                                    ?.let { " · role $it" }
-                                    .orEmpty()
-                                Text(
-                                    "Group event: " +
-                                        (message.systemEventType ?: "UNKNOWN") +
-                                        target +
-                                        role)
-                            }
-                            message.state == "RECALLED" -> Text("Message recalled")
-                            message.state == "MODERATED" -> Text(
-                                if (message.moderatedReason.isNullOrBlank()) {
-                                    "Message moderated"
-                                } else {
-                                    "Message moderated: ${message.moderatedReason}"
-                                })
+                            message.type == "SYSTEM" -> Text(message.groupMessageText())
+                            message.state == "RECALLED" -> Text(message.groupMessageText())
+                            message.state == "MODERATED" -> Text(message.groupMessageText())
                             message.type == "IMAGE" -> {
                                 val image = mediaBytes[
                                     "message-media-${message.mediaId}-thumb"]

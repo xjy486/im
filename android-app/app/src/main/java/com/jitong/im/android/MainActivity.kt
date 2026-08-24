@@ -37,7 +37,12 @@ class MainActivity : ComponentActivity() {
     }
     private val groupViewModel: GroupViewModel by viewModels {
         val container = (application as JitongApplication).container
-        GroupViewModel.Factory(container.groupRepository)
+        GroupViewModel.Factory(
+            repository = container.groupRepository,
+            clearGroupData = { conversationId ->
+                container.messageRepository.clearGroupData(conversationId)
+            },
+        )
     }
     private val aiViewModel: AiViewModel by viewModels {
         val container = (application as JitongApplication).container

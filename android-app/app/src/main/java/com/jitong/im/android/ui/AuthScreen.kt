@@ -50,6 +50,8 @@ import java.io.ByteArrayOutputStream
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.jitong.im.android.auth.SessionState
 import com.jitong.im.android.contact.ConversationSummary
+import com.jitong.im.android.group.GroupGovernancePolicy
+import com.jitong.im.android.group.GroupMemberSummary
 import com.jitong.im.android.group.GroupSummary
 import java.util.UUID
 
@@ -541,10 +543,11 @@ private fun GroupListPanel(
                 Button(onClick = { onOpenGroup(group) }) {
                     Text("进入群聊")
                 }
-                if (group.role == "OWNER" || group.role == "ADMIN") {
+                if (GroupGovernancePolicy.canEditProfile(group.role)) {
                     Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                         OutlinedButton(onClick = { viewModel.createInvite(group) }) { Text("生成邀请") }
                         OutlinedButton(onClick = { viewModel.loadJoinRequests(group) }) { Text("入群审批") }
+                        OutlinedButton(onClick = { viewModel.loadMembers(group) }) { Text("群管理") }
                     }
                     OutlinedTextField(
                         value = state.directInviteAccountNo,
@@ -563,6 +566,12 @@ private fun GroupListPanel(
                         onClick = { viewModel.leave(group) },
                         enabled = !state.loading,
                     ) { Text("退出群聊") }
+                }
+                if (group.role == "OWNER") {
+                    OutlinedButton(
+                        onClick = { viewModel.dissolve(group) },
+                        enabled = !state.loading,
+                    ) { Text("解散群聊") }
                 }
                 state.createdInvite
                     ?.takeIf { it.conversationId == group.conversationId }
@@ -589,6 +598,14 @@ private fun GroupListPanel(
                             }
                         }
                     }
+                if (state.memberGroupId == group.conversationId) {
+                    GroupManagementPanel(
+                        group = group,
+                        members = state.members,
+                        state = state,
+                        viewModel = viewModel,
+                    )
+                }
             }
         }
     }
@@ -652,11 +669,9 @@ private fun GroupConversationScreen(
                 Card(Modifier.fillMaxWidth()) {
                     Column(Modifier.padding(14.dp)) {
                         when {
-                            message.type == "SYSTEM" -> Text(
-                                "群系统事件：${message.systemEventType ?: "UNKNOWN"}",
-                            )
-                            message.state == "RECALLED" -> Text("消息已撤回")
-                            message.state == "MODERATED" -> Text("消息已被治理")
+                            message.type == "SYSTEM" -> Text(message.groupMessageText())
+                            message.state == "RECALLED" -> Text(message.groupMessageText())
+                            message.state == "MODERATED" -> Text(message.groupMessageText())
                             message.type == "IMAGE" -> ImageMessageContent(message) { item, thumbnail ->
                                 viewModel.loadMedia(item, thumbnail)
                             }
@@ -700,6 +715,76 @@ private fun GroupConversationScreen(
             ) { Text("发送图片") }
         }
         state.message?.let { Text(it, color = MaterialTheme.colorScheme.error) }
+    }
+}
+
+@Composable
+private fun GroupManagementPanel(
+    group: GroupSummary,
+    members: List<GroupMemberSummary>,
+    state: GroupUiState,
+    viewModel: GroupViewModel,
+) {
+    Card(Modifier.fillMaxWidth()) {
+        Column(
+            Modifier.padding(12.dp),
+            verticalArrangement = Arrangement.spacedBy(6.dp),
+        ) {
+            Text("群管理", style = MaterialTheme.typography.titleMedium)
+            OutlinedTextField(
+                value = state.name.ifBlank { group.name },
+                onValueChange = viewModel::setName,
+                label = { Text("群名称") },
+                singleLine = true,
+                modifier = Modifier.fillMaxWidth(),
+            )
+            OutlinedTextField(
+                value = state.description.ifBlank { group.description },
+                onValueChange = viewModel::setDescription,
+                label = { Text("群简介") },
+                modifier = Modifier.fillMaxWidth(),
+            )
+            Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                listOf("PUBLIC", "UNLISTED", "PRIVATE").forEach { visibility ->
+                    OutlinedButton(onClick = { viewModel.setVisibility(visibility) }) {
+                        Text(if (group.visibility == visibility) "✓ $visibility" else visibility)
+                    }
+                }
+            }
+            Button(
+                onClick = { viewModel.updateProfile(group) },
+                enabled = !state.loading,
+            ) { Text("保存群资料") }
+            members.forEach { member ->
+                Row(
+                    Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Column(Modifier.weight(1f)) {
+                        Text("${member.displayName} · ${member.role}")
+                        Text("账号 ${member.accountNo}", style = MaterialTheme.typography.bodySmall)
+                    }
+                    if (member.role == "MEMBER" && group.role == "OWNER") {
+                        OutlinedButton(onClick = { viewModel.promoteMember(group, member.userId) }) {
+                            Text("任命管理员")
+                        }
+                    } else if (member.role == "ADMIN" && group.role == "OWNER") {
+                        OutlinedButton(onClick = { viewModel.demoteMember(group, member.userId) }) {
+                            Text("降级")
+                        }
+                        OutlinedButton(onClick = { viewModel.transferOwner(group, member.userId) }) {
+                            Text("转让群主")
+                        }
+                    }
+                    if (GroupGovernancePolicy.canRemoveMember(group.role, member.role)) {
+                        OutlinedButton(onClick = { viewModel.removeMember(group, member) }) {
+                            Text("移除")
+                        }
+                    }
+                }
+            }
+        }
     }
 }
 

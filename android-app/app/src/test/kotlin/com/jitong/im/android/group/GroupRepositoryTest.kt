@@ -78,6 +78,8 @@ class GroupRepositoryTest {
 
                 override suspend fun listJoinRequests(conversationId: UUID) = error("not used")
 
+                override suspend fun listMembers(conversationId: UUID) = error("not used")
+
                 override suspend fun approveJoinRequest(conversationId: UUID, requestId: UUID) =
                     error("not used")
 

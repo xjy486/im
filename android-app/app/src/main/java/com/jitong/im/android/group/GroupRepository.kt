@@ -58,6 +58,9 @@ internal class GroupRepository(
     suspend fun listJoinRequests(conversationId: UUID): List<GroupJoinRequestSummary> =
         api.listJoinRequests(conversationId).bodyOrThrow("Group join request list")
 
+    suspend fun listMembers(conversationId: UUID): List<GroupMemberSummary> =
+        api.listMembers(conversationId).bodyOrThrow("Group member list")
+
     suspend fun approveJoinRequest(conversationId: UUID, requestId: UUID): GroupJoinRequestResponse =
         api.approveJoinRequest(conversationId, requestId).bodyOrThrow("Group join request approval")
 

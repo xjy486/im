@@ -108,6 +108,17 @@ internal data class GroupJoinRequestSummary(
     val resolvedAt: String?,
 )
 
+internal data class GroupMemberSummary(
+    val version: Int,
+    val userId: UUID,
+    val accountNo: String,
+    val displayName: String,
+    val role: String,
+    val avatarUrl: String?,
+    val avatarVersion: Long,
+    val avatarFallback: String,
+)
+
 internal data class GroupBanRequest(
     val reason: String? = null,
 )

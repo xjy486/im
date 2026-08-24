@@ -210,6 +210,20 @@ data class DesktopGroupJoinRequest(
 )
 
 @Serializable
+data class DesktopGroupJoinRequestSummary(
+    val version: Int = 1,
+    val requestId: String,
+    val conversationId: String,
+    val userId: String,
+    val status: String,
+    val inviteId: String? = null,
+    val createdAt: String,
+    val resolvedAt: String? = null,
+    val accountNo: String,
+    val displayName: String,
+)
+
+@Serializable
 data class DesktopMyGroupJoinRequest(
     val version: Int = 1,
     val requestId: String,
@@ -545,6 +559,12 @@ class ConversationClient(
         conversationId: String,
     ): List<DesktopGroupMember> =
         requestJson(get("/api/v1/groups/$conversationId/members", accessToken))
+
+    fun listGroupJoinRequests(
+        accessToken: String,
+        conversationId: String,
+    ): List<DesktopGroupJoinRequestSummary> =
+        requestJson(get("/api/v1/groups/$conversationId/join-requests", accessToken))
 
     fun addGroupMember(
         accessToken: String,

@@ -51,6 +51,11 @@ internal interface GroupApi {
         @Path("conversationId") conversationId: UUID,
     ): Response<List<GroupJoinRequestSummary>>
 
+    @GET("api/v1/groups/{conversationId}/members")
+    suspend fun listMembers(
+        @Path("conversationId") conversationId: UUID,
+    ): Response<List<GroupMemberSummary>>
+
     @POST("api/v1/groups/{conversationId}/join-requests/{requestId}/approve")
     suspend fun approveJoinRequest(
         @Path("conversationId") conversationId: UUID,
