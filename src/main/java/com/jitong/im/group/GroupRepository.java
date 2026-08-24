@@ -115,6 +115,7 @@ class GroupRepository {
                           ON ai.conversation_id = g.conversation_id
                         WHERE g.conversation_id = :conversationId
                           AND g.status = 'ACTIVE'
+                          AND g.platform_suspended_at IS NULL
                         """)
                 .param("conversationId", conversationId)
                 .param("userId", userId)
@@ -555,6 +556,7 @@ class GroupRepository {
                           ON ai.conversation_id = g.conversation_id
                         WHERE g.conversation_id = :conversationId
                           AND g.status = 'ACTIVE'
+                          AND g.platform_suspended_at IS NULL
                         """)
                 .param("conversationId", conversationId)
                 .query((row, rowNum) -> new GroupRecord(
@@ -592,6 +594,7 @@ class GroupRepository {
                           ON ai.conversation_id = g.conversation_id
                         WHERE g.conversation_id = :conversationId
                           AND g.status = 'ACTIVE'
+                          AND g.platform_suspended_at IS NULL
                         FOR UPDATE OF g
                         """)
                 .param("conversationId", conversationId)
@@ -957,6 +960,7 @@ class GroupRepository {
                           ON ai.conversation_id = g.conversation_id
                         WHERE g.group_no = :groupNo
                           AND g.status = 'ACTIVE'
+                          AND g.platform_suspended_at IS NULL
                         FOR UPDATE OF g
                         """)
                 .param("groupNo", groupNo)
@@ -1069,6 +1073,7 @@ class GroupRepository {
                          AND member.status = 'ACTIVE'
                         WHERE g.group_no = :groupNo
                           AND g.status = 'ACTIVE'
+                          AND g.platform_suspended_at IS NULL
                           AND g.visibility IN ('PUBLIC', 'UNLISTED')
                         GROUP BY g.conversation_id, g.name, g.description,
                                  g.avatar_media_id, g.avatar_version
@@ -1090,6 +1095,7 @@ class GroupRepository {
                           ON member.conversation_id = g.conversation_id
                          AND member.status = 'ACTIVE'
                         WHERE g.status = 'ACTIVE'
+                          AND g.platform_suspended_at IS NULL
                           AND g.visibility = 'PUBLIC'
                           AND (
                               g.name_normalized ILIKE '%' || :query || '%'

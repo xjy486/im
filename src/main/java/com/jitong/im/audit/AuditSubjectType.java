@@ -5,5 +5,6 @@ public enum AuditSubjectType {
     DEVICE,
     GROUP,
     MESSAGE,
-    AI_JOB
+    AI_JOB,
+    REPORT
 }

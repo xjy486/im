@@ -17,6 +17,7 @@ import com.jitong.im.media.MediaException;
 import com.jitong.im.group.GroupException;
 import com.jitong.im.sync.SyncException;
 import com.jitong.im.ai.AiException;
+import com.jitong.im.abuse.AbuseException;
 import jakarta.servlet.http.HttpServletRequest;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -164,6 +165,14 @@ class ApiExceptionHandler {
     @ExceptionHandler(AiException.class)
     ResponseEntity<ApiErrorResponse> aiFailure(
             AiException exception,
+            HttpServletRequest request
+    ) {
+        return response(exception.definition(), request);
+    }
+
+    @ExceptionHandler(AbuseException.class)
+    ResponseEntity<ApiErrorResponse> abuseFailure(
+            AbuseException exception,
             HttpServletRequest request
     ) {
         return response(exception.definition(), request);

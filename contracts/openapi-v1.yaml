@@ -78,6 +78,164 @@ paths:
           $ref: '#/components/responses/ApiError'
         '404':
           $ref: '#/components/responses/ApiError'
+  /api/v1/abuse-reports:
+    post:
+      operationId: createAbuseReport
+      summary: Submit a report for an accessible user, group, or message
+      security: [{ bearerAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/AbuseReportCreateRequest' }
+      responses:
+        '200':
+          description: Trackable abuse report
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/AbuseReportResponse' }
+        '400':
+          $ref: '#/components/responses/ApiError'
+        '401':
+          $ref: '#/components/responses/ApiError'
+        '404':
+          $ref: '#/components/responses/ApiError'
+    get:
+      operationId: listMyAbuseReports
+      summary: List only the authenticated user's own reports
+      security: [{ bearerAuth: [] }]
+      responses:
+        '200':
+          description: Private report status list
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: '#/components/schemas/AbuseReportResponse' }
+        '401':
+          $ref: '#/components/responses/ApiError'
+  /api/v1/admin/abuse-reports:
+    get:
+      operationId: listAbuseReports
+      summary: Review reports through the protected administrator surface
+      security: [{ adminApiKey: [] }]
+      parameters:
+        - name: status
+          in: query
+          required: false
+          schema: { type: string, enum: [OPEN, REVIEWING, RESOLVED, DISMISSED] }
+        - name: limit
+          in: query
+          required: false
+          schema: { type: integer, minimum: 1, maximum: 200, default: 100 }
+      responses:
+        '200':
+          description: Content-free report metadata and status
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: '#/components/schemas/AbuseReportResponse' }
+        '400':
+          $ref: '#/components/responses/ApiError'
+        '403':
+          $ref: '#/components/responses/ApiError'
+  /api/v1/admin/abuse-reports/{reportId}:
+    patch:
+      operationId: updateAbuseReportStatus
+      summary: Move a report through the review lifecycle
+      security: [{ adminApiKey: [] }]
+      parameters:
+        - name: reportId
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [status]
+              properties:
+                status: { type: string, enum: [OPEN, REVIEWING, RESOLVED, DISMISSED] }
+      responses:
+        '200':
+          description: Updated report status
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/AbuseReportResponse' }
+        '400':
+          $ref: '#/components/responses/ApiError'
+        '403':
+          $ref: '#/components/responses/ApiError'
+        '404':
+          $ref: '#/components/responses/ApiError'
+  /api/v1/admin/users/{userId}/suspension:
+    post:
+      operationId: suspendUser
+      summary: Suspend a user and revoke all active credentials
+      security: [{ adminApiKey: [] }]
+      parameters:
+        - { $ref: '#/components/parameters/UserId' }
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/PlatformSuspensionRequest' }
+      responses:
+        '204': { description: User suspended }
+        '403':
+          $ref: '#/components/responses/ApiError'
+        '404':
+          $ref: '#/components/responses/ApiError'
+    delete:
+      operationId: restoreUser
+      summary: Restore a suspended user
+      security: [{ adminApiKey: [] }]
+      parameters:
+        - { $ref: '#/components/parameters/UserId' }
+      responses:
+        '204': { description: User restored }
+        '403':
+          $ref: '#/components/responses/ApiError'
+        '404':
+          $ref: '#/components/responses/ApiError'
+  /api/v1/admin/groups/{conversationId}/suspension:
+    post:
+      operationId: suspendPublicGroup
+      summary: Pause a public group and hide it from discovery and entry
+      security: [{ adminApiKey: [] }]
+      parameters:
+        - { $ref: '#/components/parameters/ConversationId' }
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/PlatformSuspensionRequest' }
+      responses:
+        '204': { description: Public group paused }
+        '403':
+          $ref: '#/components/responses/ApiError'
+        '404':
+          $ref: '#/components/responses/ApiError'
+        '409':
+          $ref: '#/components/responses/ApiError'
+    delete:
+      operationId: restorePublicGroup
+      summary: Resume a paused public group
+      security: [{ adminApiKey: [] }]
+      parameters:
+        - { $ref: '#/components/parameters/ConversationId' }
+      responses:
+        '204': { description: Public group resumed }
+        '403':
+          $ref: '#/components/responses/ApiError'
+        '404':
+          $ref: '#/components/responses/ApiError'
+        '409':
+          $ref: '#/components/responses/ApiError'
   /api/v1/system/health:
     get:
       operationId: getServiceHealth
@@ -1623,6 +1781,40 @@ components:
         version: { const: 1 }
         temporaryPassword: { type: string, minLength: 1 }
         passwordMustChange: { type: boolean, const: true }
+    AbuseReportCreateRequest:
+      type: object
+      additionalProperties: false
+      required: [targetType, targetId, reasonCode]
+      properties:
+        targetType: { type: string, enum: [USER, GROUP, MESSAGE] }
+        targetId: { type: string, format: uuid }
+        reasonCode:
+          type: string
+          minLength: 1
+          maxLength: 64
+          pattern: '^[A-Za-z][A-Za-z0-9_]{0,63}$'
+    AbuseReportResponse:
+      type: object
+      additionalProperties: false
+      required:
+        [version, reportId, reporterUserId, targetType, targetId, reasonCode,
+         status, createdAt, updatedAt]
+      properties:
+        version: { const: 1 }
+        reportId: { type: string, format: uuid }
+        reporterUserId: { type: string, format: uuid }
+        targetType: { type: string, enum: [USER, GROUP, MESSAGE] }
+        targetId: { type: string, format: uuid }
+        reasonCode: { type: string }
+        status: { type: string, enum: [OPEN, REVIEWING, RESOLVED, DISMISSED] }
+        createdAt: { type: string, format: date-time }
+        updatedAt: { type: string, format: date-time }
+        resolvedAt: { type: [string, 'null'], format: date-time }
+    PlatformSuspensionRequest:
+      type: object
+      additionalProperties: false
+      properties:
+        reason: { type: string, maxLength: 500 }
     AccountDeletionRequest:
       type: object
       additionalProperties: false

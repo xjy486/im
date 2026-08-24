@@ -374,6 +374,7 @@ class AuthRepository {
                         JOIN devices d ON d.id = s.device_id
                         JOIN users u ON u.id = s.user_id
                         WHERE s.access_token_hash = :accessTokenHash
+                          AND u.status = 'ACTIVE'
                         """)
                 .param("accessTokenHash", accessTokenHash)
                 .query((row, rowNum) -> new AuthSession(
