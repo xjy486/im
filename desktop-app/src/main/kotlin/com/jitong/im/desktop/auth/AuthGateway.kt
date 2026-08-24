@@ -6,4 +6,9 @@ interface AuthGateway {
     fun validate(accessToken: String)
     fun confirmReplacement(challenge: String): LoginResponse
     fun logout(accessToken: String)
+    fun changePassword(
+        accessToken: String,
+        currentPassword: String,
+        newPassword: String,
+    ): LoginResponse
 }

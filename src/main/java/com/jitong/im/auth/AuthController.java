@@ -71,6 +71,19 @@ class AuthController {
         return ResponseEntity.noContent().build();
     }
 
+    @PostMapping("/password/change")
+    ResponseEntity<LoginResponse> changePassword(
+            @RequestHeader(value = "Authorization", required = false) String authorization,
+            @Valid @RequestBody PasswordChangeRequest request,
+            HttpServletRequest servletRequest
+    ) {
+        return ResponseEntity.ok(authService.changePassword(
+                authorization,
+                request.currentPassword(),
+                request.newPassword(),
+                java.util.UUID.fromString(RequestContextFilter.requestId(servletRequest))));
+    }
+
     private String clientIp(HttpServletRequest request) {
         return request.getRemoteAddr() == null ? "unknown" : request.getRemoteAddr();
     }

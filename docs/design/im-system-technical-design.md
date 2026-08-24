@@ -579,7 +579,7 @@ PC 还保存 `local_ai_jobs`、`local_ai_artifacts` 和 `local_ai_action_items`�
 | 表 | 关键字段/约束 |
 |---|---|
 | public_identifiers | public_no PK、entity_type、entity_id、retired_at |
-| users | id、account_no、display_name、password_hash、avatar_media_id、status |
+| users | id、account_no、display_name、password_hash、password_must_change、temporary_password_used、avatar_media_id、status |
 | devices | user_id、device_class、installation_id_hash、trust_state、push_token_ciphertext |
 | auth_sessions | device_id、access_token_hash UNIQUE、expires_at、status |
 | refresh_tokens | session_id、family_id、token_hash UNIQUE、parent_id、state、expires_at |

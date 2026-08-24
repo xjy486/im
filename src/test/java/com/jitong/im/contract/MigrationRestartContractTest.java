@@ -55,7 +55,7 @@ class MigrationRestartContractTest {
         try (ConfigurableApplicationContext firstStart = startService()) {
             assertHealthy(firstStart);
             assertSuccessfulMigrationVersions(
-                    "1", "2", "3", "4", "5", "6", "7", "8", "9", "10", "11", "12", "13", "14", "15", "16", "17", "18", "19", "20", "21", "22", "23", "24", "25", "26", "27", "28", "29");
+                    "1", "2", "3", "4", "5", "6", "7", "8", "9", "10", "11", "12", "13", "14", "15", "16", "17", "18", "19", "20", "21", "22", "23", "24", "25", "26", "27", "28", "29", "30");
             insertRestartSentinel();
             insertAuditSentinel(firstStart);
         }
@@ -63,7 +63,7 @@ class MigrationRestartContractTest {
         try (ConfigurableApplicationContext restarted = startService()) {
             assertHealthy(restarted);
             assertSuccessfulMigrationVersions(
-                    "1", "2", "3", "4", "5", "6", "7", "8", "9", "10", "11", "12", "13", "14", "15", "16", "17", "18", "19", "20", "21", "22", "23", "24", "25", "26", "27", "28", "29");
+                    "1", "2", "3", "4", "5", "6", "7", "8", "9", "10", "11", "12", "13", "14", "15", "16", "17", "18", "19", "20", "21", "22", "23", "24", "25", "26", "27", "28", "29", "30");
             assertRestartSentinelPreserved();
             assertAuditSentinelPreserved();
         }

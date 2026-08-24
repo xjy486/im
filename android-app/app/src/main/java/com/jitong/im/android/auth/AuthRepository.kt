@@ -44,6 +44,10 @@ internal class AuthRepository(
                 // The authenticator may have rotated the session while validate() was
                 // running. SessionManager reads the latest encrypted snapshot.
                 sessionManager.markRestored()
+            } else if (response.code() == 403
+                && response.errorPayload(gson).code == "PASSWORD_CHANGE_REQUIRED"
+            ) {
+                sessionManager.requirePasswordChange()
             } else if (response.code() == 401 && sessionManager.shouldEraseAfterUnauthorized()) {
                 sessionManager.invalidateAndErase()
             } else if (response.code() in 400..499) {
@@ -80,10 +84,31 @@ internal class AuthRepository(
         sessionManager.clearCurrentAccount()
     }
 
+    suspend fun changePassword(
+        currentPassword: String,
+        newPassword: String,
+    ) {
+        val response = execute {
+            authenticatedApi.changePassword(
+                PasswordChangeRequest(
+                    currentPassword = currentPassword,
+                    newPassword = newPassword,
+                ))
+        }
+        if (!response.isSuccessful) {
+            throw response.toAuthException()
+        }
+        sessionManager.activate(response.bodyOrThrow())
+    }
+
     fun requireReplacement(exception: DeviceReplacementRequiredException) =
         sessionManager.requireReplacement(exception)
 
     fun showError(message: String) = sessionManager.showError(message)
+
+    fun showPasswordChangeError(message: String) = sessionManager.showPasswordChangeError(message)
+
+    fun requestPasswordChange() = sessionManager.requestPasswordChange()
 
     private suspend fun <T> execute(call: () -> retrofit2.Call<T>): Response<T> =
         withContext(Dispatchers.IO) { call().execute() }

@@ -17,6 +17,11 @@ internal data class RefreshRequest(
     val refreshToken: String,
 )
 
+internal data class PasswordChangeRequest(
+    val currentPassword: String,
+    val newPassword: String,
+)
+
 data class LoginResponse(
     val version: Int,
     val userId: String,
@@ -27,6 +32,7 @@ data class LoginResponse(
     val refreshTokenExpiresAt: String,
     val deviceId: String,
     val deviceClass: String,
+    val passwordMustChange: Boolean = false,
 )
 
 internal data class ApiErrorPayload(
@@ -49,6 +55,7 @@ data class SessionSnapshot(
     val refreshToken: String,
     val accessTokenExpiresAt: String,
     val refreshTokenExpiresAt: String,
+    val passwordMustChange: Boolean = false,
 )
 
 internal fun LoginResponse.toSessionSnapshot(): SessionSnapshot = SessionSnapshot(
@@ -60,4 +67,5 @@ internal fun LoginResponse.toSessionSnapshot(): SessionSnapshot = SessionSnapsho
     refreshToken = refreshToken,
     accessTokenExpiresAt = accessTokenExpiresAt,
     refreshTokenExpiresAt = refreshTokenExpiresAt,
+    passwordMustChange = passwordMustChange,
 )

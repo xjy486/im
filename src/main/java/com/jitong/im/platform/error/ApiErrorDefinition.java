@@ -6,6 +6,7 @@ import org.springframework.http.HttpStatusCode;
 public enum ApiErrorDefinition {
     INVALID_REQUEST(HttpStatus.BAD_REQUEST, "Request could not be processed"),
     AUTH_INVALID(HttpStatus.UNAUTHORIZED, "Authentication is invalid"),
+    PASSWORD_CHANGE_REQUIRED(HttpStatus.FORBIDDEN, "Password change is required before using this service"),
     TOKEN_EXPIRED(HttpStatus.UNAUTHORIZED, "Authentication token has expired"),
     DEVICE_REPLACEMENT_REQUIRED(HttpStatus.CONFLICT, "Device replacement confirmation is required"),
     SYNC_RESET_REQUIRED(HttpStatus.CONFLICT, "The synchronization cursor is outside the retained window"),

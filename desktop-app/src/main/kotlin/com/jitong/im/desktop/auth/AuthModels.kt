@@ -28,6 +28,13 @@ data class LoginResponse(
     val refreshTokenExpiresAt: String,
     val deviceId: String,
     val deviceClass: DeviceClass,
+    val passwordMustChange: Boolean = false,
+)
+
+@Serializable
+data class PasswordChangeRequest(
+    val currentPassword: String,
+    val newPassword: String,
 )
 
 @Serializable

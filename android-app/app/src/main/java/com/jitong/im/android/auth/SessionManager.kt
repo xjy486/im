@@ -13,6 +13,11 @@ sealed interface SessionState {
     data object SignedOut : SessionState
     data object Restoring : SessionState
     data class SignedIn(val session: SessionSnapshot) : SessionState
+    data class PasswordChangeRequired(
+        val session: SessionSnapshot,
+        val temporaryPasswordRequired: Boolean,
+        val error: String? = null,
+    ) : SessionState
     data class ReplacementRequired(
         val challenge: String,
         val deviceClass: String,
@@ -51,7 +56,11 @@ internal class SessionManager(
         withContext(Dispatchers.IO) {
             localStore.ensureAccount(snapshot)
         }
-        _state.value = SessionState.SignedIn(snapshot)
+        _state.value = if (snapshot.passwordMustChange) {
+            SessionState.PasswordChangeRequired(snapshot, temporaryPasswordRequired = true)
+        } else {
+            SessionState.SignedIn(snapshot)
+        }
     }
 
     suspend fun markRestored() {
@@ -62,7 +71,16 @@ internal class SessionManager(
         withContext(Dispatchers.IO) {
             localStore.ensureAccount(current)
         }
-        _state.value = SessionState.SignedIn(current)
+        _state.value = if (_state.value is SessionState.PasswordChangeRequired) {
+            (_state.value as SessionState.PasswordChangeRequired).copy(
+                session = current,
+                temporaryPasswordRequired = current.passwordMustChange,
+            )
+        } else if (current.passwordMustChange) {
+            SessionState.PasswordChangeRequired(current, temporaryPasswordRequired = true)
+        } else {
+            SessionState.SignedIn(current)
+        }
     }
 
     @Synchronized
@@ -71,8 +89,36 @@ internal class SessionManager(
     }
 
     @Synchronized
+    fun requirePasswordChange() {
+        val current = sessionStore.read() ?: return
+        _state.value = SessionState.PasswordChangeRequired(
+            session = current,
+            temporaryPasswordRequired = current.passwordMustChange,
+        )
+    }
+
+    @Synchronized
     fun showError(message: String) {
         _state.value = SessionState.Error(message)
+    }
+
+    @Synchronized
+    fun requestPasswordChange() {
+        val current = sessionStore.read() ?: return
+        _state.value = SessionState.PasswordChangeRequired(
+            current,
+            temporaryPasswordRequired = false,
+        )
+    }
+
+    @Synchronized
+    fun showPasswordChangeError(message: String) {
+        val current = sessionStore.read() ?: return
+        _state.value = SessionState.PasswordChangeRequired(
+            current,
+            temporaryPasswordRequired = current.passwordMustChange,
+            error = message,
+        )
     }
 
     /** Normal logout: credentials disappear, but the account database and media cache stay. */
@@ -146,7 +192,16 @@ internal class SessionManager(
         val refreshed = response.body()!!
         val snapshot = refreshed.toSessionSnapshot()
         sessionStore.write(snapshot)
-        _state.value = SessionState.SignedIn(snapshot)
+        _state.value = if (_state.value is SessionState.PasswordChangeRequired) {
+            (_state.value as SessionState.PasswordChangeRequired).copy(
+                session = snapshot,
+                temporaryPasswordRequired = snapshot.passwordMustChange,
+            )
+        } else if (snapshot.passwordMustChange) {
+            SessionState.PasswordChangeRequired(snapshot, temporaryPasswordRequired = true)
+        } else {
+            SessionState.SignedIn(snapshot)
+        }
         lastRefreshOutcome = RefreshOutcome.SUCCEEDED
         return snapshot.accessToken
     }

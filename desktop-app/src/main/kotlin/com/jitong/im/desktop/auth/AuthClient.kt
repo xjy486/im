@@ -47,6 +47,22 @@ class AuthClient(
         execute(request)
     }
 
+    override fun changePassword(
+        accessToken: String,
+        currentPassword: String,
+        newPassword: String,
+    ): LoginResponse {
+        val request = Request.Builder()
+            .url(url("/api/v1/auth/password/change"))
+            .header("Authorization", "Bearer $accessToken")
+            .header("Content-Type", JSON_MEDIA_TYPE.toString())
+            .post(json.encodeToString(
+                PasswordChangeRequest(currentPassword, newPassword))
+                .toRequestBody(JSON_MEDIA_TYPE))
+            .build()
+        return json.decodeFromString(execute(request))
+    }
+
     private inline fun <reified T> post(path: String, body: T): LoginResponse {
         val request = Request.Builder()
             .url(url(path))

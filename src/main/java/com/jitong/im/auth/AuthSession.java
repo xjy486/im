@@ -9,6 +9,7 @@ record AuthSession(
         UUID deviceId,
         Instant expiresAt,
         String status,
-        String deviceTrustState
+        String deviceTrustState,
+        boolean passwordMustChange
 ) {
 }

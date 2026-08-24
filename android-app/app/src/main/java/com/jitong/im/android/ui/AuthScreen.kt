@@ -74,6 +74,7 @@ internal fun JitongApp(
             }
             SessionState.Restoring -> RestoringScreen()
             is SessionState.ReplacementRequired -> ReplacementScreen(current, viewModel)
+            is SessionState.PasswordChangeRequired -> PasswordChangeScreen(current, viewModel)
             is SessionState.SignedIn -> HomeScreen(
                 current,
                 viewModel,
@@ -84,6 +85,71 @@ internal fun JitongApp(
                 groupViewModel,
             )
             is SessionState.Error -> LoginScreen(viewModel, current.message)
+        }
+    }
+}
+
+@Composable
+private fun PasswordChangeScreen(
+    state: SessionState.PasswordChangeRequired,
+    viewModel: AuthViewModel,
+) {
+    var currentPassword by rememberSaveable { mutableStateOf("") }
+    var newPassword by rememberSaveable { mutableStateOf("") }
+
+    Column(
+        modifier = Modifier
+            .fillMaxSize()
+            .verticalScroll(rememberScrollState())
+            .padding(24.dp),
+        verticalArrangement = Arrangement.Center,
+    ) {
+        Text(
+            if (state.temporaryPasswordRequired) "首次登录必须修改密码" else "修改密码",
+            style = MaterialTheme.typography.headlineMedium,
+        )
+        Spacer(Modifier.height(12.dp))
+        Text(
+            if (state.temporaryPasswordRequired) {
+                "请输入刚才登录使用的临时密码，并设置新的长期密码。修改前不能进入正常业务。"
+            } else {
+                "请输入当前密码并设置新的长期密码。其他设备会立即退出。"
+            },
+        )
+        Spacer(Modifier.height(18.dp))
+        Card(Modifier.fillMaxWidth()) {
+            Column(Modifier.padding(20.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
+                OutlinedTextField(
+                    value = currentPassword,
+                    onValueChange = { currentPassword = it },
+                    label = { Text(if (state.temporaryPasswordRequired) "临时密码" else "当前密码") },
+                    singleLine = true,
+                    visualTransformation = PasswordVisualTransformation(),
+                    modifier = Modifier.fillMaxWidth(),
+                )
+                OutlinedTextField(
+                    value = newPassword,
+                    onValueChange = { newPassword = it },
+                    label = { Text("新密码") },
+                    singleLine = true,
+                    visualTransformation = PasswordVisualTransformation(),
+                    modifier = Modifier.fillMaxWidth(),
+                )
+                state.error?.let { Text(it, color = MaterialTheme.colorScheme.error) }
+                Button(
+                    onClick = { viewModel.changePassword(currentPassword, newPassword) },
+                    enabled = currentPassword.isNotBlank() && newPassword.length >= 8,
+                    modifier = Modifier.fillMaxWidth(),
+                ) {
+                    Text("保存新密码")
+                }
+                OutlinedButton(
+                    onClick = { viewModel.logout() },
+                    modifier = Modifier.fillMaxWidth(),
+                ) {
+                    Text("退出登录")
+                }
+            }
         }
     }
 }
@@ -320,6 +386,12 @@ private fun HomeScreen(
                 Text("设备类型 ${state.session.deviceClass}")
                 Text("本地空间：独立 SQLCipher 数据库")
                 Text("退出后仍保留加密历史，受保护页面仅在有效会话下可访问。")
+                OutlinedButton(
+                    onClick = { viewModel.requestPasswordChange() },
+                    modifier = Modifier.fillMaxWidth(),
+                ) {
+                    Text("修改密码")
+                }
             }
         }
         Spacer(Modifier.weight(1f))

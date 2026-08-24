@@ -47,6 +47,21 @@ internal class AuthViewModel(
         }
     }
 
+    fun changePassword(currentPassword: String, newPassword: String) {
+        viewModelScope.launch {
+            runCatching {
+                repository.changePassword(currentPassword.trim(), newPassword)
+            }.onFailure { failure ->
+                logFailure("change_password", failure)
+                repository.showPasswordChangeError(failure.userMessage())
+            }
+        }
+    }
+
+    fun requestPasswordChange() {
+        repository.requestPasswordChange()
+    }
+
     fun logout() {
         viewModelScope.launch { repository.logout() }
     }

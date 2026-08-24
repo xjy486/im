@@ -19,6 +19,7 @@ data class DesktopSession(
     val refreshToken: String,
     val accessTokenExpiresAt: Instant,
     val refreshTokenExpiresAt: Instant,
+    val passwordMustChange: Boolean,
 )
 
 class DesktopAuthStore(
@@ -54,6 +55,13 @@ class DesktopAuthStore(
         return authenticated(authClient.confirmReplacement(challenge)).session
     }
 
+    fun changePassword(currentPassword: String, newPassword: String): DesktopSession {
+        val current = session ?: error("No active session")
+        return authenticated(
+            authClient.changePassword(current.accessToken, currentPassword, newPassword)
+        ).session
+    }
+
     fun restore(): DesktopSession? {
         val storedAccount = databaseManager.findAccounts().firstOrNull { account ->
             databaseManager.open(account).use { it.loadSession() != null }
@@ -67,10 +75,16 @@ class DesktopAuthStore(
             val refreshed = authClient.refresh(refreshToken)
             authenticated(refreshed).session
         } catch (exception: AuthApiException) {
-            if (exception.statusCode == 401) {
-                clearUntrustedLocalDataAndReturnNull(stored.accountNo)
+            if (exception.statusCode == 403
+                && exception.error.code == "PASSWORD_CHANGE_REQUIRED"
+            ) {
+                session
             } else {
-                throw exception
+                if (exception.statusCode == 401) {
+                    clearUntrustedLocalDataAndReturnNull(stored.accountNo)
+                } else {
+                    throw exception
+                }
             }
         }
     }
@@ -134,7 +148,8 @@ class DesktopAuthStore(
             accessToken = response.accessToken,
             refreshToken = response.refreshToken,
             accessTokenExpiresAt = Instant.parse(response.accessTokenExpiresAt),
-            refreshTokenExpiresAt = Instant.parse(response.refreshTokenExpiresAt))
+            refreshTokenExpiresAt = Instant.parse(response.refreshTokenExpiresAt),
+            passwordMustChange = response.passwordMustChange)
         database?.close()
         database = databaseManager.open(next.accountNo)
         database!!.saveSession(next.toStored())

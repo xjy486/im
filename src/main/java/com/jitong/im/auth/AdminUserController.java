@@ -53,6 +53,18 @@ class AdminUserController {
         return ResponseEntity.noContent().build();
     }
 
+    @PostMapping("/{userId}/password-reset")
+    PasswordResetResponse resetPassword(
+            @RequestHeader(value = "X-Admin-Api-Key", required = false) String apiKey,
+            @PathVariable UUID userId,
+            HttpServletRequest servletRequest
+    ) {
+        requireAdmin(apiKey);
+        return authService.resetPassword(
+                userId,
+                UUID.fromString(RequestContextFilter.requestId(servletRequest)));
+    }
+
     private void requireAdmin(String apiKey) {
         if (!matchesApiKey(apiKey, adminProperties.apiKey())) {
             throw new ResponseStatusException(HttpStatus.FORBIDDEN);

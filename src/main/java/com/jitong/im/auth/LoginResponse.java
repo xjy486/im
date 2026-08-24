@@ -12,7 +12,8 @@ public record LoginResponse(
         Instant accessTokenExpiresAt,
         Instant refreshTokenExpiresAt,
         UUID deviceId,
-        String deviceClass
+        String deviceClass,
+        boolean passwordMustChange
 ) {
     static LoginResponse of(
             User user,
@@ -21,7 +22,8 @@ public record LoginResponse(
             Instant accessTokenExpiresAt,
             Instant refreshTokenExpiresAt,
             UUID deviceId,
-            String deviceClass
+            String deviceClass,
+            boolean passwordMustChange
     ) {
         return new LoginResponse(
                 1,
@@ -32,6 +34,7 @@ public record LoginResponse(
                 accessTokenExpiresAt,
                 refreshTokenExpiresAt,
                 deviceId,
-                deviceClass);
+                deviceClass,
+                passwordMustChange);
     }
 }

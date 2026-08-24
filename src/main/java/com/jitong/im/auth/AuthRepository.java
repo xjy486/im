@@ -7,6 +7,7 @@ import java.sql.Types;
 import java.time.Instant;
 import java.time.OffsetDateTime;
 import java.time.ZoneOffset;
+import java.util.Set;
 import java.util.UUID;
 
 @Repository
@@ -61,7 +62,8 @@ class AuthRepository {
 
     User findActiveUser(String accountNo) {
         return jdbc.sql("""
-                        SELECT id, account_no, display_name, password_hash
+                        SELECT id, account_no, display_name, password_hash,
+                               password_must_change, temporary_password_used
                         FROM users
                         WHERE account_no = :accountNo AND status = 'ACTIVE'
                         """)
@@ -73,7 +75,8 @@ class AuthRepository {
 
     User findActiveUserById(UUID userId) {
         return jdbc.sql("""
-                        SELECT id, account_no, display_name, password_hash
+                        SELECT id, account_no, display_name, password_hash,
+                               password_must_change, temporary_password_used
                         FROM users
                         WHERE id = :userId AND status = 'ACTIVE'
                         """)
@@ -341,11 +344,35 @@ class AuthRepository {
                 .trim();
     }
 
+    boolean findUserPasswordMustChange(UUID userId) {
+        return jdbc.sql("""
+                        SELECT password_must_change
+                        FROM users
+                        WHERE id = :userId
+                        """)
+                .param("userId", userId)
+                .query(Boolean.class)
+                .single();
+    }
+
+    Set<UUID> activeDeviceIdsForUser(UUID userId) {
+        return Set.copyOf(jdbc.sql("""
+                        SELECT id
+                        FROM devices
+                        WHERE user_id = :userId AND trust_state = 'ACTIVE'
+                        """)
+                .param("userId", userId)
+                .query(UUID.class)
+                .list());
+    }
+
     AuthSession findSessionByAccessTokenHash(String accessTokenHash) {
         return jdbc.sql("""
-                        SELECT s.id, s.user_id, s.device_id, s.expires_at, s.status, d.trust_state
+                        SELECT s.id, s.user_id, s.device_id, s.expires_at, s.status, d.trust_state,
+                               u.password_must_change
                         FROM auth_sessions s
                         JOIN devices d ON d.id = s.device_id
+                        JOIN users u ON u.id = s.user_id
                         WHERE s.access_token_hash = :accessTokenHash
                         """)
                 .param("accessTokenHash", accessTokenHash)
@@ -355,7 +382,8 @@ class AuthRepository {
                         row.getObject("device_id", UUID.class),
                         row.getObject("expires_at", OffsetDateTime.class).toInstant(),
                         row.getString("status"),
-                        row.getString("trust_state")))
+                        row.getString("trust_state"),
+                        row.getBoolean("password_must_change")))
                 .optional()
                 .orElse(null);
     }
@@ -393,6 +421,103 @@ class AuthRepository {
                           AND state <> 'REVOKED'
                         """)
                 .param("accessTokenHash", accessTokenHash)
+                .update();
+    }
+
+    PasswordChangeUser findUserForPasswordChange(UUID userId) {
+        return jdbc.sql("""
+                        SELECT id, password_hash, password_must_change,
+                               temporary_password_used
+                        FROM users
+                        WHERE id = :userId AND status = 'ACTIVE'
+                        FOR UPDATE
+                        """)
+                .param("userId", userId)
+                .query((row, rowNum) -> new PasswordChangeUser(
+                        row.getObject("id", UUID.class),
+                        row.getString("password_hash"),
+                        row.getBoolean("password_must_change"),
+                        row.getBoolean("temporary_password_used")))
+                .optional()
+                .orElse(null);
+    }
+
+    void updatePassword(
+            UUID userId,
+            String passwordHash,
+            boolean passwordMustChange,
+            boolean temporaryPasswordUsed
+    ) {
+        jdbc.sql("""
+                        UPDATE users
+                        SET password_hash = :passwordHash,
+                            password_must_change = :passwordMustChange,
+                            temporary_password_used = :temporaryPasswordUsed
+                        WHERE id = :userId AND status = 'ACTIVE'
+                        """)
+                .param("userId", userId)
+                .param("passwordHash", passwordHash)
+                .param("passwordMustChange", passwordMustChange)
+                .param("temporaryPasswordUsed", temporaryPasswordUsed)
+                .update();
+    }
+
+    boolean consumeTemporaryPassword(UUID userId) {
+        return jdbc.sql("""
+                        UPDATE users
+                        SET temporary_password_used = TRUE
+                        WHERE id = :userId
+                          AND status = 'ACTIVE'
+                          AND password_must_change = TRUE
+                          AND temporary_password_used = FALSE
+                        """)
+                .param("userId", userId)
+                .update() == 1;
+    }
+
+
+    void revokeAllUserCredentials(UUID userId, Instant now) {
+        jdbc.sql("""
+                        UPDATE auth_sessions
+                        SET status = 'REVOKED', revoked_at = :revokedAt
+                        WHERE user_id = :userId AND status = 'ACTIVE'
+                        """)
+                .param("userId", userId)
+                .param("revokedAt", utc(now), Types.TIMESTAMP_WITH_TIMEZONE)
+                .update();
+        jdbc.sql("""
+                        UPDATE refresh_tokens
+                        SET state = 'REVOKED'
+                        WHERE session_id IN (
+                            SELECT id FROM auth_sessions WHERE user_id = :userId
+                        )
+                          AND state <> 'REVOKED'
+                        """)
+                .param("userId", userId)
+                .update();
+        jdbc.sql("""
+                        UPDATE devices
+                        SET push_token_ciphertext = NULL,
+                            push_token_digest = NULL,
+                            push_token_version = 0
+                        WHERE user_id = :userId
+                        """)
+                .param("userId", userId)
+                .update();
+    }
+
+    void revokeAllUserDevices(UUID userId, Instant now) {
+        jdbc.sql("""
+                        UPDATE devices
+                        SET trust_state = 'UNTRUSTED',
+                            push_token_ciphertext = NULL,
+                            push_token_digest = NULL,
+                            push_token_version = 0,
+                            untrusted_at = :untrustedAt
+                        WHERE user_id = :userId AND trust_state = 'ACTIVE'
+                        """)
+                .param("userId", userId)
+                .param("untrustedAt", utc(now), Types.TIMESTAMP_WITH_TIMEZONE)
                 .update();
     }
 
@@ -767,7 +892,9 @@ class AuthRepository {
                 row.getObject("id", UUID.class),
                 row.getString("account_no").trim(),
                 row.getString("display_name"),
-                row.getString("password_hash"));
+                row.getString("password_hash"),
+                row.getBoolean("password_must_change"),
+                row.getBoolean("temporary_password_used"));
     }
 
     private ChallengeRecord mapChallenge(java.sql.ResultSet row, int rowNum) throws java.sql.SQLException {
@@ -790,6 +917,14 @@ class AuthRepository {
             DeviceClass deviceClass,
             Instant usedAt,
             Instant expiresAt
+    ) {
+    }
+
+    record PasswordChangeUser(
+            UUID id,
+            String passwordHash,
+            boolean passwordMustChange,
+            boolean temporaryPasswordUsed
     ) {
     }
 }

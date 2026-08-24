@@ -22,6 +22,9 @@ internal interface AuthApi {
 
     @POST("api/v1/auth/logout")
     fun logout(@Header("Authorization") authorization: String): Call<Void>
+
+    @POST("api/v1/auth/password/change")
+    fun changePassword(@Body request: PasswordChangeRequest): Call<LoginResponse>
 }
 
 internal fun <T> Response<T>.errorPayload(gson: com.google.gson.Gson): ApiErrorPayload {

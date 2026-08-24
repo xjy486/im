@@ -6,6 +6,7 @@ import com.jitong.im.audit.SecurityAuditEvent;
 import com.jitong.im.audit.SecurityAuditEventType;
 import com.jitong.im.audit.SecurityAuditSink;
 import com.jitong.im.platform.error.ApiErrorDefinition;
+import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
@@ -14,6 +15,7 @@ import org.springframework.transaction.annotation.Transactional;
 import java.time.Clock;
 import java.time.Duration;
 import java.time.Instant;
+import java.util.Set;
 import java.util.UUID;
 
 @Service
@@ -27,6 +29,7 @@ public class AuthService {
     private final SecurityAuditSink auditSink;
     private final PrivateAiDataEraser privateAiDataEraser;
     private final Clock clock;
+    private final ApplicationEventPublisher eventPublisher;
 
     @Autowired
     AuthService(
@@ -36,7 +39,8 @@ public class AuthService {
             AuthProperties properties,
             LoginRateLimiter rateLimiter,
             SecurityAuditSink auditSink,
-            PrivateAiDataEraser privateAiDataEraser
+            PrivateAiDataEraser privateAiDataEraser,
+            ApplicationEventPublisher eventPublisher
     ) {
         this(
                 repository,
@@ -46,7 +50,8 @@ public class AuthService {
                 rateLimiter,
                 auditSink,
                 privateAiDataEraser,
-                Clock.systemUTC());
+                Clock.systemUTC(),
+                eventPublisher);
     }
 
     AuthService(
@@ -57,7 +62,8 @@ public class AuthService {
             LoginRateLimiter rateLimiter,
             SecurityAuditSink auditSink,
             PrivateAiDataEraser privateAiDataEraser,
-            Clock clock
+            Clock clock,
+            ApplicationEventPublisher eventPublisher
     ) {
         this.repository = repository;
         this.passwordEncoder = passwordEncoder;
@@ -67,6 +73,7 @@ public class AuthService {
         this.auditSink = auditSink;
         this.privateAiDataEraser = privateAiDataEraser;
         this.clock = clock;
+        this.eventPublisher = eventPublisher;
     }
 
     @Transactional
@@ -101,6 +108,18 @@ public class AuthService {
         String installationIdHash = TokenDigests.sha256(normalizeInstallationId(requestedInstallationId));
         Instant now = clock.instant();
         repository.lockUser(user.id());
+        user = repository.findActiveUserById(user.id());
+        if (user == null
+                || !passwordEncoder.matches(password, user.passwordHash())
+                || (user.passwordMustChange() && user.temporaryPasswordUsed())) {
+            recordLogin(
+                    user,
+                    requestId,
+                    AuditOutcome.REJECTED,
+                    ApiErrorDefinition.AUTH_INVALID,
+                    null);
+            throw new InvalidCredentialsException();
+        }
         DeviceSession device = repository.findDeviceSession(user.id(), deviceClass, installationIdHash);
         if (device == null) {
             UUID activeDeviceId = repository.findActiveDeviceId(user.id(), deviceClass);
@@ -128,6 +147,11 @@ public class AuthService {
             repository.touchDevice(device.deviceId(), now);
         }
 
+        if (user.passwordMustChange()) {
+            if (!repository.consumeTemporaryPassword(user.id())) {
+                throw new InvalidCredentialsException();
+            }
+        }
         TokenPair tokens = issueTokens(device.deviceId(), user.id(), deviceClass, now);
         recordLogin(user, requestId, AuditOutcome.SUCCEEDED, null, device.deviceId());
         return LoginResponse.of(
@@ -137,7 +161,8 @@ public class AuthService {
                 tokens.accessTokenExpiresAt(),
                 tokens.refreshTokenExpiresAt(),
                 tokens.deviceId(),
-                tokens.deviceClass());
+                tokens.deviceClass(),
+                user.passwordMustChange());
     }
 
     @Transactional
@@ -177,6 +202,11 @@ public class AuthService {
             throw new InvalidCredentialsException();
         }
 
+        if (user.passwordMustChange()) {
+            if (!repository.consumeTemporaryPassword(user.id())) {
+                throw new InvalidCredentialsException();
+            }
+        }
         TokenPair tokens = issueTokens(deviceId, user.id(), challenge.deviceClass(), now);
         recordDeviceReplacement(
                 user.id(),
@@ -191,7 +221,8 @@ public class AuthService {
                 tokens.accessTokenExpiresAt(),
                 tokens.refreshTokenExpiresAt(),
                 tokens.deviceId(),
-                tokens.deviceClass());
+                tokens.deviceClass(),
+                user.passwordMustChange());
     }
 
     @Transactional(noRollbackFor = RefreshTokenException.class)
@@ -255,11 +286,15 @@ public class AuthService {
                 accessExpiresAt,
                 refreshExpiresAt,
                 token.deviceId(),
-                repository.findDeviceClass(token.deviceId()));
+                repository.findDeviceClass(token.deviceId()),
+                repository.findUserPasswordMustChange(token.userId()));
     }
 
     User requireUser(String authorizationHeader) {
         AuthSession session = requireSession(authorizationHeader);
+        if (session.passwordMustChange()) {
+            throw new TemporaryPasswordRequiredException();
+        }
         return new User(session.userId(), null, null, null);
     }
 
@@ -269,11 +304,15 @@ public class AuthService {
 
     public AuthenticatedDevice requireAuthenticatedDevice(String authorizationHeader) {
         AuthSession session = requireSession(authorizationHeader);
+        if (session.passwordMustChange()) {
+            throw new TemporaryPasswordRequiredException();
+        }
         return new AuthenticatedDevice(
                 session.userId(),
                 session.deviceId(),
                 session.sessionId(),
-                repository.findDeviceClass(session.deviceId()));
+                repository.findDeviceClass(session.deviceId()),
+                session.passwordMustChange());
     }
 
     @Transactional
@@ -302,6 +341,81 @@ public class AuthService {
                 requestId,
                 null,
                 clock.instant()));
+    }
+
+    @Transactional
+    LoginResponse changePassword(
+            String authorizationHeader,
+            String currentPassword,
+            String newPassword,
+            UUID requestId
+    ) {
+        AuthSession session = requireSession(authorizationHeader);
+        Instant now = clock.instant();
+        AuthRepository.PasswordChangeUser user = repository.findUserForPasswordChange(session.userId());
+        Set<UUID> revokedDeviceIds = repository.activeDeviceIdsForUser(session.userId());
+        boolean currentPasswordMatches = user != null
+                && passwordEncoder.matches(currentPassword, user.passwordHash());
+        if (!currentPasswordMatches) {
+            recordPasswordChange(
+                    session.userId(),
+                    session.deviceId(),
+                    requestId,
+                    AuditOutcome.REJECTED,
+                    ApiErrorDefinition.AUTH_INVALID);
+            throw new InvalidCredentialsException();
+        }
+        repository.updatePassword(
+                session.userId(),
+                passwordEncoder.encode(newPassword),
+                false,
+                false);
+        String deviceClass = repository.findDeviceClass(session.deviceId());
+        repository.revokeAllUserCredentials(session.userId(), now);
+        repository.revokeSessionByAccessTokenHash(
+                TokenDigests.sha256(bearerToken(authorizationHeader)),
+                now);
+        eventPublisher.publishEvent(new AuthCredentialsRevokedEvent(revokedDeviceIds));
+        TokenPair tokens = issueTokens(session.deviceId(), session.userId(), DeviceClass.valueOf(deviceClass), now);
+        recordPasswordChange(
+                session.userId(),
+                session.deviceId(),
+                requestId,
+                AuditOutcome.SUCCEEDED,
+                null);
+        return new LoginResponse(
+                1,
+                session.userId(),
+                repository.findUserAccountNo(session.userId()),
+                tokens.accessToken(),
+                tokens.refreshToken(),
+                tokens.accessTokenExpiresAt(),
+                tokens.refreshTokenExpiresAt(),
+                tokens.deviceId(),
+                tokens.deviceClass(),
+                false);
+    }
+
+    @Transactional
+    PasswordResetResponse resetPassword(UUID userId, UUID requestId) {
+        Instant now = clock.instant();
+        AuthRepository.PasswordChangeUser user = repository.findUserForPasswordChange(userId);
+        if (user == null) {
+            recordPasswordReset(null, requestId, AuditOutcome.REJECTED, ApiErrorDefinition.USER_NOT_FOUND);
+            throw new PasswordResetTargetNotFoundException();
+        }
+        Set<UUID> revokedDeviceIds = repository.activeDeviceIdsForUser(userId);
+        String temporaryPassword = TokenDigests.newOpaqueToken();
+        repository.updatePassword(
+                userId,
+                passwordEncoder.encode(temporaryPassword),
+                true,
+                false);
+        repository.revokeAllUserCredentials(userId, now);
+        repository.revokeAllUserDevices(userId, now);
+        eventPublisher.publishEvent(new AuthCredentialsRevokedEvent(revokedDeviceIds));
+        recordPasswordReset(userId, requestId, AuditOutcome.SUCCEEDED, null);
+        return new PasswordResetResponse(1, temporaryPassword, true);
     }
 
     @Transactional
@@ -363,6 +477,45 @@ public class AuthService {
             throw new ExpiredAccessTokenException();
         }
         return session;
+    }
+
+    private void recordPasswordChange(
+            UUID userId,
+            UUID deviceId,
+            UUID requestId,
+            AuditOutcome outcome,
+            ApiErrorDefinition error
+    ) {
+        auditSink.record(new SecurityAuditEvent(
+                UuidV7.random(),
+                SecurityAuditEventType.PASSWORD_CHANGE,
+                outcome,
+                userId,
+                deviceId,
+                AuditSubjectType.USER,
+                userId,
+                requestId,
+                error,
+                clock.instant()));
+    }
+
+    private void recordPasswordReset(
+            UUID userId,
+            UUID requestId,
+            AuditOutcome outcome,
+            ApiErrorDefinition error
+    ) {
+        auditSink.record(new SecurityAuditEvent(
+                UuidV7.random(),
+                SecurityAuditEventType.PASSWORD_RESET,
+                outcome,
+                null,
+                null,
+                userId == null ? null : AuditSubjectType.USER,
+                userId,
+                requestId,
+                error,
+                clock.instant()));
     }
 
     private String normalizeInstallationId(String installationId) {

@@ -6,11 +6,14 @@ import com.jitong.im.sync.OutboxRecord;
 import com.jitong.im.push.FcmSender;
 import com.jitong.im.push.FcmDeliveryResult;
 import com.jitong.im.auth.DevicePushTokenService;
+import com.jitong.im.auth.AuthCredentialsRevokedEvent;
 import com.jitong.im.ai.AiDelivery;
 import com.jitong.im.ai.AiService;
 import com.jitong.im.media.AvatarService;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Component;
+import org.springframework.transaction.event.TransactionPhase;
+import org.springframework.transaction.event.TransactionalEventListener;
 import org.springframework.web.socket.TextMessage;
 import org.springframework.web.socket.WebSocketSession;
 
@@ -103,6 +106,32 @@ class MessageOutboxDelivery implements OutboxDelivery {
                 sessionsByDevice.remove(deviceId, sessions);
             }
         }
+    }
+
+    void closeDevices(Set<UUID> deviceIds) {
+        if (deviceIds == null || deviceIds.isEmpty()) {
+            return;
+        }
+        synchronized (sessionsLock) {
+            for (UUID deviceId : deviceIds) {
+                Set<WebSocketSession> sessions = sessionsByDevice.remove(deviceId);
+                if (sessions == null) {
+                    continue;
+                }
+                for (WebSocketSession session : sessions) {
+                    try {
+                        session.close(org.springframework.web.socket.CloseStatus.POLICY_VIOLATION);
+                    } catch (IOException ignored) {
+                        // The session is no longer usable; removal above is sufficient.
+                    }
+                }
+            }
+        }
+    }
+
+    @TransactionalEventListener(phase = TransactionPhase.AFTER_COMMIT)
+    void closeRevokedDevices(AuthCredentialsRevokedEvent event) {
+        closeDevices(event.deviceIds());
     }
 
     @Override

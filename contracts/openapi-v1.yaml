@@ -4,6 +4,55 @@ info:
   version: 1.0.0
   description: Baseline operational contract. Business endpoints are added in later tracer bullets.
 paths:
+  /api/v1/auth/password/change:
+    post:
+      operationId: changePassword
+      summary: Change the authenticated user's password and rotate the current device credentials
+      security: [{ bearerAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [currentPassword, newPassword]
+              properties:
+                currentPassword:
+                  type: string
+                  minLength: 1
+                  maxLength: 256
+                  pattern: '.*\S.*'
+                newPassword:
+                  type: string
+                  minLength: 8
+                  maxLength: 256
+                  pattern: '.*\S.*'
+      responses:
+        '200':
+          description: Rotated credentials for the current device
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/LoginResponse' }
+        '401':
+          $ref: '#/components/responses/ApiError'
+  /api/v1/admin/users/{userId}/password-reset:
+    post:
+      operationId: resetUserPassword
+      summary: Generate a one-time temporary password for a preset user
+      security: [{ adminApiKey: [] }]
+      parameters:
+        - { $ref: '#/components/parameters/UserId' }
+      responses:
+        '200':
+          description: One-time temporary password; the user must change it after login
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/PasswordResetResponse' }
+        '403':
+          $ref: '#/components/responses/ApiError'
+        '404':
+          $ref: '#/components/responses/ApiError'
   /api/v1/system/health:
     get:
       operationId: getServiceHealth
@@ -1477,6 +1526,10 @@ components:
     bearerAuth:
       type: http
       scheme: bearer
+    adminApiKey:
+      type: apiKey
+      in: header
+      name: X-Admin-Api-Key
   parameters:
     RequestId:
       name: requestId
@@ -1519,6 +1572,32 @@ components:
       required: true
       schema: { type: string, format: uuid }
   schemas:
+    LoginResponse:
+      type: object
+      additionalProperties: false
+      required:
+        [version, userId, accountNo, accessToken, refreshToken,
+         accessTokenExpiresAt, refreshTokenExpiresAt, deviceId, deviceClass,
+         passwordMustChange]
+      properties:
+        version: { const: 1 }
+        userId: { type: string, format: uuid }
+        accountNo: { type: string, pattern: '^[1-9][0-9]{10}$' }
+        accessToken: { type: string, minLength: 1 }
+        refreshToken: { type: string, minLength: 1 }
+        accessTokenExpiresAt: { type: string, format: date-time }
+        refreshTokenExpiresAt: { type: string, format: date-time }
+        deviceId: { type: string, format: uuid }
+        deviceClass: { type: string, enum: [MOBILE, PC] }
+        passwordMustChange: { type: boolean }
+    PasswordResetResponse:
+      type: object
+      additionalProperties: false
+      required: [version, temporaryPassword, passwordMustChange]
+      properties:
+        version: { const: 1 }
+        temporaryPassword: { type: string, minLength: 1 }
+        passwordMustChange: { type: boolean, const: true }
     ContactSearchResult:
       type: object
       additionalProperties: false

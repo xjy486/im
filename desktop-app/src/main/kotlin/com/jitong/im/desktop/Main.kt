@@ -166,6 +166,8 @@ private fun DesktopApp(
     var accountNo by remember { mutableStateOf("") }
     var password by remember { mutableStateOf("") }
     var challenge by remember { mutableStateOf<String?>(null) }
+    var passwordChangeRequired by remember { mutableStateOf(false) }
+    var passwordChangeError by remember { mutableStateOf<String?>(null) }
     var error by remember { mutableStateOf<String?>(null) }
     var session by remember { mutableStateOf(authStore.session) }
     var restoring by remember { mutableStateOf(true) }
@@ -482,14 +484,16 @@ private fun DesktopApp(
             withContext(Dispatchers.IO) { authStore.restore() }
         }.onSuccess {
             session = it
+            passwordChangeRequired = it?.passwordMustChange == true
         }.onFailure {
             error = messageFor(it)
         }
         restoring = false
     }
 
-    LaunchedEffect(session?.deviceId) {
+    LaunchedEffect(session?.deviceId, passwordChangeRequired) {
         val current = session ?: return@LaunchedEffect
+        if (passwordChangeRequired) return@LaunchedEffect
         val local = authStore.localDatabase() ?: return@LaunchedEffect
         var knownHighWatermark: Long? = null
         refreshLocal()
@@ -651,10 +655,14 @@ private fun DesktopApp(
             onPasswordChange = { password = it },
             onLogin = {
                 error = null
-                runCatching { authStore.login(accountNo, password) }
-                    .onSuccess { result ->
-                        when (result) {
-                            is LoginOutcome.Authenticated -> session = result.session
+                    runCatching { authStore.login(accountNo, password) }
+                        .onSuccess { result ->
+                            when (result) {
+                            is LoginOutcome.Authenticated -> {
+                                session = result.session
+                                passwordChangeRequired = result.session.passwordMustChange
+                                passwordChangeError = null
+                            }
                             is LoginOutcome.ReplacementRequired -> challenge = result.challenge
                         }
                     }
@@ -664,11 +672,30 @@ private fun DesktopApp(
                 runCatching { authStore.confirmReplacement(challenge.orEmpty()) }
                     .onSuccess {
                         session = it
+                        passwordChangeRequired = it.passwordMustChange
                         challenge = null
                     }
                     .onFailure { error = messageFor(it) }
             },
             onCancelReplacement = { challenge = null })
+    } else if (passwordChangeRequired) {
+        PasswordChangeScreen(
+            temporaryPasswordRequired = session!!.passwordMustChange,
+            error = passwordChangeError,
+            onChange = { currentPassword, newPassword ->
+                passwordChangeError = null
+                runCatching {
+                    authStore.changePassword(currentPassword, newPassword)
+                }.onSuccess {
+                    session = it
+                    passwordChangeRequired = false
+                }.onFailure { passwordChangeError = messageFor(it) }
+            },
+            onLogout = {
+                authStore.logout()
+                session = null
+                passwordChangeRequired = false
+            })
     } else {
         MainScreen(
             session = session!!,
@@ -700,6 +727,7 @@ private fun DesktopApp(
             selectedAiMessageIds = selectedAiMessageIds,
             aiLoading = aiLoading,
             error = error,
+            onRequestPasswordChange = { passwordChangeRequired = true },
             onSearchAccountNoChange = { searchAccountNo = it.filter(Char::isDigit).take(11) },
             onSearch = {
                 error = null
@@ -1479,6 +1507,62 @@ private fun LoginScreen(
 }
 
 @Composable
+private fun PasswordChangeScreen(
+    temporaryPasswordRequired: Boolean,
+    error: String?,
+    onChange: (String, String) -> Unit,
+    onLogout: () -> Unit,
+) {
+    var currentPassword by remember { mutableStateOf("") }
+    var newPassword by remember { mutableStateOf("") }
+    Column(Modifier.fillMaxSize().padding(56.dp)) {
+        Text(
+            if (temporaryPasswordRequired) "Password change required" else "Change password",
+            style = MaterialTheme.typography.displaySmall)
+        Spacer(Modifier.height(8.dp))
+        Text(
+            if (temporaryPasswordRequired) {
+                "Sign in with the temporary password, then choose a permanent password before using Jitong."
+            } else {
+                "Enter your current password. Other devices will be signed out immediately."
+            })
+        Spacer(Modifier.height(24.dp))
+        OutlinedTextField(
+            modifier = Modifier.fillMaxWidth(),
+            value = currentPassword,
+            onValueChange = { currentPassword = it },
+            label = { Text(if (temporaryPasswordRequired) "Temporary password" else "Current password") },
+            visualTransformation = PasswordVisualTransformation(),
+            singleLine = true)
+        Spacer(Modifier.height(12.dp))
+        OutlinedTextField(
+            modifier = Modifier.fillMaxWidth(),
+            value = newPassword,
+            onValueChange = { newPassword = it },
+            label = { Text("New password") },
+            visualTransformation = PasswordVisualTransformation(),
+            singleLine = true)
+        Spacer(Modifier.height(20.dp))
+        Button(
+            modifier = Modifier.fillMaxWidth(),
+            enabled = currentPassword.isNotBlank() && newPassword.length >= 8,
+            onClick = { onChange(currentPassword, newPassword) }) {
+            Text("Save password")
+        }
+        Spacer(Modifier.height(8.dp))
+        OutlinedButton(
+            modifier = Modifier.fillMaxWidth(),
+            onClick = onLogout) {
+            Text("Log out")
+        }
+        error?.let {
+            Spacer(Modifier.height(16.dp))
+            Text(it, color = MaterialTheme.colorScheme.error)
+        }
+    }
+}
+
+@Composable
 private fun MainScreen(
     session: DesktopSession,
     online: Boolean,
@@ -1511,6 +1595,7 @@ private fun MainScreen(
     selectedAiMessageIds: Set<String>,
     aiLoading: Boolean,
     error: String?,
+    onRequestPasswordChange: () -> Unit,
     onSearchAccountNoChange: (String) -> Unit,
     onSearch: () -> Unit,
     onLocalSearchQueryChange: (String) -> Unit,
@@ -1591,6 +1676,9 @@ private fun MainScreen(
                         style = MaterialTheme.typography.titleMedium)
                     Text("Your avatar is private and versioned.")
                     Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        OutlinedButton(onClick = onRequestPasswordChange) {
+                            Text("Change password")
+                        }
                         Button(
                             onClick = onChooseAvatar,
                             enabled = !selfAvatarLoading) {

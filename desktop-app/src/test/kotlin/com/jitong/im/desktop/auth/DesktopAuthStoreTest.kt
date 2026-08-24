@@ -130,6 +130,12 @@ class DesktopAuthStoreTest {
 
         override fun logout(accessToken: String) = Unit
 
+        override fun changePassword(
+            accessToken: String,
+            currentPassword: String,
+            newPassword: String,
+        ): LoginResponse = response("changed-access", "changed-refresh")
+
         private fun response(access: String, refresh: String) = LoginResponse(
             version = 1,
             userId = "user-id",

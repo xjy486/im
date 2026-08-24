@@ -9,6 +9,8 @@ import com.jitong.im.auth.RateLimitExceededException;
 import com.jitong.im.auth.RefreshTokenException;
 import com.jitong.im.auth.UserRetirementException;
 import com.jitong.im.auth.UserRetirementResult;
+import com.jitong.im.auth.TemporaryPasswordRequiredException;
+import com.jitong.im.auth.PasswordResetTargetNotFoundException;
 import com.jitong.im.contact.ContactException;
 import com.jitong.im.message.MessageException;
 import com.jitong.im.media.MediaException;
@@ -62,6 +64,16 @@ class ApiExceptionHandler {
     @ExceptionHandler(InvalidCredentialsException.class)
     ResponseEntity<ApiErrorResponse> invalidCredentials(HttpServletRequest request) {
         return response(ApiErrorDefinition.AUTH_INVALID, request);
+    }
+
+    @ExceptionHandler(TemporaryPasswordRequiredException.class)
+    ResponseEntity<ApiErrorResponse> passwordChangeRequired(HttpServletRequest request) {
+        return response(ApiErrorDefinition.PASSWORD_CHANGE_REQUIRED, request);
+    }
+
+    @ExceptionHandler(PasswordResetTargetNotFoundException.class)
+    ResponseEntity<ApiErrorResponse> passwordResetTargetNotFound(HttpServletRequest request) {
+        return response(ApiErrorDefinition.USER_NOT_FOUND, request);
     }
 
     @ExceptionHandler(ExpiredAccessTokenException.class)
