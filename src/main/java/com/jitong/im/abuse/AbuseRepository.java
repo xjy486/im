@@ -164,19 +164,26 @@ class AbuseRepository {
                 .list();
     }
 
-    int updateReportStatus(UUID reportId, String status, Instant updatedAt) {
+    int updateReportStatus(
+            UUID reportId,
+            String currentStatus,
+            String nextStatus,
+            Instant updatedAt
+    ) {
         return jdbc.sql("""
                         UPDATE abuse_reports
                         SET status = :status,
                             updated_at = :updatedAt,
                             resolved_at = CASE
-                                WHEN :status IN ('RESOLVED', 'DISMISSED') THEN :updatedAt
+                                WHEN :nextStatus IN ('RESOLVED', 'DISMISSED') THEN :updatedAt
                                 ELSE NULL
                             END
-                        WHERE id = :reportId
+                        WHERE id = :reportId AND status = :currentStatus
                         """)
                 .param("reportId", reportId)
-                .param("status", status)
+                .param("currentStatus", currentStatus)
+                .param("status", nextStatus)
+                .param("nextStatus", nextStatus)
                 .param("updatedAt", utc(updatedAt), Types.TIMESTAMP_WITH_TIMEZONE)
                 .update();
     }
@@ -233,6 +240,18 @@ class AbuseRepository {
 
     void revokeUserCredentials(UUID userId, Instant revokedAt) {
         jdbc.sql("""
+                        UPDATE devices
+                        SET trust_state = 'UNTRUSTED',
+                            push_token_ciphertext = NULL,
+                            push_token_digest = NULL,
+                            push_token_version = 0,
+                            untrusted_at = :revokedAt
+                        WHERE user_id = :userId AND trust_state = 'ACTIVE'
+                        """)
+                .param("userId", userId)
+                .param("revokedAt", utc(revokedAt), Types.TIMESTAMP_WITH_TIMEZONE)
+                .update();
+        jdbc.sql("""
                         UPDATE auth_sessions
                         SET status = 'REVOKED', revoked_at = :revokedAt
                         WHERE user_id = :userId AND status = 'ACTIVE'
@@ -251,18 +270,6 @@ class AbuseRepository {
                           AND state <> 'REVOKED'
                         """)
                 .param("userId", userId)
-                .update();
-        jdbc.sql("""
-                        UPDATE devices
-                        SET trust_state = 'UNTRUSTED',
-                            push_token_ciphertext = NULL,
-                            push_token_digest = NULL,
-                            push_token_version = 0,
-                            untrusted_at = :revokedAt
-                        WHERE user_id = :userId AND trust_state = 'ACTIVE'
-                        """)
-                .param("userId", userId)
-                .param("revokedAt", utc(revokedAt), Types.TIMESTAMP_WITH_TIMEZONE)
                 .update();
     }
 

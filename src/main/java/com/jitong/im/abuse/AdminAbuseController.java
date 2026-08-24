@@ -58,7 +58,7 @@ class AdminAbuseController {
                 UUID.fromString(RequestContextFilter.requestId(servletRequest)));
     }
 
-    @PostMapping({"/users/{userId}/suspension", "/users/{userId}/suspend"})
+    @PostMapping("/users/{userId}/suspension")
     ResponseEntity<Void> suspendUser(
             @RequestHeader(value = "X-Admin-Api-Key", required = false) String apiKey,
             @PathVariable UUID userId,
@@ -68,12 +68,12 @@ class AdminAbuseController {
         adminApiKeyVerifier.requireValid(apiKey);
         service.suspendUser(
                 userId,
-                request == null ? null : request.reason(),
+                request == null ? null : request.reasonCode(),
                 UUID.fromString(RequestContextFilter.requestId(servletRequest)));
         return ResponseEntity.noContent().build();
     }
 
-    @DeleteMapping({"/users/{userId}/suspension", "/users/{userId}/suspend"})
+    @DeleteMapping("/users/{userId}/suspension")
     ResponseEntity<Void> restoreUser(
             @RequestHeader(value = "X-Admin-Api-Key", required = false) String apiKey,
             @PathVariable UUID userId,
@@ -86,7 +86,7 @@ class AdminAbuseController {
         return ResponseEntity.noContent().build();
     }
 
-    @PostMapping({"/groups/{conversationId}/suspension", "/groups/{conversationId}/suspend"})
+    @PostMapping("/groups/{conversationId}/suspension")
     ResponseEntity<Void> suspendGroup(
             @RequestHeader(value = "X-Admin-Api-Key", required = false) String apiKey,
             @PathVariable UUID conversationId,
@@ -96,12 +96,12 @@ class AdminAbuseController {
         adminApiKeyVerifier.requireValid(apiKey);
         service.suspendGroup(
                 conversationId,
-                request == null ? null : request.reason(),
+                request == null ? null : request.reasonCode(),
                 UUID.fromString(RequestContextFilter.requestId(servletRequest)));
         return ResponseEntity.noContent().build();
     }
 
-    @DeleteMapping({"/groups/{conversationId}/suspension", "/groups/{conversationId}/suspend"})
+    @DeleteMapping("/groups/{conversationId}/suspension")
     ResponseEntity<Void> restoreGroup(
             @RequestHeader(value = "X-Admin-Api-Key", required = false) String apiKey,
             @PathVariable UUID conversationId,

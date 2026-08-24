@@ -127,9 +127,23 @@ class AbuseReportContractTest extends ContractTestEnvironment {
         assertThat(reviewed.getStatusCode()).isEqualTo(HttpStatus.OK);
         assertThat(reviewed.getBody().get("status").asText()).isEqualTo("REVIEWING");
 
+        ResponseEntity<JsonNode> resolved = adminExchange(
+                HttpMethod.PATCH,
+                "/api/v1/admin/abuse-reports/" + reportId,
+                Map.of("status", "RESOLVED"));
+        assertThat(resolved.getStatusCode()).isEqualTo(HttpStatus.OK);
+        assertThat(resolved.getBody().get("status").asText()).isEqualTo("RESOLVED");
+        assertThat(resolved.getBody().get("resolvedAt").isNull()).isFalse();
+
+        ResponseEntity<JsonNode> reopened = adminExchange(
+                HttpMethod.PATCH,
+                "/api/v1/admin/abuse-reports/" + reportId,
+                Map.of("status", "OPEN"));
+        assertThat(reopened.getStatusCode()).isEqualTo(HttpStatus.CONFLICT);
+
         ResponseEntity<JsonNode> reports = adminExchange(
                 HttpMethod.GET,
-                "/api/v1/admin/abuse-reports?status=REVIEWING",
+                "/api/v1/admin/abuse-reports?status=RESOLVED",
                 null);
         assertThat(reports.getStatusCode()).isEqualTo(HttpStatus.OK);
         assertThat(reports.getBody()).hasSize(1);
@@ -145,7 +159,7 @@ class AbuseReportContractTest extends ContractTestEnvironment {
         ResponseEntity<Void> suspended = adminExchangeVoid(
                 HttpMethod.POST,
                 "/api/v1/admin/users/" + bob.userId() + "/suspension",
-                Map.of("reason", "repeated abuse"));
+                Map.of("reasonCode", "REPEATED_ABUSE"));
         assertThat(suspended.getStatusCode()).isEqualTo(HttpStatus.NO_CONTENT);
         assertThat(exchange(
                 HttpMethod.GET,
@@ -161,7 +175,7 @@ class AbuseReportContractTest extends ContractTestEnvironment {
         assertThat(adminExchangeVoid(
                 HttpMethod.POST,
                 "/api/v1/admin/groups/" + groupId + "/suspension",
-                Map.of("reason", "reported public abuse")).getStatusCode())
+                Map.of("reasonCode", "REPORTED_ABUSE")).getStatusCode())
                 .isEqualTo(HttpStatus.NO_CONTENT);
         assertThat(exchange(
                 HttpMethod.GET,
@@ -206,7 +220,7 @@ class AbuseReportContractTest extends ContractTestEnvironment {
                 .param("userId", bob.userId())
                 .param("groupId", groupId)
                 .query(Long.class)
-                .single()).isEqualTo(4L);
+                .single()).isEqualTo(5L);
         assertThat(jdbc.sql("""
                         SELECT event_type, COUNT(*)
                         FROM audit_logs
@@ -228,7 +242,7 @@ class AbuseReportContractTest extends ContractTestEnvironment {
                 .list())
                 .containsExactlyInAnyOrder(
                         Map.entry("ABUSE_REPORT_CREATED", 1L),
-                        Map.entry("ABUSE_REPORT_REVIEWED", 1L),
+                        Map.entry("ABUSE_REPORT_REVIEWED", 2L),
                         Map.entry("USER_SUSPENSION", 1L),
                         Map.entry("GROUP_SUSPENSION", 1L));
     }

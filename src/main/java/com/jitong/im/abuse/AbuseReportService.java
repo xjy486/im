@@ -81,14 +81,14 @@ class AbuseReportService {
                 requestId,
                 null,
                 clock.instant()));
-        return toResponse(report);
+        return AbuseReportResponse.from(report);
     }
 
     @Transactional(readOnly = true)
     List<AbuseReportResponse> listMine(String authorization) {
         UUID reporterUserId = authService.requireUserId(authorization);
         return repository.listForReporter(reporterUserId).stream()
-                .map(this::toResponse)
+                .map(AbuseReportResponse::from)
                 .toList();
     }
 
@@ -118,17 +118,4 @@ class AbuseReportService {
         return value == null ? "" : value.trim().toUpperCase(Locale.ROOT);
     }
 
-    private AbuseReportResponse toResponse(AbuseRepository.AbuseReportRecord report) {
-        return new AbuseReportResponse(
-                1,
-                report.reportId(),
-                report.reporterUserId(),
-                report.targetType(),
-                report.targetId(),
-                report.reasonCode(),
-                report.status(),
-                report.createdAt(),
-                report.updatedAt(),
-                report.resolvedAt());
-    }
 }

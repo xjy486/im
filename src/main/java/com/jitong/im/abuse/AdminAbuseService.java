@@ -60,7 +60,7 @@ class AdminAbuseService {
             throw new AbuseException(ApiErrorDefinition.INVALID_REQUEST);
         }
         return repository.listForAdmin(status, limit).stream()
-                .map(this::toResponse)
+                .map(AbuseReportResponse::from)
                 .toList();
     }
 
@@ -81,7 +81,17 @@ class AdminAbuseService {
         if (report == null) {
             throw new AbuseException(ApiErrorDefinition.RESOURCE_NOT_FOUND);
         }
-        repository.updateReportStatus(reportId, status, clock.instant());
+        if (!isAllowedTransition(report.status(), status)) {
+            throw new AbuseException(ApiErrorDefinition.CONFLICT);
+        }
+        if (!report.status().equals(status)
+                && repository.updateReportStatus(
+                        reportId,
+                        report.status(),
+                        status,
+                        clock.instant()) != 1) {
+            throw new AbuseException(ApiErrorDefinition.CONFLICT);
+        }
         AbuseRepository.AbuseReportRecord updated = repository.findReport(reportId);
         auditSink.record(new SecurityAuditEvent(
                 UuidV7.random(),
@@ -94,7 +104,7 @@ class AdminAbuseService {
                 requestId,
                 null,
                 clock.instant()));
-        return toResponse(updated);
+        return AbuseReportResponse.from(updated);
     }
 
     @Transactional
@@ -119,7 +129,7 @@ class AdminAbuseService {
         }
         Set<UUID> activeDeviceIds = Set.copyOf(repository.activeDeviceIds(userId));
         Instant now = clock.instant();
-        repository.suspendUser(userId, normalizeReason(rawReason), now);
+        repository.suspendUser(userId, normalizeReasonCode(rawReason), now);
         repository.revokeUserCredentials(userId, now);
         if (!activeDeviceIds.isEmpty()) {
             eventPublisher.publishEvent(new AuthCredentialsRevokedEvent(activeDeviceIds));
@@ -170,7 +180,7 @@ class AdminAbuseService {
                 || !"PUBLIC".equals(repository.groupVisibility(conversationId))) {
             throw new AbuseException(ApiErrorDefinition.CONFLICT);
         }
-        repository.suspendGroup(conversationId, normalizeReason(rawReason), clock.instant());
+        repository.suspendGroup(conversationId, normalizeReasonCode(rawReason), clock.instant());
         auditSink.record(new SecurityAuditEvent(
                 UuidV7.random(),
                 SecurityAuditEventType.GROUP_SUSPENSION,
@@ -218,25 +228,26 @@ class AdminAbuseService {
         };
     }
 
-    private String normalizeReason(String reason) {
-        if (reason == null) {
-            return "";
+    private String normalizeReasonCode(String reasonCode) {
+        if (reasonCode == null || reasonCode.isBlank()) {
+            return "ADMIN_ACTION";
         }
-        return reason.trim().substring(0, Math.min(reason.trim().length(), 500));
+        return reasonCode.trim().toUpperCase(Locale.ROOT);
     }
 
-    private AbuseReportResponse toResponse(AbuseRepository.AbuseReportRecord report) {
-        return new AbuseReportResponse(
-                1,
-                report.reportId(),
-                report.reporterUserId(),
-                report.targetType(),
-                report.targetId(),
-                report.reasonCode(),
-                report.status(),
-                report.createdAt(),
-                report.updatedAt(),
-                report.resolvedAt());
+    private boolean isAllowedTransition(String currentStatus, String nextStatus) {
+        if (currentStatus.equals(nextStatus)) {
+            return true;
+        }
+        return switch (currentStatus) {
+            case "OPEN" -> nextStatus.equals("REVIEWING")
+                    || nextStatus.equals("RESOLVED")
+                    || nextStatus.equals("DISMISSED");
+            case "REVIEWING" -> nextStatus.equals("RESOLVED")
+                    || nextStatus.equals("DISMISSED");
+            case "RESOLVED", "DISMISSED" -> false;
+            default -> false;
+        };
     }
 
 }

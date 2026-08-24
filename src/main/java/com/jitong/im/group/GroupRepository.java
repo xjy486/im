@@ -115,7 +115,6 @@ class GroupRepository {
                           ON ai.conversation_id = g.conversation_id
                         WHERE g.conversation_id = :conversationId
                           AND g.status = 'ACTIVE'
-                          AND g.platform_suspended_at IS NULL
                         """)
                 .param("conversationId", conversationId)
                 .param("userId", userId)
@@ -556,7 +555,6 @@ class GroupRepository {
                           ON ai.conversation_id = g.conversation_id
                         WHERE g.conversation_id = :conversationId
                           AND g.status = 'ACTIVE'
-                          AND g.platform_suspended_at IS NULL
                         """)
                 .param("conversationId", conversationId)
                 .query((row, rowNum) -> new GroupRecord(

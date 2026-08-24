@@ -401,9 +401,12 @@ class MessageRepository {
 
     UUID findUserIdForDevice(UUID deviceId) {
         return jdbc.sql("""
-                        SELECT user_id
-                        FROM devices
-                        WHERE id = :deviceId AND trust_state = 'ACTIVE'
+                        SELECT device.user_id
+                        FROM devices device
+                        JOIN users user_account ON user_account.id = device.user_id
+                        WHERE device.id = :deviceId
+                          AND device.trust_state = 'ACTIVE'
+                          AND user_account.status = 'ACTIVE'
                         """)
                 .param("deviceId", deviceId)
                 .query(UUID.class)

@@ -26,8 +26,9 @@ record AbuseReportStatusUpdateRequest(
 }
 
 record PlatformSuspensionRequest(
-        @Size(max = 500)
-        String reason
+        @Size(max = 64)
+        @Pattern(regexp = "[A-Za-z][A-Za-z0-9_]{0,63}")
+        String reasonCode
 ) {
 }
 
@@ -43,4 +44,17 @@ record AbuseReportResponse(
         Instant updatedAt,
         Instant resolvedAt
 ) {
+    static AbuseReportResponse from(AbuseRepository.AbuseReportRecord report) {
+        return new AbuseReportResponse(
+                1,
+                report.reportId(),
+                report.reporterUserId(),
+                report.targetType(),
+                report.targetId(),
+                report.reasonCode(),
+                report.status(),
+                report.createdAt(),
+                report.updatedAt(),
+                report.resolvedAt());
+    }
 }

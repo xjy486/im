@@ -1814,7 +1814,10 @@ components:
       type: object
       additionalProperties: false
       properties:
-        reason: { type: string, maxLength: 500 }
+        reasonCode:
+          type: string
+          maxLength: 64
+          pattern: '^[A-Za-z][A-Za-z0-9_]{0,63}$'
     AccountDeletionRequest:
       type: object
       additionalProperties: false
