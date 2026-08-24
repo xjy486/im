@@ -1,0 +1,9 @@
+# Optional Android build-time Firebase values.
+# Leave these blank to build an APK without FCM registration.
+# Do not commit google-services.json, Firebase tokens, or service-account keys.
+
+firebaseApplicationId=
+firebaseApiKey=
+firebaseGcmSenderId=
+firebaseProjectId=
+firebaseStorageBucket=

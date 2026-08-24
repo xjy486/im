@@ -13,3 +13,5 @@ target/
 /.backup-work-*/
 /.restore-work-*/
 /.restore-smoke-*/
+/release-dist/
+/demo-accounts*.json

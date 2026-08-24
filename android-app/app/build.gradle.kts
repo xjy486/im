@@ -20,8 +20,8 @@ android {
         applicationId = "com.jitong.im.android"
         minSdk = 26
         targetSdk = 35
-        versionCode = 1
-        versionName = "0.1.0"
+        versionCode = project.findProperty("jitongVersionCode")?.toString()?.toInt() ?: 1
+        versionName = project.findProperty("jitongVersion")?.toString() ?: "1.0.0"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         buildConfigField(
             "String",
@@ -55,6 +55,19 @@ android {
                 "proguard-rules.pro"
             )
         }
+    }
+
+    val releaseKeystore = project.findProperty("releaseKeystore")?.toString()
+    if (!releaseKeystore.isNullOrBlank()) {
+        signingConfigs {
+            create("release") {
+                storeFile = file(releaseKeystore)
+                storePassword = project.findProperty("releaseStorePassword")?.toString()
+                keyAlias = project.findProperty("releaseKeyAlias")?.toString()
+                keyPassword = project.findProperty("releaseKeyPassword")?.toString()
+            }
+        }
+        buildTypes.getByName("release").signingConfig = signingConfigs.getByName("release")
     }
 
     buildFeatures {

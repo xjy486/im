@@ -49,3 +49,20 @@ Token 首次注册或轮换时如果网络暂不可用，会由 WorkManager 在�
 ## 验证
 
 Android 构建需要 JDK 17+、Android SDK 35 和 Gradle Wrapper。由于当前开发环境没有 Android SDK，本地只能完成源码审查；Docker 不可用时，根目录服务端 Testcontainers 契约测试会被自动跳过。
+
+## Release APK
+
+发布包脚本会使用 `assembleRelease`，并在没有提供正式签名密钥时生成一个只用于
+干净设备安装 smoke 的临时密钥。临时签名不能用于覆盖真实用户安装，也不能作为
+产品发布密钥。
+
+正式构建通过以下 Gradle 属性提供稳定签名密钥，密码只从本机环境注入：
+
+```sh
+cd android-app
+./gradlew assembleRelease \
+  -PreleaseKeystore="$JITONG_ANDROID_KEYSTORE" \
+  -PreleaseStorePassword="$JITONG_ANDROID_STORE_PASSWORD" \
+  -PreleaseKeyAlias="$JITONG_ANDROID_KEY_ALIAS" \
+  -PreleaseKeyPassword="$JITONG_ANDROID_KEY_PASSWORD"
+```

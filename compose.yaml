@@ -15,6 +15,7 @@ services:
       - caddy_config:/config
     networks:
       - backend
+    cpus: 0.25
     mem_limit: 128m
     healthcheck:
       test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://127.0.0.1/api/v1/system/health"]
@@ -23,6 +24,7 @@ services:
       retries: 12
 
   server:
+    image: ${JITONG_SERVER_IMAGE:-jitong-im-server:local}
     build:
       context: .
     restart: unless-stopped
@@ -42,6 +44,10 @@ services:
       MINIO_BUCKET: ${MINIO_BUCKET:-jitong-media}
       ADMIN_API_KEY: ${ADMIN_API_KEY:?run scripts/dev-up.sh first}
       GROUP_INVITE_DEEP_LINK_BASE: ${GROUP_INVITE_DEEP_LINK_BASE:-https://app.jitong.im/groups/invite}
+      FCM_ENABLED: ${FCM_ENABLED:-false}
+      FCM_PROJECT_ID: ${FCM_PROJECT_ID:-}
+      FCM_SERVICE_ACCOUNT_JSON: ${FCM_SERVICE_ACCOUNT_JSON:-}
+      FCM_TOKEN_ENCRYPTION_KEY: ${FCM_TOKEN_ENCRYPTION_KEY:-}
       AI_PROVIDER_ENABLED: ${AI_PROVIDER_ENABLED:-false}
       AI_PROVIDER_BASE_URL: ${AI_PROVIDER_BASE_URL:-}
       AI_PROVIDER_API_KEY: ${AI_PROVIDER_API_KEY:-}
@@ -58,6 +64,7 @@ services:
       JAVA_TOOL_OPTIONS: -Xms256m -Xmx640m -XX:MaxMetaspaceSize=192m
     networks:
       - backend
+    cpus: 0.75
     mem_limit: 768m
     healthcheck:
       test: ["CMD", "curl", "--fail", "--silent", "http://127.0.0.1:8080/actuator/health"]
@@ -83,6 +90,7 @@ services:
       - postgres_data:/var/lib/postgresql/data
     networks:
       - backend
+    cpus: 0.5
     mem_limit: 512m
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U $$POSTGRES_USER -d $$POSTGRES_DB"]
@@ -101,6 +109,7 @@ services:
       - minio_data:/data
     networks:
       - backend
+    cpus: 0.5
     mem_limit: 384m
     healthcheck:
       test: ["CMD", "curl", "--fail", "http://127.0.0.1:9000/minio/health/live"]

@@ -22,6 +22,8 @@ jobs:
         run: ./mvnw --batch-mode --no-transfer-progress verify
       - name: Run encrypted backup self-test
         run: ./scripts/backup/self-test.sh
+      - name: Run release tooling self-test
+        run: ./scripts/release/self-test.sh
       - name: Validate production TLS configuration
         env:
           POSTGRES_PASSWORD: validation-only

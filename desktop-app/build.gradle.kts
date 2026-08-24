@@ -1,3 +1,5 @@
+import org.jetbrains.compose.desktop.application.dsl.TargetFormat
+
 plugins {
     kotlin("jvm") version "2.0.21"
     kotlin("plugin.serialization") version "2.0.21"
@@ -6,7 +8,7 @@ plugins {
 }
 
 group = "com.jitong.im"
-version = "0.1.0"
+version = project.findProperty("jitongVersion")?.toString() ?: "1.0.0"
 
 
 kotlin {
@@ -23,6 +25,7 @@ compose.desktop {
     application {
         mainClass = "com.jitong.im.desktop.MainKt"
         nativeDistributions {
+            targetFormats(TargetFormat.Dmg)
             macOS {
                 bundleID = "com.jitong.im.desktop"
                 packageName = "Jitong"
