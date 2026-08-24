@@ -2,7 +2,7 @@ package com.jitong.im.media;
 
 import java.time.Instant;
 
-interface MediaStorage {
+public interface MediaStorage {
 
     void put(String objectKey, byte[] content, String contentType);
 

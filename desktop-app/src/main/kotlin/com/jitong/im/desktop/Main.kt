@@ -190,6 +190,7 @@ private fun DesktopApp(
     var selfProfile by remember { mutableStateOf<DesktopUserProfile?>(null) }
     var selfAvatarBytes by remember { mutableStateOf<ByteArray?>(null) }
     var selfAvatarLoading by remember { mutableStateOf(false) }
+    var deleteAccountPassword by remember { mutableStateOf("") }
     var mediaBytes by remember { mutableStateOf<Map<String, ByteArray>>(emptyMap()) }
     var mediaLoadGeneration by remember { mutableStateOf(0L) }
     val uiScope = androidx.compose.runtime.rememberCoroutineScope()
@@ -728,6 +729,17 @@ private fun DesktopApp(
             aiLoading = aiLoading,
             error = error,
             onRequestPasswordChange = { passwordChangeRequired = true },
+            deleteAccountPassword = deleteAccountPassword,
+            onDeleteAccountPasswordChange = { deleteAccountPassword = it },
+            onDeleteAccount = {
+                runCatching {
+                    authStore.deleteAccount(deleteAccountPassword)
+                }.onSuccess {
+                    deleteAccountPassword = ""
+                    session = null
+                    data = DesktopData()
+                }.onFailure { error = messageFor(it) }
+            },
             onSearchAccountNoChange = { searchAccountNo = it.filter(Char::isDigit).take(11) },
             onSearch = {
                 error = null
@@ -1596,6 +1608,9 @@ private fun MainScreen(
     aiLoading: Boolean,
     error: String?,
     onRequestPasswordChange: () -> Unit,
+    deleteAccountPassword: String,
+    onDeleteAccountPasswordChange: (String) -> Unit,
+    onDeleteAccount: () -> Unit,
     onSearchAccountNoChange: (String) -> Unit,
     onSearch: () -> Unit,
     onLocalSearchQueryChange: (String) -> Unit,
@@ -1690,6 +1705,20 @@ private fun MainScreen(
                                 (selfProfile?.avatarVersion ?: 0) > 0) {
                             Text("Remove")
                         }
+                    }
+                    OutlinedTextField(
+                        value = deleteAccountPassword,
+                        onValueChange = onDeleteAccountPasswordChange,
+                        label = { Text("Current password to delete account") },
+                        visualTransformation = PasswordVisualTransformation(),
+                        singleLine = true,
+                        modifier = Modifier.fillMaxWidth(),
+                    )
+                    Button(
+                        onClick = onDeleteAccount,
+                        enabled = deleteAccountPassword.isNotBlank(),
+                    ) {
+                        Text("Permanently delete account")
                     }
                 }
             }
@@ -1823,7 +1852,14 @@ private fun MainScreen(
                             OutlinedButton(
                                 modifier = Modifier.fillMaxWidth(),
                                 onClick = { onSelectConversation(conversation.conversationId) }) {
-                                Text("${conversation.peerDisplayName} · ${conversation.peerAccountNo}")
+                                Text(
+                                    buildString {
+                                        append(conversation.peerDisplayName)
+                                        conversation.peerAccountNo?.let {
+                                            append(" · ")
+                                            append(it)
+                                        }
+                                    })
                             }
                             Row {
                                 if (conversation.blockedByMe) {
@@ -2121,7 +2157,13 @@ private fun ConversationPane(
             fallback = selectedConversation.peerAvatarFallback,
             size = 64.dp)
         Text(
-            "${selectedConversation.peerDisplayName} · ${selectedConversation.peerAccountNo}",
+            buildString {
+                append(selectedConversation.peerDisplayName)
+                selectedConversation.peerAccountNo?.let {
+                    append(" · ")
+                    append(it)
+                }
+            },
             style = MaterialTheme.typography.titleLarge)
         Text(
             if (selectedConversation.kind == "GROUP") {
@@ -2139,6 +2181,12 @@ private fun ConversationPane(
             items(messages, key = { it.messageId }) { message ->
                 Card(Modifier.fillMaxWidth().padding(vertical = 4.dp)) {
                     Column(Modifier.padding(12.dp)) {
+                        if (message.senderDisplayName.isNotBlank()) {
+                            Text(
+                                message.senderDisplayName,
+                                style = MaterialTheme.typography.bodySmall,
+                            )
+                        }
                         Text(if (message.localState == "SENDING") "Sending…" else message.localState)
                         when {
                             message.type == "SYSTEM" -> {

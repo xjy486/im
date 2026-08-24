@@ -321,12 +321,19 @@ public class AvatarService {
         if (!"full".equals(variant) && !"thumb".equals(variant)) {
             throw new MediaException(ApiErrorDefinition.INVALID_REQUEST);
         }
-        if (!requesterId.equals(userId) && !avatarRepository.hasC2cAccess(requesterId, userId)) {
-            throw new MediaException(ApiErrorDefinition.MEDIA_FORBIDDEN);
-        }
         AvatarRepository.UserProfile profile = avatarRepository.findUserProfile(userId);
         if (profile == null) {
+            if (!requesterId.equals(userId)
+                    && !avatarRepository.hasC2cAccess(requesterId, userId)) {
+                throw new MediaException(ApiErrorDefinition.MEDIA_FORBIDDEN);
+            }
             throw new MediaException(ApiErrorDefinition.MEDIA_NOT_FOUND);
+        }
+        if (!requesterId.equals(userId)
+                && !avatarRepository.hasC2cAccess(requesterId, userId)
+                && !("DELETED".equals(profile.status())
+                && avatarRepository.hasHistoryAccess(requesterId, userId))) {
+            throw new MediaException(ApiErrorDefinition.MEDIA_FORBIDDEN);
         }
         if (requestedAvatarVersion != null
                 && requestedAvatarVersion.longValue() != profile.avatarVersion()) {
@@ -345,14 +352,17 @@ public class AvatarService {
 
     @Transactional(readOnly = true)
     public UserProfile visibleProfile(UUID requesterId, UUID userId) {
-        if (!requesterId.equals(userId) && !avatarRepository.hasC2cAccess(requesterId, userId)) {
-            throw new MediaException(ApiErrorDefinition.USER_NOT_FOUND);
-        }
-        UserProfile profile = profile(userId);
+        AvatarRepository.UserProfile profile = avatarRepository.findUserProfile(userId);
         if (profile == null) {
             throw new MediaException(ApiErrorDefinition.USER_NOT_FOUND);
         }
-        return profile;
+        if (!requesterId.equals(userId)
+                && !avatarRepository.hasC2cAccess(requesterId, userId)
+                && !("DELETED".equals(profile.status())
+                && avatarRepository.hasHistoryAccess(requesterId, userId))) {
+            throw new MediaException(ApiErrorDefinition.USER_NOT_FOUND);
+        }
+        return profile(userId);
     }
 
     @Transactional(readOnly = true)
@@ -360,6 +370,14 @@ public class AvatarService {
         AvatarRepository.UserProfile profile = avatarRepository.findUserProfile(userId);
         if (profile == null) {
             return null;
+        }
+        if ("DELETED".equals(profile.status())) {
+            return new UserProfile(
+                    profile.userId(),
+                    "已注销用户",
+                    null,
+                    profile.avatarVersion(),
+                    "已");
         }
         return new UserProfile(
                 profile.userId(),

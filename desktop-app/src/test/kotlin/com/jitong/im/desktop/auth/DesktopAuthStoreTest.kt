@@ -49,6 +49,22 @@ class DesktopAuthStoreTest {
     }
 
     @Test
+    fun account_deletion_clears_the_local_database_and_refresh_credential() {
+        val root = createTempDirectory("jitong-account-deletion")
+        val manager = LocalDatabaseManager(root, InMemoryKeychain())
+        val gateway = FakeAuthGateway()
+        val store = DesktopAuthStore(manager = manager, gateway = gateway)
+
+        store.login("12345678903", "password")
+        store.deleteAccount("password")
+
+        assertNull(store.session)
+        assertNull(manager.loadRefreshToken("12345678903"))
+        assertTrue(!manager.databaseFile("12345678903").toFile().exists())
+        assertEquals(1, gateway.deleteAccountCalls)
+    }
+
+    @Test
     fun invalid_refresh_clears_untrusted_account_data() {
         val root = createTempDirectory("jitong-untrusted")
         val manager = LocalDatabaseManager(root, InMemoryKeychain())
@@ -98,6 +114,7 @@ class DesktopAuthStoreTest {
         private val validateFails: Boolean = false,
     ) : AuthGateway {
         var refreshCalls = 0
+        var deleteAccountCalls = 0
 
         override fun login(accountNo: String, password: String, installationId: String): LoginResponse {
             if (replacementRequired) {
@@ -129,6 +146,10 @@ class DesktopAuthStoreTest {
         override fun confirmReplacement(challenge: String): LoginResponse = response("replacement-access", "replacement-refresh")
 
         override fun logout(accessToken: String) = Unit
+
+        override fun deleteAccount(accessToken: String, currentPassword: String) {
+            deleteAccountCalls++
+        }
 
         override fun changePassword(
             accessToken: String,

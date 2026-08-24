@@ -38,7 +38,7 @@ internal data class ContactRequestSummary(
     val verification: String,
     val expiresAt: String,
     val incoming: Boolean,
-    val peerAccountNo: String,
+    val peerAccountNo: String?,
     val peerDisplayName: String,
 )
 

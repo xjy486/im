@@ -47,6 +47,17 @@ class AuthClient(
         execute(request)
     }
 
+    override fun deleteAccount(accessToken: String, currentPassword: String) {
+        val request = Request.Builder()
+            .url(url("/api/v1/auth/account"))
+            .header("Authorization", "Bearer $accessToken")
+            .header("Content-Type", JSON_MEDIA_TYPE.toString())
+            .delete(json.encodeToString(AccountDeletionRequest(currentPassword))
+                .toRequestBody(JSON_MEDIA_TYPE))
+            .build()
+        execute(request)
+    }
+
     override fun changePassword(
         accessToken: String,
         currentPassword: String,
@@ -92,3 +103,8 @@ class AuthClient(
         private val JSON_MEDIA_TYPE = "application/json".toMediaType()
     }
 }
+
+@kotlinx.serialization.Serializable
+private data class AccountDeletionRequest(
+    val currentPassword: String,
+)

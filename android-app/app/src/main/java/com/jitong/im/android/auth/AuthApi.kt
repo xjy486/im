@@ -3,6 +3,7 @@ package com.jitong.im.android.auth
 import retrofit2.Call
 import retrofit2.Response
 import retrofit2.http.Body
+import retrofit2.http.DELETE
 import retrofit2.http.Header
 import retrofit2.http.GET
 import retrofit2.http.POST
@@ -25,7 +26,14 @@ internal interface AuthApi {
 
     @POST("api/v1/auth/password/change")
     fun changePassword(@Body request: PasswordChangeRequest): Call<LoginResponse>
+
+    @DELETE("api/v1/auth/account")
+    fun deleteAccount(@Body request: AccountDeletionRequest): Call<Void>
 }
+
+internal data class AccountDeletionRequest(
+    val currentPassword: String,
+)
 
 internal fun <T> Response<T>.errorPayload(gson: com.google.gson.Gson): ApiErrorPayload {
     val body = errorBody()?.string().orEmpty()

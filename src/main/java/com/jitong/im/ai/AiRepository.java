@@ -1006,6 +1006,19 @@ class AiRepository {
 
     void eraseForRetirement(UUID ownerUserId) {
         jdbc.sql("""
+                        UPDATE ai_jobs
+                        SET status = 'CANCELLED',
+                            context_json = NULL,
+                            result_json = NULL,
+                            error_code = 'AI_USER_DELETED',
+                            reserved_tokens = 0,
+                            finished_at = COALESCE(finished_at, CURRENT_TIMESTAMP)
+                        WHERE owner_user_id = :ownerUserId
+                          AND status IN ('QUEUED', 'RUNNING')
+                        """)
+                .param("ownerUserId", ownerUserId)
+                .update();
+        jdbc.sql("""
                         UPDATE conversation_ai_settings
                         SET enabled = FALSE,
                             policy_version = policy_version + 1,

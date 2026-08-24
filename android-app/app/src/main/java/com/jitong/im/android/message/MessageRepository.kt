@@ -400,6 +400,10 @@ internal class MessageRepository(
                     profile.avatarFallback,
                     System.currentTimeMillis(),
                 )
+                db.messageDao().updateMessageSenderDisplayName(
+                    profile.userId.toString(),
+                    profile.displayName,
+                )
             }
         }
     }
@@ -1115,6 +1119,7 @@ internal class MessageRepository(
                             messageId = messageId.toString(),
                             conversationId = conversationId.toString(),
                             senderId = senderId.toString(),
+                            senderDisplayName = body.senderDisplayName.orEmpty(),
                             clientMsgId = clientMsgId.toString(),
                             conversationSeq = body.conversationSeq,
                             type = body.type ?: existing?.type ?: "TEXT",
@@ -1185,6 +1190,7 @@ internal class MessageRepository(
                             messageId = messageId.toString(),
                             conversationId = conversationId.toString(),
                             senderId = senderId.toString(),
+                            senderDisplayName = body.senderDisplayName.orEmpty(),
                             clientMsgId = clientMsgId.toString(),
                             conversationSeq = body.conversationSeq,
                             type = body.type ?: "TEXT",
@@ -1221,6 +1227,7 @@ internal class MessageRepository(
                         messageId = messageId.toString(),
                         conversationId = conversationId.toString(),
                         senderId = senderId.toString(),
+                        senderDisplayName = body.senderDisplayName.orEmpty(),
                         clientMsgId = clientMsgId.toString(),
                         conversationSeq = body.conversationSeq,
                         type = body.type ?: "TEXT",
@@ -1247,6 +1254,7 @@ internal class MessageRepository(
                 messageId = messageId,
                 conversationId = conversationId,
                 senderId = senderId,
+                senderDisplayName = body.senderDisplayName.orEmpty(),
                 clientMsgId = clientMsgId,
                 conversationSeq = body.conversationSeq ?: 0,
                 type = body.type ?: "TEXT",
@@ -1280,6 +1288,7 @@ internal class MessageRepository(
                     messageId = recalled.messageId,
                     conversationId = recalled.conversationId,
                     senderId = recalled.senderId,
+                    senderDisplayName = recalled.senderDisplayName,
                     clientMsgId = recalled.clientMsgId,
                     conversationSeq = recalled.conversationSeq,
                     type = recalled.type,
@@ -1378,6 +1387,7 @@ internal class MessageRepository(
         messageId = messageId.toString(),
         conversationId = conversationId.toString(),
         senderId = senderId.toString(),
+        senderDisplayName = senderDisplayName,
         clientMsgId = clientMsgId.toString(),
         conversationSeq = conversationSeq,
         type = type,

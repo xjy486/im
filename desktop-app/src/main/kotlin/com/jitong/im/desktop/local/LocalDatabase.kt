@@ -79,7 +79,7 @@ class LocalDatabaseManager(
                             conversation_id VARCHAR(36) PRIMARY KEY,
                             kind VARCHAR(16) NOT NULL DEFAULT 'C2C',
                             peer_user_id VARCHAR(36) NOT NULL,
-                            peer_account_no VARCHAR(11) NOT NULL,
+                            peer_account_no VARCHAR(11),
                             peer_display_name VARCHAR(255) NOT NULL,
                             peer_avatar_url VARCHAR(1000),
                             peer_avatar_version BIGINT NOT NULL DEFAULT 0,
@@ -103,6 +103,7 @@ class LocalDatabaseManager(
                             message_id VARCHAR(64) PRIMARY KEY,
                             conversation_id VARCHAR(36) NOT NULL,
                             sender_id VARCHAR(36) NOT NULL,
+                            sender_display_name VARCHAR(255) NOT NULL DEFAULT '',
                             client_msg_id VARCHAR(36) NOT NULL,
                             conversation_seq BIGINT,
                             type VARCHAR(32) NOT NULL,
@@ -115,6 +116,10 @@ class LocalDatabaseManager(
                             UNIQUE (conversation_id, client_msg_id)
                         )
                         """.trimIndent())
+                    statement.executeUpdate(
+                        "ALTER TABLE local_messages ADD COLUMN IF NOT EXISTS sender_display_name VARCHAR(255) NOT NULL DEFAULT ''")
+                    statement.executeUpdate(
+                        "ALTER TABLE local_conversations ALTER COLUMN peer_account_no VARCHAR(11) NULL")
                     statement.executeUpdate(
                         "ALTER TABLE local_messages ADD COLUMN IF NOT EXISTS media_id VARCHAR(36)")
                     statement.executeUpdate(
@@ -815,6 +820,22 @@ class LocalDatabase internal constructor(
         }
     }
 
+    fun updateMessageSenderDisplayName(userId: String, displayName: String) {
+        pool.connection.use { connection ->
+            connection.prepareStatement(
+                """
+                UPDATE local_messages
+                SET sender_display_name = ?
+                WHERE sender_id = ?
+                """.trimIndent(),
+            ).use { statement ->
+                statement.setString(1, displayName)
+                statement.setString(2, userId)
+                statement.executeUpdate()
+            }
+        }
+    }
+
     fun updateSearchVisibility(
         conversationId: String,
         visible: Boolean,
@@ -1099,7 +1120,7 @@ class LocalDatabase internal constructor(
         pool.connection.use { connection ->
             connection.prepareStatement(
                 """
-                SELECT message_id, conversation_id, sender_id, client_msg_id, conversation_seq,
+                SELECT message_id, conversation_id, sender_id, sender_display_name, client_msg_id, conversation_seq,
                        type, state, local_state, text_content, media_id, server_accepted_at,
                        recalled_at, system_event_type, system_target_user_id, system_role,
                        moderated_by_user_id, moderated_reason, moderated_at, created_at
@@ -1141,7 +1162,7 @@ class LocalDatabase internal constructor(
         pool.connection.use { connection ->
             connection.prepareStatement(
                 """
-                SELECT message_id, conversation_id, sender_id, client_msg_id, conversation_seq,
+                SELECT message_id, conversation_id, sender_id, sender_display_name, client_msg_id, conversation_seq,
                        type, state, local_state, text_content, media_id, server_accepted_at,
                        recalled_at, system_event_type, system_target_user_id, system_role,
                        moderated_by_user_id, moderated_reason, moderated_at, created_at
@@ -1365,36 +1386,37 @@ class LocalDatabase internal constructor(
         connection.prepareStatement(
             """
             MERGE INTO local_messages (
-                message_id, conversation_id, sender_id, client_msg_id, conversation_seq,
+                message_id, conversation_id, sender_id, sender_display_name, client_msg_id, conversation_seq,
                 type, state, local_state, text_content, search_text, media_id,
                 server_accepted_at, recalled_at, system_event_type, system_target_user_id,
                 system_role, moderated_by_user_id, moderated_reason, moderated_at, created_at
-            ) KEY(message_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ) KEY(message_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """.trimIndent()).use { statement ->
             statement.setString(1, message.messageId)
             statement.setString(2, message.conversationId)
             statement.setString(3, message.senderId)
-            statement.setString(4, message.clientMsgId)
+            statement.setString(4, message.senderDisplayName)
+            statement.setString(5, message.clientMsgId)
             if (message.conversationSeq == null) {
-                statement.setObject(5, null)
+                statement.setObject(6, null)
             } else {
-                statement.setLong(5, message.conversationSeq)
+                statement.setLong(6, message.conversationSeq)
             }
-            statement.setString(6, message.type)
-            statement.setString(7, message.state)
-            statement.setString(8, message.localState)
-            statement.setString(9, message.text)
-            statement.setString(10, if (isSearchable(message)) LocalSearchText.normalize(message.text) else "")
-            statement.setString(11, message.mediaId)
-            statement.setString(12, message.serverAcceptedAt)
-            statement.setString(13, message.recalledAt)
-            statement.setString(14, message.systemEventType)
-            statement.setString(15, message.systemTargetUserId)
-            statement.setString(16, message.systemRole)
-            statement.setString(17, message.moderatedByUserId)
-            statement.setString(18, message.moderatedReason)
-            statement.setString(19, message.moderatedAt)
-            statement.setLong(20, message.createdAt)
+            statement.setString(7, message.type)
+            statement.setString(8, message.state)
+            statement.setString(9, message.localState)
+            statement.setString(10, message.text)
+            statement.setString(11, if (isSearchable(message)) LocalSearchText.normalize(message.text) else "")
+            statement.setString(12, message.mediaId)
+            statement.setString(13, message.serverAcceptedAt)
+            statement.setString(14, message.recalledAt)
+            statement.setString(15, message.systemEventType)
+            statement.setString(16, message.systemTargetUserId)
+            statement.setString(17, message.systemRole)
+            statement.setString(18, message.moderatedByUserId)
+            statement.setString(19, message.moderatedReason)
+            statement.setString(20, message.moderatedAt)
+            statement.setLong(21, message.createdAt)
             statement.executeUpdate()
         }
         deleteSearchTerms(connection, message.messageId)
@@ -1421,7 +1443,7 @@ class LocalDatabase internal constructor(
     private fun rebuildSearchTerms(connection: java.sql.Connection) {
         val messages = connection.prepareStatement(
             """
-            SELECT message_id, conversation_id, sender_id, client_msg_id, conversation_seq,
+            SELECT message_id, conversation_id, sender_id, sender_display_name, client_msg_id, conversation_seq,
                    type, state, local_state, text_content, search_text, media_id,
                    server_accepted_at, recalled_at, system_event_type, system_target_user_id,
                    system_role, moderated_by_user_id, moderated_reason, moderated_at, created_at
@@ -1501,7 +1523,7 @@ class LocalDatabase internal constructor(
         val placeholders = plan.terms.joinToString(",") { "?" }
         val conversationClause = if (conversationId == null) "" else "AND lm.conversation_id = ?"
         val sql = """
-            SELECT lm.message_id, lm.conversation_id, lm.sender_id, lm.client_msg_id,
+            SELECT lm.message_id, lm.conversation_id, lm.sender_id, lm.sender_display_name, lm.client_msg_id,
                    lm.conversation_seq, lm.type, lm.state, lm.local_state,
                    lm.text_content, lm.search_text, lm.media_id, lm.server_accepted_at,
                    lm.recalled_at, lm.system_event_type, lm.system_target_user_id,
@@ -1518,7 +1540,7 @@ class LocalDatabase internal constructor(
               AND mst.term IN ($placeholders)
               AND LOCATE(?, lm.search_text) > 0
               $conversationClause
-            GROUP BY lm.message_id, lm.conversation_id, lm.sender_id, lm.client_msg_id,
+            GROUP BY lm.message_id, lm.conversation_id, lm.sender_id, lm.sender_display_name, lm.client_msg_id,
                      lm.conversation_seq, lm.type, lm.state, lm.local_state,
                      lm.text_content, lm.search_text, lm.media_id, lm.server_accepted_at,
                      lm.recalled_at, lm.system_event_type, lm.system_target_user_id,
@@ -1555,7 +1577,7 @@ class LocalDatabase internal constructor(
         val conversationClause = if (conversationId == null) "" else "AND lm.conversation_id = ?"
         val candidateLimit = (limit * 10).coerceAtMost(10_000)
         val sql = """
-            SELECT lm.message_id, lm.conversation_id, lm.sender_id, lm.client_msg_id, lm.conversation_seq,
+            SELECT lm.message_id, lm.conversation_id, lm.sender_id, lm.sender_display_name, lm.client_msg_id, lm.conversation_seq,
                    lm.type, lm.state, lm.local_state, lm.text_content, lm.media_id, lm.server_accepted_at,
                    lm.recalled_at, lm.system_event_type, lm.system_target_user_id,
                    lm.system_role, lm.moderated_by_user_id, lm.moderated_reason,
@@ -1602,7 +1624,7 @@ class LocalDatabase internal constructor(
     ): List<LocalMessage> {
         val conversationClause = if (conversationId == null) "" else "AND lm.conversation_id = ?"
         val sql = """
-            SELECT lm.message_id, lm.conversation_id, lm.sender_id, lm.client_msg_id, lm.conversation_seq,
+            SELECT lm.message_id, lm.conversation_id, lm.sender_id, lm.sender_display_name, lm.client_msg_id, lm.conversation_seq,
                    lm.type, lm.state, lm.local_state, lm.text_content, lm.media_id, lm.server_accepted_at,
                    lm.recalled_at, lm.system_event_type, lm.system_target_user_id,
                    lm.system_role, lm.moderated_by_user_id, lm.moderated_reason,
@@ -1658,6 +1680,7 @@ class LocalDatabase internal constructor(
         messageId = getString("message_id"),
         conversationId = getString("conversation_id"),
         senderId = getString("sender_id"),
+        senderDisplayName = getString("sender_display_name"),
         clientMsgId = getString("client_msg_id"),
         conversationSeq = getLong("conversation_seq").let {
             if (wasNull()) null else it
@@ -1779,7 +1802,7 @@ data class LocalConversation(
     val conversationId: String,
     val kind: String = "C2C",
     val peerUserId: String,
-    val peerAccountNo: String,
+    val peerAccountNo: String?,
     val peerDisplayName: String,
     val peerAvatarUrl: String? = null,
     val peerAvatarVersion: Long = 0,
@@ -1844,6 +1867,7 @@ data class LocalMessage(
     val messageId: String,
     val conversationId: String,
     val senderId: String,
+    val senderDisplayName: String = "",
     val clientMsgId: String,
     val conversationSeq: Long?,
     val type: String,

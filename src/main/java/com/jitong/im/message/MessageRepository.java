@@ -191,6 +191,8 @@ class MessageRepository {
     MessageRecord findByClientMessageId(UUID senderId, UUID clientMsgId) {
         return jdbc.sql("""
                         SELECT id, conversation_id, sender_id, client_msg_id,
+                               (SELECT display_name FROM users sender_user
+                                WHERE sender_user.id = messages.sender_id) AS sender_display_name,
                                conversation_seq, type, state, text_content,
                                media_id, server_accepted_at, recalled_at,
                                system_event_type, system_target_user_id, system_role,
@@ -314,6 +316,8 @@ class MessageRepository {
     MessageRecord findById(UUID messageId) {
         return jdbc.sql("""
                         SELECT id, conversation_id, sender_id, client_msg_id,
+                               (SELECT display_name FROM users sender_user
+                                WHERE sender_user.id = messages.sender_id) AS sender_display_name,
                                conversation_seq, type, state, text_content,
                                media_id, server_accepted_at, recalled_at,
                                system_event_type, system_target_user_id, system_role,
@@ -341,6 +345,8 @@ class MessageRepository {
     MessageRecord findByIdForUpdate(UUID messageId) {
         return jdbc.sql("""
                         SELECT id, conversation_id, sender_id, client_msg_id,
+                               (SELECT display_name FROM users sender_user
+                                WHERE sender_user.id = messages.sender_id) AS sender_display_name,
                                conversation_seq, type, state, text_content,
                                media_id, server_accepted_at, recalled_at,
                                system_event_type, system_target_user_id, system_role,
@@ -431,6 +437,8 @@ class MessageRepository {
     List<MessageRecord> listMessages(UUID conversationId, long afterSequence, int limit) {
         return jdbc.sql("""
                         SELECT id, conversation_id, sender_id, client_msg_id,
+                               (SELECT display_name FROM users sender_user
+                                WHERE sender_user.id = messages.sender_id) AS sender_display_name,
                                conversation_seq, type, state, text_content,
                                media_id, server_accepted_at, recalled_at,
                                system_event_type, system_target_user_id, system_role,
@@ -456,6 +464,8 @@ class MessageRepository {
     ) {
         return jdbc.sql("""
                         SELECT id, conversation_id, sender_id, client_msg_id,
+                               (SELECT display_name FROM users sender_user
+                                WHERE sender_user.id = messages.sender_id) AS sender_display_name,
                                conversation_seq, type, state, text_content,
                                media_id, server_accepted_at, recalled_at,
                                system_event_type, system_target_user_id, system_role,
@@ -520,7 +530,8 @@ class MessageRepository {
                 row.getString("system_role"),
                 row.getObject("moderated_by_user_id", UUID.class),
                 row.getString("moderated_reason"),
-                nullableInstant(row, "moderated_at"));
+                nullableInstant(row, "moderated_at"),
+                row.getString("sender_display_name"));
     }
 
     private static Instant nullableInstant(java.sql.ResultSet row, String column) throws java.sql.SQLException {

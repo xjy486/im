@@ -37,6 +37,7 @@ internal data class MessageResponse(
     val messageId: UUID,
     val conversationId: UUID,
     val senderId: UUID,
+    val senderDisplayName: String = "",
     val clientMsgId: UUID,
     val conversationSeq: Long,
     val type: String,

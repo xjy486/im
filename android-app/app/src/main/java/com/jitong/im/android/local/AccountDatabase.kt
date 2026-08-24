@@ -38,7 +38,7 @@ interface LocalAccountDao {
 data class LocalConversationEntity(
     @PrimaryKey val conversationId: String,
     val peerUserId: String,
-    val peerAccountNo: String,
+    val peerAccountNo: String?,
     val peerDisplayName: String,
     val peerAvatarUrl: String? = null,
     val peerAvatarVersion: Long = 0,
@@ -62,6 +62,7 @@ data class LocalMessageEntity(
     @PrimaryKey val messageId: String,
     val conversationId: String,
     val senderId: String,
+    val senderDisplayName: String = "",
     val clientMsgId: String,
     val conversationSeq: Long?,
     val type: String,
@@ -315,6 +316,11 @@ interface LocalMessageDao {
 
     @Query("DELETE FROM local_message WHERE localState IN ('SENT', 'RECEIVED')")
     fun clearAcceptedMessageEntities()
+
+    @Query(
+        "UPDATE local_message SET senderDisplayName = :displayName WHERE senderId = :userId",
+    )
+    fun updateMessageSenderDisplayName(userId: String, displayName: String)
 
     @Transaction
     fun upsert(message: LocalMessageEntity) {
@@ -592,7 +598,7 @@ interface SyncStateDao {
         LocalAiArtifactEntity::class,
         LocalAiActionItemEntity::class,
     ],
-    version = 16,
+    version = 18,
     exportSchema = true,
 )
 abstract class AccountDatabase : RoomDatabase() {
@@ -872,6 +878,55 @@ abstract class AccountDatabase : RoomDatabase() {
                     "CREATE INDEX IF NOT EXISTS index_local_ai_action_item_status " +
                         "ON local_ai_action_item (status)",
                 )
+            }
+        }
+
+        val MIGRATION_16_17 = object : androidx.room.migration.Migration(16, 17) {
+            override fun migrate(database: androidx.sqlite.db.SupportSQLiteDatabase) {
+                database.execSQL(
+                    "ALTER TABLE local_message ADD COLUMN senderDisplayName TEXT NOT NULL DEFAULT ''",
+                )
+            }
+        }
+
+        val MIGRATION_17_18 = object : androidx.room.migration.Migration(17, 18) {
+            override fun migrate(database: androidx.sqlite.db.SupportSQLiteDatabase) {
+                database.execSQL("ALTER TABLE local_conversation RENAME TO local_conversation_v17")
+                database.execSQL(
+                    """
+                    CREATE TABLE local_conversation (
+                        conversationId TEXT NOT NULL PRIMARY KEY,
+                        peerUserId TEXT NOT NULL,
+                        peerAccountNo TEXT,
+                        peerDisplayName TEXT NOT NULL,
+                        peerAvatarUrl TEXT,
+                        peerAvatarVersion INTEGER NOT NULL,
+                        peerAvatarFallback TEXT NOT NULL,
+                        status TEXT NOT NULL,
+                        relationship TEXT NOT NULL,
+                        lastSequence INTEGER NOT NULL,
+                        updatedAt INTEGER NOT NULL,
+                        searchVisible INTEGER NOT NULL,
+                        searchVisibleAfterSeq INTEGER NOT NULL
+                    )
+                    """.trimIndent(),
+                )
+                database.execSQL(
+                    """
+                    INSERT INTO local_conversation (
+                        conversationId, peerUserId, peerAccountNo, peerDisplayName,
+                        peerAvatarUrl, peerAvatarVersion, peerAvatarFallback,
+                        status, relationship, lastSequence, updatedAt,
+                        searchVisible, searchVisibleAfterSeq
+                    )
+                    SELECT conversationId, peerUserId, peerAccountNo, peerDisplayName,
+                           peerAvatarUrl, peerAvatarVersion, peerAvatarFallback,
+                           status, relationship, lastSequence, updatedAt,
+                           searchVisible, searchVisibleAfterSeq
+                    FROM local_conversation_v17
+                    """.trimIndent(),
+                )
+                database.execSQL("DROP TABLE local_conversation_v17")
             }
         }
 

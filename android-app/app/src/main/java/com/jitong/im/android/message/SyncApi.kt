@@ -114,7 +114,7 @@ internal data class SyncConversationResponse(
     val version: Int,
     val conversationId: UUID,
     val peerUserId: UUID,
-    val peerAccountNo: String,
+    val peerAccountNo: String?,
     val peerDisplayName: String,
     val status: String,
     val relationship: String,

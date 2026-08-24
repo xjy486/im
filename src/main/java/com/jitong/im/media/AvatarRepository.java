@@ -36,16 +36,17 @@ class AvatarRepository {
 
     UserProfile findUserProfile(UUID userId) {
         return jdbc.sql("""
-                        SELECT id, display_name, avatar_media_id, avatar_version
+                        SELECT id, display_name, avatar_media_id, avatar_version, status
                         FROM users
-                        WHERE id = :userId AND status = 'ACTIVE'
+                        WHERE id = :userId
                         """)
                 .param("userId", userId)
                 .query((row, rowNum) -> new UserProfile(
                         row.getObject("id", UUID.class),
                         row.getString("display_name"),
                         row.getObject("avatar_media_id", UUID.class),
-                        row.getLong("avatar_version")))
+                        row.getLong("avatar_version"),
+                        row.getString("status")))
                 .optional()
                 .orElse(null);
     }
@@ -93,7 +94,7 @@ class AvatarRepository {
                         WHERE m.id = (
                             SELECT avatar_media_id
                             FROM users
-                            WHERE id = :userId AND status = 'ACTIVE'
+                            WHERE id = :userId
                         )
                           AND m.state = 'BOUND'
                         """)
@@ -114,6 +115,40 @@ class AvatarRepository {
                                   (c.user_low_id = :requesterId AND c.user_high_id = :userId)
                                   OR (c.user_low_id = :userId AND c.user_high_id = :requesterId)
                               )
+                        )
+                        """)
+                .param("requesterId", requesterId)
+                .param("userId", userId)
+                .query(Boolean.class)
+                .single();
+    }
+
+    boolean hasHistoryAccess(UUID requesterId, UUID userId) {
+        return jdbc.sql("""
+                        SELECT EXISTS (
+                            SELECT 1
+                            FROM conversations conversation
+                            JOIN c2c_conversations c2c
+                              ON c2c.conversation_id = conversation.id
+                            WHERE conversation.status IN ('ACTIVE', 'READ_ONLY')
+                              AND (
+                                  (c2c.user_low_id = :requesterId AND c2c.user_high_id = :userId)
+                                  OR (c2c.user_low_id = :userId AND c2c.user_high_id = :requesterId)
+                              )
+                        )
+                        OR EXISTS (
+                            SELECT 1
+                            FROM messages message
+                            JOIN conversation_members member
+                              ON member.conversation_id = message.conversation_id
+                             AND member.user_id = :requesterId
+                             AND member.status = 'ACTIVE'
+                            JOIN groups group_chat
+                              ON group_chat.conversation_id = message.conversation_id
+                             AND group_chat.status = 'ACTIVE'
+                            WHERE message.sender_id = :userId
+                              AND message.state IN ('ACTIVE', 'RECALLED', 'MODERATED')
+                              AND message.conversation_seq > member.history_visible_after_seq
                         )
                         """)
                 .param("requesterId", requesterId)
@@ -293,8 +328,17 @@ class AvatarRepository {
             UUID userId,
             String displayName,
             UUID avatarMediaId,
-            long avatarVersion
+            long avatarVersion,
+            String status
     ) {
+        UserProfile(
+                UUID userId,
+                String displayName,
+                UUID avatarMediaId,
+                long avatarVersion
+        ) {
+                this(userId, displayName, avatarMediaId, avatarVersion, "ACTIVE");
+        }
     }
 
     record GroupOwner(

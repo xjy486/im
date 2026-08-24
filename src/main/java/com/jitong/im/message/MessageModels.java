@@ -21,7 +21,8 @@ record MessageRecord(
         String systemRole,
         UUID moderatedByUserId,
         String moderatedReason,
-        Instant moderatedAt
+        Instant moderatedAt,
+        String senderDisplayName
 ) {
     MessageRecord(
             UUID messageId,
@@ -53,7 +54,8 @@ record MessageRecord(
                 null,
                 null,
                 null,
-                null);
+                null,
+                "?");
     }
 
     MessageRecord(
@@ -84,7 +86,8 @@ record MessageRecord(
                 null,
                 null,
                 null,
-                null);
+                null,
+                "?");
     }
 
     MessageRecord(
@@ -116,7 +119,8 @@ record MessageRecord(
                 null,
                 null,
                 null,
-                null);
+                null,
+                "?");
     }
 }
 

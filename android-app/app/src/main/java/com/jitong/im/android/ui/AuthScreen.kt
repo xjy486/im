@@ -269,6 +269,7 @@ private fun HomeScreen(
     var selectedConversationId by rememberSaveable { mutableStateOf<String?>(null) }
     var selectedGroupConversationId by rememberSaveable { mutableStateOf<String?>(null) }
     var selectedMessageId by rememberSaveable { mutableStateOf<String?>(null) }
+    var deleteAccountPassword by rememberSaveable { mutableStateOf("") }
     LaunchedEffect(state.session.userId) {
         selectedConversationId = null
         selectedGroupConversationId = null
@@ -391,6 +392,24 @@ private fun HomeScreen(
                     modifier = Modifier.fillMaxWidth(),
                 ) {
                     Text("修改密码")
+                }
+                OutlinedTextField(
+                    value = deleteAccountPassword,
+                    onValueChange = { deleteAccountPassword = it },
+                    label = { Text("永久注销需再次输入当前密码") },
+                    visualTransformation = PasswordVisualTransformation(),
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth(),
+                )
+                Button(
+                    onClick = {
+                        viewModel.deleteAccount(deleteAccountPassword)
+                        deleteAccountPassword = ""
+                    },
+                    enabled = deleteAccountPassword.isNotBlank(),
+                    modifier = Modifier.fillMaxWidth(),
+                ) {
+                    Text("永久注销账号")
                 }
             }
         }
@@ -961,7 +980,7 @@ private fun ConversationScreen(
             size = 64.dp,
         )
         Text(conversation.peerDisplayName, style = MaterialTheme.typography.headlineMedium)
-        Text("账号 ${conversation.peerAccountNo}")
+        conversation.peerAccountNo?.let { Text("账号 $it") }
         Text("会话 ID ${conversation.conversationId}", style = MaterialTheme.typography.bodySmall)
         if (conversation.status == "READ_ONLY") {
             Text("联系人关系已结束，历史消息保持只读。")
@@ -980,6 +999,12 @@ private fun ConversationScreen(
             items(state.messages, key = { it.messageId }) { message ->
                 Card(Modifier.fillMaxWidth()) {
                     Column(Modifier.padding(14.dp)) {
+                        if (message.senderDisplayName.isNotBlank()) {
+                            Text(
+                                message.senderDisplayName,
+                                style = MaterialTheme.typography.bodySmall,
+                            )
+                        }
                         if (message.state == "RECALLED") {
                             Text("消息已撤回")
                         } else if (message.state == "MODERATED") {

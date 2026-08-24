@@ -120,6 +120,14 @@ class DesktopAuthStore(
         database = null
     }
 
+    fun deleteAccount(currentPassword: String) {
+        val current = session ?: error("No active session")
+        authClient.deleteAccount(current.accessToken, currentPassword)
+        clearUntrustedLocalData(current.accountNo)
+        session = null
+        database = null
+    }
+
     fun clearUntrustedLocalData() {
         val accountNo = session?.accountNo ?: return
         clearUntrustedLocalData(accountNo)

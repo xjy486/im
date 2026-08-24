@@ -141,6 +141,8 @@ class AccountLocalStore(
             .addMigrations(AccountDatabase.MIGRATION_13_14)
             .addMigrations(AccountDatabase.MIGRATION_14_15)
             .addMigrations(AccountDatabase.MIGRATION_15_16)
+            .addMigrations(AccountDatabase.MIGRATION_16_17)
+            .addMigrations(AccountDatabase.MIGRATION_17_18)
             .build()
         if (database.searchStateDao().current()?.version != SEARCH_INDEX_VERSION) {
             database.messageDao().rebuildSearchEntities()

@@ -824,23 +824,35 @@ class AuthRepository {
     }
 
     UserRetirementResult retireUser(UUID userId, Instant retiredAt) {
+        String currentStatus = jdbc.sql("""
+                        SELECT status
+                        FROM users
+                        WHERE id = :userId
+                        FOR UPDATE
+                        """)
+                .param("userId", userId)
+                .query(String.class)
+                .optional()
+                .orElse(null);
+        if (currentStatus == null) {
+            return UserRetirementResult.NOT_FOUND;
+        }
+        if (!"ACTIVE".equals(currentStatus)) {
+            return UserRetirementResult.ALREADY_RETIRED;
+        }
+        if (!activeOwnedGroupIds(userId).isEmpty()) {
+            return UserRetirementResult.GROUP_OWNERSHIP_BLOCKED;
+        }
         int retired = jdbc.sql("""
                         UPDATE users
-                        SET status = 'RETIRED', retired_at = :retiredAt
+                        SET status = 'DELETED', retired_at = :retiredAt
                         WHERE id = :userId AND status = 'ACTIVE'
                         """)
                 .param("userId", userId)
                 .param("retiredAt", utc(retiredAt), Types.TIMESTAMP_WITH_TIMEZONE)
                 .update();
         if (retired == 0) {
-            String status = jdbc.sql("SELECT status FROM users WHERE id = :userId")
-                    .param("userId", userId)
-                    .query(String.class)
-                    .optional()
-                    .orElse(null);
-            return status == null
-                    ? UserRetirementResult.NOT_FOUND
-                    : UserRetirementResult.ALREADY_RETIRED;
+            return UserRetirementResult.ALREADY_RETIRED;
         }
         jdbc.sql("""
                         UPDATE public_identifiers
@@ -880,7 +892,37 @@ class AuthRepository {
                 .param("userId", userId)
                 .param("retiredAt", utc(retiredAt), Types.TIMESTAMP_WITH_TIMEZONE)
                 .update();
-        return UserRetirementResult.RETIRED;
+        return UserRetirementResult.DELETED;
+    }
+
+    private Set<UUID> activeOwnedGroupIds(UUID userId) {
+        return Set.copyOf(jdbc.sql("""
+                        SELECT conversation_id
+                        FROM groups
+                        WHERE owner_user_id = :userId AND status = 'ACTIVE'
+                        ORDER BY conversation_id
+                        FOR UPDATE
+                        """)
+                .param("userId", userId)
+                .query(UUID.class)
+                .list());
+    }
+
+    void deleteRetiredCredentialsAndDevices(UUID userId) {
+        jdbc.sql("""
+                        DELETE FROM refresh_tokens
+                        WHERE session_id IN (
+                            SELECT id FROM auth_sessions WHERE user_id = :userId
+                        )
+                        """)
+                .param("userId", userId)
+                .update();
+        jdbc.sql("DELETE FROM auth_sessions WHERE user_id = :userId")
+                .param("userId", userId)
+                .update();
+        jdbc.sql("DELETE FROM devices WHERE user_id = :userId")
+                .param("userId", userId)
+                .update();
     }
 
     private OffsetDateTime utc(Instant value) {

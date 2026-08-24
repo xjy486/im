@@ -31,7 +31,7 @@ class ContactRepository {
                 .param("accountNo", accountNo)
                 .query((row, rowNum) -> new ContactUser(
                         row.getObject("id", UUID.class),
-                        row.getString("account_no").trim(),
+                        trimNullable(row.getString("account_no")),
                         row.getString("display_name"),
                         row.getObject("avatar_media_id", UUID.class),
                         row.getLong("avatar_version")))
@@ -174,7 +174,7 @@ class ContactRepository {
                         row.getString("verification"),
                         row.getObject("expires_at", OffsetDateTime.class).toInstant(),
                         userId.equals(row.getObject("recipient_id", UUID.class)),
-                        row.getString("peer_account_no").trim(),
+                        trimNullable(row.getString("peer_account_no")),
                         row.getString("peer_display_name")))
                 .list();
     }
@@ -463,7 +463,7 @@ class ContactRepository {
         return jdbc.sql("""
                         SELECT cc.conversation_id,
                                CASE WHEN cc.user_low_id = :userId THEN cc.user_high_id ELSE cc.user_low_id END AS peer_id,
-                               u.account_no,
+                               CASE WHEN u.status = 'DELETED' THEN NULL ELSE u.account_no END AS account_no,
                                CASE WHEN c.status = 'ACTIVE' THEN u.display_name
                                     WHEN cc.user_low_id = :userId THEN cc.readonly_high_display_name
                                     ELSE cc.readonly_low_display_name END AS display_name,
@@ -506,7 +506,7 @@ class ContactRepository {
                         1,
                         row.getObject("conversation_id", UUID.class),
                         row.getObject("peer_id", UUID.class),
-                        row.getString("account_no").trim(),
+                        trimNullable(row.getString("account_no")),
                         row.getString("display_name"),
                         row.getString("status"),
                         row.getString("relationship"),
@@ -545,6 +545,10 @@ class ContactRepository {
         }
         int codePoint = displayName.codePointAt(0);
         return new String(Character.toChars(codePoint));
+    }
+
+    private String trimNullable(String value) {
+        return value == null ? null : value.trim();
     }
 
     private void markConversationReadOnly(UUID firstUserId, UUID secondUserId) {

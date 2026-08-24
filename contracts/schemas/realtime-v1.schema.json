@@ -266,6 +266,7 @@
         "messageId",
         "conversationId",
         "senderId",
+        "senderDisplayName",
         "clientMsgId",
         "conversationSeq",
         "type",
@@ -287,6 +288,10 @@
         "senderId": {
           "type": "string",
           "format": "uuid"
+        },
+        "senderDisplayName": {
+          "type": "string",
+          "minLength": 1
         },
         "clientMsgId": {
           "type": "string",

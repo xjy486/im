@@ -115,6 +115,8 @@ class ApiExceptionHandler {
     ) {
         ApiErrorDefinition definition = exception.result() == UserRetirementResult.NOT_FOUND
                 ? ApiErrorDefinition.USER_NOT_FOUND
+                : exception.result() == UserRetirementResult.GROUP_OWNERSHIP_BLOCKED
+                ? ApiErrorDefinition.ACCOUNT_DELETION_GROUP_OWNER
                 : ApiErrorDefinition.CONFLICT;
         return response(definition, request);
     }

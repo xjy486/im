@@ -1,7 +1,8 @@
 package com.jitong.im.auth;
 
 public enum UserRetirementResult {
-    RETIRED,
+    DELETED,
     NOT_FOUND,
-    ALREADY_RETIRED
+    ALREADY_RETIRED,
+    GROUP_OWNERSHIP_BLOCKED
 }

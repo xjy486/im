@@ -27,7 +27,7 @@ public class AuthService {
     private final AuthProperties properties;
     private final LoginRateLimiter rateLimiter;
     private final SecurityAuditSink auditSink;
-    private final PrivateAiDataEraser privateAiDataEraser;
+    private final UserRetirementDataEraser retirementDataEraser;
     private final Clock clock;
     private final ApplicationEventPublisher eventPublisher;
 
@@ -39,7 +39,7 @@ public class AuthService {
             AuthProperties properties,
             LoginRateLimiter rateLimiter,
             SecurityAuditSink auditSink,
-            PrivateAiDataEraser privateAiDataEraser,
+            UserRetirementDataEraser retirementDataEraser,
             ApplicationEventPublisher eventPublisher
     ) {
         this(
@@ -49,7 +49,7 @@ public class AuthService {
                 properties,
                 rateLimiter,
                 auditSink,
-                privateAiDataEraser,
+                retirementDataEraser,
                 Clock.systemUTC(),
                 eventPublisher);
     }
@@ -61,7 +61,7 @@ public class AuthService {
             AuthProperties properties,
             LoginRateLimiter rateLimiter,
             SecurityAuditSink auditSink,
-            PrivateAiDataEraser privateAiDataEraser,
+            UserRetirementDataEraser retirementDataEraser,
             Clock clock,
             ApplicationEventPublisher eventPublisher
     ) {
@@ -71,7 +71,7 @@ public class AuthService {
         this.properties = properties;
         this.rateLimiter = rateLimiter;
         this.auditSink = auditSink;
-        this.privateAiDataEraser = privateAiDataEraser;
+        this.retirementDataEraser = retirementDataEraser;
         this.clock = clock;
         this.eventPublisher = eventPublisher;
     }
@@ -420,16 +420,41 @@ public class AuthService {
 
     @Transactional
     void retireUser(UUID userId, UUID requestId) {
+        Set<UUID> revokedDeviceIds = repository.activeDeviceIdsForUser(userId);
         UserRetirementResult result = repository.retireUser(userId, clock.instant());
-        if (result != UserRetirementResult.RETIRED) {
+        if (result != UserRetirementResult.DELETED) {
             ApiErrorDefinition error = result == UserRetirementResult.NOT_FOUND
                     ? ApiErrorDefinition.USER_NOT_FOUND
+                    : result == UserRetirementResult.GROUP_OWNERSHIP_BLOCKED
+                    ? ApiErrorDefinition.ACCOUNT_DELETION_GROUP_OWNER
                     : ApiErrorDefinition.CONFLICT;
             recordRetirement(userId, requestId, AuditOutcome.REJECTED, error);
             throw new UserRetirementException(result);
         }
-        privateAiDataEraser.eraseForRetirement(userId);
+        retirementDataEraser.eraseForRetirement(userId);
+        repository.deleteRetiredCredentialsAndDevices(userId);
+        eventPublisher.publishEvent(new AuthCredentialsRevokedEvent(revokedDeviceIds));
         recordRetirement(userId, requestId, AuditOutcome.SUCCEEDED, null);
+    }
+
+    @Transactional
+    void deleteAccount(
+            String authorizationHeader,
+            String currentPassword,
+            UUID requestId
+    ) {
+        AuthSession session = requireSession(authorizationHeader);
+        AuthRepository.PasswordChangeUser user =
+                repository.findUserForPasswordChange(session.userId());
+        if (user == null || !passwordEncoder.matches(currentPassword, user.passwordHash())) {
+            recordRetirement(
+                    session.userId(),
+                    requestId,
+                    AuditOutcome.REJECTED,
+                    ApiErrorDefinition.AUTH_INVALID);
+            throw new InvalidCredentialsException();
+        }
+        retireUser(session.userId(), requestId);
     }
 
     private TokenPair issueTokens(UUID deviceId, UUID userId, DeviceClass deviceClass, Instant now) {

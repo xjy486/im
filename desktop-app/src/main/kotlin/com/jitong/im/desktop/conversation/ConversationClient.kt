@@ -29,7 +29,7 @@ data class DesktopConversationSummary(
     val version: Int,
     val conversationId: String,
     val peerUserId: String,
-    val peerAccountNo: String,
+    val peerAccountNo: String?,
     val peerDisplayName: String,
     val status: String,
     val relationship: String,
@@ -387,6 +387,7 @@ data class DesktopMessage(
     val messageId: String,
     val conversationId: String,
     val senderId: String,
+    val senderDisplayName: String = "",
     val clientMsgId: String,
     val conversationSeq: Long,
     val type: String,
@@ -431,6 +432,7 @@ data class DesktopRealtimeBody(
     val messageId: String? = null,
     val conversationId: String? = null,
     val senderId: String? = null,
+    val senderDisplayName: String? = null,
     val clientMsgId: String? = null,
     val conversationSeq: Long? = null,
     val type: String? = null,
@@ -1048,6 +1050,9 @@ class ConversationClient(
                     avatarUrl = profile.avatarUrl,
                     avatarVersion = profile.avatarVersion,
                     avatarFallback = profile.avatarFallback)
+                local.updateMessageSenderDisplayName(
+                    profile.userId,
+                    profile.displayName)
                 local.mediaCache().deleteMatching("avatar-$userId-v")
             }
         events
@@ -1361,6 +1366,7 @@ class ConversationClient(
                 messageId = message.messageId,
                 conversationId = message.conversationId,
                 senderId = message.senderId,
+                senderDisplayName = message.senderDisplayName,
                 clientMsgId = message.clientMsgId,
                 conversationSeq = message.conversationSeq,
                 type = message.type,
@@ -1393,6 +1399,7 @@ class ConversationClient(
                 messageId = message.messageId,
                 conversationId = message.conversationId,
                 senderId = message.senderId,
+                senderDisplayName = message.senderDisplayName,
                 clientMsgId = message.clientMsgId,
                 conversationSeq = message.conversationSeq,
                 type = message.type,
@@ -1490,6 +1497,9 @@ class ConversationClient(
                 body.avatarUrl,
                 body.avatarVersion ?: 0,
                 body.avatarFallback ?: body.displayName?.firstOrNull()?.toString() ?: "?")
+            local.updateMessageSenderDisplayName(
+                userId,
+                body.displayName.orEmpty())
             syncSeq?.let(local::saveLastSyncSeq)
             return
         }
@@ -1569,6 +1579,7 @@ class ConversationClient(
             messageId = messageId,
             conversationId = conversationId,
             senderId = senderId,
+            senderDisplayName = senderDisplayName.orEmpty(),
             clientMsgId = clientMsgId,
             conversationSeq = conversationSeq,
             type = type ?: "TEXT",

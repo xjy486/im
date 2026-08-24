@@ -919,6 +919,7 @@ PostgreSQL 与 MinIO 使用独立持久卷、分别备份、加密存储，并�
 - `POST /auth/refresh`
 - `POST /auth/logout`
 - `POST /auth/password/change`
+- `DELETE /auth/account`
 - `POST /admin/users/{id}/password-reset`
 - `DELETE /devices/{id}`
 

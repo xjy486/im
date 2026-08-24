@@ -84,7 +84,7 @@ class RetiredAccountNumberContractTest extends ContractTestEnvironment {
         assertThat(jdbc.sql("SELECT status FROM users WHERE id = :id")
                 .param("id", userId)
                 .query(String.class)
-                .single()).isEqualTo("RETIRED");
+                .single()).isEqualTo("DELETED");
         assertThat(jdbc.sql("""
                         SELECT retired_at
                         FROM public_identifiers
@@ -98,11 +98,10 @@ class RetiredAccountNumberContractTest extends ContractTestEnvironment {
                         FROM refresh_tokens r
                         JOIN auth_sessions s ON s.id = r.session_id
                         WHERE s.user_id = :userId
-                          AND r.state = 'REVOKED'
                         """)
                 .param("userId", userId)
                 .query(Long.class)
-                .single()).isEqualTo(1L);
+                .single()).isZero();
         assertThat(jdbc.sql("""
                         SELECT COUNT(*)
                         FROM audit_logs

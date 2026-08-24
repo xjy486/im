@@ -69,6 +69,7 @@ final class MessageWire {
                 message.moderatedByUserId(),
                 message.moderatedReason(),
                 message.moderatedAt(),
+                message.senderDisplayName(),
                 syncSeq);
     }
 
@@ -240,6 +241,7 @@ final class MessageWire {
             UUID moderatedByUserId,
             String moderatedReason,
             java.time.Instant moderatedAt,
+            String senderDisplayName,
             Long syncSeq
     ) {
     }

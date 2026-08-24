@@ -5,6 +5,7 @@ import jakarta.servlet.http.HttpServletRequest;
 import jakarta.validation.Valid;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.PostMapping;
+import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestHeader;
 import org.springframework.web.bind.annotation.RequestMapping;
@@ -82,6 +83,19 @@ class AuthController {
                 request.currentPassword(),
                 request.newPassword(),
                 java.util.UUID.fromString(RequestContextFilter.requestId(servletRequest))));
+    }
+
+    @DeleteMapping("/account")
+    ResponseEntity<Void> deleteAccount(
+            @RequestHeader(value = "Authorization", required = false) String authorization,
+            @Valid @RequestBody AccountDeletionRequest request,
+            HttpServletRequest servletRequest
+    ) {
+        authService.deleteAccount(
+                authorization,
+                request.currentPassword(),
+                java.util.UUID.fromString(RequestContextFilter.requestId(servletRequest)));
+        return ResponseEntity.noContent().build();
     }
 
     private String clientIp(HttpServletRequest request) {

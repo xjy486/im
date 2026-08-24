@@ -101,6 +101,17 @@ internal class AuthRepository(
         sessionManager.activate(response.bodyOrThrow())
     }
 
+    suspend fun deleteAccount(currentPassword: String) {
+        val response = execute {
+            authenticatedApi.deleteAccount(AccountDeletionRequest(currentPassword))
+        }
+        if (!response.isSuccessful) {
+            throw response.toAuthException()
+        }
+        sessionManager.prepareForLogout()
+        sessionManager.clearCurrentAccount()
+    }
+
     fun requireReplacement(exception: DeviceReplacementRequiredException) =
         sessionManager.requireReplacement(exception)
 

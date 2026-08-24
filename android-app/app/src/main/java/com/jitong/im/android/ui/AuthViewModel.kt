@@ -72,6 +72,17 @@ internal class AuthViewModel(
         }
     }
 
+    fun deleteAccount(currentPassword: String) {
+        viewModelScope.launch {
+            runCatching {
+                repository.deleteAccount(currentPassword.trim())
+            }.onFailure { failure ->
+                logFailure("delete_account", failure)
+                repository.showError(failure.userMessage())
+            }
+        }
+    }
+
     private fun Throwable.userMessage(): String = when (this) {
         is AuthException -> message
         else -> "无法连接服务，请稍后重试"
