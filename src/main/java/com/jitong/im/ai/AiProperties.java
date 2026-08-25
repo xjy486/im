@@ -71,6 +71,7 @@ public record AiProperties(
             this(enabled, baseUrl, apiKey, model, Duration.ofSeconds(30), supportsVision);
         }
 
+        @ConstructorBinding
         public Provider {
             model = model == null || model.isBlank() ? "gpt-4o-mini" : model;
             requestTimeout = requestTimeout == null || requestTimeout.isNegative() || requestTimeout.isZero()
