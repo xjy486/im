@@ -10,6 +10,7 @@ import org.springframework.ai.chat.metadata.DefaultUsage;
 import org.springframework.ai.chat.messages.AssistantMessage;
 import org.springframework.ai.chat.messages.UserMessage;
 import org.springframework.ai.chat.prompt.Prompt;
+import org.springframework.ai.openai.OpenAiChatOptions;
 
 import java.util.List;
 import java.util.UUID;
@@ -23,6 +24,92 @@ import static org.mockito.Mockito.when;
 import org.mockito.ArgumentCaptor;
 
 class OpenAiCompatibleAiProviderTest {
+
+    @Test
+    void uses_provider_compatible_max_tokens_for_reasoning_provider_output_budget() {
+        UUID messageId = UUID.randomUUID();
+        ChatModel chatModel = mock(ChatModel.class);
+        when(chatModel.call(any(Prompt.class))).thenReturn(new ChatResponse(List.of(
+                new Generation(new AssistantMessage("""
+                        {
+                          "actionItems": [],
+                          "keyFacts": []
+                        }
+                        """)))));
+        OpenAiCompatibleAiProvider provider = provider(chatModel);
+
+        AiProviderResult<AiExtraction> result = provider.extractInformation(new AiSummaryContext(
+                UUID.randomUUID(),
+                List.of(new AiContextMessage(messageId, 1, UUID.randomUUID(), "hello"))));
+
+        assertThat(result.result().actionItems()).isEmpty();
+        assertThat(result.result().keyFacts()).isEmpty();
+        ArgumentCaptor<Prompt> prompt = ArgumentCaptor.forClass(Prompt.class);
+        verify(chatModel).call(prompt.capture());
+        OpenAiChatOptions options = (OpenAiChatOptions) prompt.getValue().getOptions();
+        assertThat(options.getMaxTokens()).isEqualTo(8_192);
+        assertThat(options.getMaxCompletionTokens()).isNull();
+    }
+
+    @Test
+    void normalizes_case_insensitive_extraction_priority_before_schema_validation() {
+        UUID messageId = UUID.randomUUID();
+        ChatModel chatModel = mock(ChatModel.class);
+        when(chatModel.call(any(Prompt.class))).thenReturn(new ChatResponse(List.of(
+                new Generation(new AssistantMessage("""
+                        {
+                          "actionItems": [{
+                            "title": "Send proposal",
+                            "details": "Send it Friday",
+                            "assigneeUserId": null,
+                            "dueAt": null,
+                            "priority": "medium",
+                            "confidence": 0.9,
+                            "sourceMessageIds": ["%s"]
+                          }],
+                          "keyFacts": []
+                        }
+                        """.formatted(messageId))))));
+        OpenAiCompatibleAiProvider provider = provider(chatModel);
+
+        AiProviderResult<AiExtraction> result = provider.extractInformation(new AiSummaryContext(
+                UUID.randomUUID(),
+                List.of(new AiContextMessage(messageId, 1, UUID.randomUUID(), "hello"))));
+
+        assertThat(result.result().actionItems()).singleElement()
+                .extracting(AiExtraction.ActionItem::priority)
+                .isEqualTo("MEDIUM");
+    }
+
+    @Test
+    void treats_zero_assignee_uuid_as_unknown_assignee() {
+        UUID messageId = UUID.randomUUID();
+        ChatModel chatModel = mock(ChatModel.class);
+        when(chatModel.call(any(Prompt.class))).thenReturn(new ChatResponse(List.of(
+                new Generation(new AssistantMessage("""
+                        {
+                          "actionItems": [{
+                            "title": "Send proposal",
+                            "details": "Send it Friday",
+                            "assigneeUserId": "00000000-0000-0000-0000-000000000000",
+                            "dueAt": null,
+                            "priority": "MEDIUM",
+                            "confidence": 0.9,
+                            "sourceMessageIds": ["%s"]
+                          }],
+                          "keyFacts": []
+                        }
+                        """.formatted(messageId))))));
+        OpenAiCompatibleAiProvider provider = provider(chatModel);
+
+        AiProviderResult<AiExtraction> result = provider.extractInformation(new AiSummaryContext(
+                UUID.randomUUID(),
+                List.of(new AiContextMessage(messageId, 1, UUID.randomUUID(), "hello"))));
+
+        assertThat(result.result().actionItems()).singleElement()
+                .extracting(AiExtraction.ActionItem::assigneeUserId)
+                .isNull();
+    }
 
     @Test
     void rejects_extraction_json_that_omits_required_nullable_schema_properties() {
@@ -166,7 +253,7 @@ class OpenAiCompatibleAiProviderTest {
                         "test-model",
                         supportsVision),
                 new AiProperties.Worker(250),
-                null);
+                new AiProperties.Budget(100_000, 8_192));
         return new OpenAiCompatibleAiProvider(
                 properties,
                 new ObjectMapper().findAndRegisterModules(),

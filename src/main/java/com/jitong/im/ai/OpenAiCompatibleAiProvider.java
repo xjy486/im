@@ -1,6 +1,9 @@
 package com.jitong.im.ai;
 
+import com.fasterxml.jackson.core.JsonProcessingException;
+import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.databind.node.ObjectNode;
 import org.springframework.ai.chat.client.ChatClient;
 import org.springframework.ai.chat.model.ChatModel;
 import org.springframework.ai.chat.model.ChatResponse;
@@ -18,6 +21,7 @@ import org.springframework.util.MimeTypeUtils;
 
 import java.util.HashMap;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 
 @Component
@@ -27,6 +31,7 @@ import java.util.Map;
         havingValue = "true")
 class OpenAiCompatibleAiProvider implements AiProvider {
 
+    private static final String UNKNOWN_USER_UUID = "00000000-0000-0000-0000-000000000000";
     private final AiProperties properties;
     private final ObjectMapper objectMapper;
     private final ChatClient chatClient;
@@ -116,6 +121,7 @@ class OpenAiCompatibleAiProvider implements AiProvider {
             if (content == null || content.isBlank()) {
                 throw new AiProviderException("AI_INVALID_RESULT", "The AI provider returned no content");
             }
+            content = normalizeProviderOutput(content);
             schemaValidator.validate(content);
             T value = converter.convert(content);
             Usage usage = response.getMetadata() == null ? null : response.getMetadata().getUsage();
@@ -134,6 +140,31 @@ class OpenAiCompatibleAiProvider implements AiProvider {
             throw exception;
         } catch (RuntimeException exception) {
             throw new AiProviderException("AI_PROVIDER_FAILURE", "The AI provider request failed", exception);
+        }
+    }
+
+    private String normalizeProviderOutput(String content) {
+        try {
+            JsonNode root = objectMapper.readTree(content);
+            JsonNode actionItems = root.get("actionItems");
+            if (actionItems == null || !actionItems.isArray()) {
+                return content;
+            }
+            for (JsonNode actionItem : actionItems) {
+                if (actionItem instanceof ObjectNode object
+                        && object.path("priority").isTextual()) {
+                    object.put(
+                            "priority",
+                            object.path("priority").asText().toUpperCase(Locale.ROOT));
+                }
+                if (actionItem instanceof ObjectNode object
+                        && UNKNOWN_USER_UUID.equals(object.path("assigneeUserId").asText())) {
+                    object.putNull("assigneeUserId");
+                }
+            }
+            return objectMapper.writeValueAsString(root);
+        } catch (JsonProcessingException exception) {
+            return content;
         }
     }
 
