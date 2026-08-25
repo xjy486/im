@@ -8,14 +8,17 @@ import com.jitong.im.android.auth.AuthRepository
 import com.jitong.im.android.auth.AuthException
 import com.jitong.im.android.auth.DeviceReplacementRequiredException
 import com.jitong.im.android.auth.SessionState
+import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
 
 internal class AuthViewModel(
     private val repository: AuthRepository,
     val sessionState: StateFlow<SessionState>,
 ) : ViewModel() {
-    private var registrationInFlight = false
+    private val _registrationInFlight = MutableStateFlow(false)
+    val registrationInFlight: StateFlow<Boolean> = _registrationInFlight.asStateFlow()
 
     init {
         if (sessionState.value is SessionState.Restoring) {
@@ -40,15 +43,15 @@ internal class AuthViewModel(
     }
 
     fun register(displayName: String, password: String) {
-        if (registrationInFlight) return
-        registrationInFlight = true
+        if (_registrationInFlight.value) return
+        _registrationInFlight.value = true
         viewModelScope.launch {
             runCatching { repository.register(displayName.trim(), password) }
                 .onFailure { failure ->
                     logFailure("register", failure)
                     repository.showError(failure.userMessage(), registration = true)
                 }
-                .also { registrationInFlight = false }
+                .also { _registrationInFlight.value = false }
         }
     }
 

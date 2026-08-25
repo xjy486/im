@@ -164,6 +164,7 @@ private fun LoginScreen(
     error: String? = null,
     initialRegistration: Boolean = false,
 ) {
+    val registrationInFlight by viewModel.registrationInFlight.collectAsStateWithLifecycle()
     var isRegistering by rememberSaveable { mutableStateOf(initialRegistration) }
     var displayName by rememberSaveable { mutableStateOf("") }
     var accountNo by rememberSaveable { mutableStateOf("") }
@@ -214,12 +215,15 @@ private fun LoginScreen(
                                 color = JitongColors.secondaryText,
                             )
                         }
-                        TextButton(onClick = {
-                            isRegistering = !isRegistering
-                            accountNo = ""
-                            password = ""
-                            displayName = ""
-                        }) {
+                        TextButton(
+                            enabled = !registrationInFlight,
+                            onClick = {
+                                isRegistering = !isRegistering
+                                accountNo = ""
+                                password = ""
+                                displayName = ""
+                            },
+                        ) {
                             Text(if (isRegistering) "返回登录" else "注册账号")
                         }
                     }
@@ -227,6 +231,7 @@ private fun LoginScreen(
                         OutlinedTextField(
                             value = displayName,
                             onValueChange = { displayName = it.take(128) },
+                            enabled = !registrationInFlight,
                             label = { Text("昵称") },
                             placeholder = { Text("输入你的昵称") },
                             singleLine = true,
@@ -236,6 +241,7 @@ private fun LoginScreen(
                         OutlinedTextField(
                             value = accountNo,
                             onValueChange = { accountNo = it.filter(Char::isDigit).take(11) },
+                            enabled = !registrationInFlight,
                             label = { Text("账号") },
                             placeholder = { Text("输入 11 位账号") },
                             singleLine = true,
@@ -245,6 +251,7 @@ private fun LoginScreen(
                     OutlinedTextField(
                         value = password,
                         onValueChange = { password = it },
+                        enabled = !registrationInFlight,
                         label = { Text(if (isRegistering) "设置密码" else "密码") },
                         placeholder = { if (isRegistering) Text("至少 8 位") },
                         singleLine = true,
@@ -262,14 +269,24 @@ private fun LoginScreen(
                                 viewModel.login(accountNo, password)
                             }
                         },
-                        enabled = if (isRegistering) {
+                        enabled = !registrationInFlight && if (isRegistering) {
                             displayName.isNotBlank() && password.length >= 8
                         } else {
                             accountNo.length == 11 && password.isNotBlank()
                         },
                         modifier = Modifier.fillMaxWidth().height(50.dp),
                         shape = RoundedCornerShape(14.dp),
-                    ) { Text(if (isRegistering) "注册并进入" else "登录") }
+                    ) {
+                        if (registrationInFlight) {
+                            CircularProgressIndicator(
+                                modifier = Modifier.size(20.dp),
+                                strokeWidth = 2.dp,
+                                color = MaterialTheme.colorScheme.onPrimary,
+                            )
+                        } else {
+                            Text(if (isRegistering) "注册并进入" else "登录")
+                        }
+                    }
                     if (isRegistering) {
                         Text(
                             "注册成功后，系统会自动分配一个 11 位账号，请妥善保存。",
