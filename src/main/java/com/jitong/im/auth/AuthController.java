@@ -21,6 +21,20 @@ class AuthController {
         this.authService = authService;
     }
 
+    @PostMapping("/register")
+    ResponseEntity<LoginResponse> register(
+            @Valid @RequestBody RegisterRequest request,
+            HttpServletRequest servletRequest
+    ) {
+        return ResponseEntity.ok(authService.register(
+                request.displayName(),
+                request.password(),
+                clientIp(servletRequest),
+                java.util.UUID.fromString(RequestContextFilter.requestId(servletRequest)),
+                request.deviceClass(),
+                request.installationId()));
+    }
+
     @PostMapping("/login")
     ResponseEntity<LoginResponse> login(
             @Valid @RequestBody LoginRequest request,

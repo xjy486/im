@@ -25,7 +25,7 @@
 
 ### 2.1 支持
 
-- 预注册用户使用账号和密码登录；
+- 用户可以公开注册，服务端为其分配账号；已注册用户使用账号和密码登录；
 - 用户、群各有不可变 11 位公开号码；
 - 联系人申请、删除和单向拉黑；
 - C2C 与最多 100 人群聊；
@@ -156,7 +156,9 @@ FCM 不承诺严格到达时间；权威交付保证来自服务端持久化与�
 
 ### 7.1 密码
 
+- 注册参数：`display_name + password`，服务端分配账号并建立首个设备会话；
 - 登录参数：`account_no + password`；
+- 公开注册按 IP 限速，注册成功直接返回首个设备的 Access/Refresh Token；
 - 密码使用 Argon2id；
 - 服务端只保存密码哈希；
 - 修改密码需验证当前密码，撤销其他设备会话，当前设备轮换令牌；
@@ -918,6 +920,7 @@ PostgreSQL 与 MinIO 使用独立持久卷、分别备份、加密存储，并�
 ### Auth / Device
 
 - `POST /auth/login`
+- `POST /auth/register`
 - `POST /auth/device-replacement/confirm`
 - `POST /auth/refresh`
 - `POST /auth/logout`

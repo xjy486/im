@@ -12,7 +12,10 @@ import java.io.IOException
 sealed interface SessionState {
     data object SignedOut : SessionState
     data object Restoring : SessionState
-    data class SignedIn(val session: SessionSnapshot) : SessionState
+    data class SignedIn(
+        val session: SessionSnapshot,
+        val showRegistrationAccount: Boolean = false,
+    ) : SessionState
     data class PasswordChangeRequired(
         val session: SessionSnapshot,
         val temporaryPasswordRequired: Boolean,
@@ -22,7 +25,10 @@ sealed interface SessionState {
         val challenge: String,
         val deviceClass: String,
     ) : SessionState
-    data class Error(val message: String) : SessionState
+    data class Error(
+        val message: String,
+        val registration: Boolean = false,
+    ) : SessionState
 }
 
 internal class SessionManager(
@@ -50,7 +56,10 @@ internal class SessionManager(
         beforeLogout = callback
     }
 
-    suspend fun activate(response: LoginResponse) {
+    suspend fun activate(
+        response: LoginResponse,
+        showRegistrationAccount: Boolean = false,
+    ) {
         val snapshot = response.toSessionSnapshot()
         sessionStore.write(snapshot)
         withContext(Dispatchers.IO) {
@@ -59,7 +68,7 @@ internal class SessionManager(
         _state.value = if (snapshot.passwordMustChange) {
             SessionState.PasswordChangeRequired(snapshot, temporaryPasswordRequired = true)
         } else {
-            SessionState.SignedIn(snapshot)
+            SessionState.SignedIn(snapshot, showRegistrationAccount = showRegistrationAccount)
         }
     }
 
@@ -98,8 +107,8 @@ internal class SessionManager(
     }
 
     @Synchronized
-    fun showError(message: String) {
-        _state.value = SessionState.Error(message)
+    fun showError(message: String, registration: Boolean = false) {
+        _state.value = SessionState.Error(message, registration)
     }
 
     @Synchronized
@@ -109,6 +118,18 @@ internal class SessionManager(
             current,
             temporaryPasswordRequired = false,
         )
+    }
+
+    @Synchronized
+    fun cancelPasswordChange() {
+        val current = sessionStore.read() ?: run {
+            _state.value = SessionState.SignedOut
+            return
+        }
+        val passwordChange = _state.value as? SessionState.PasswordChangeRequired ?: return
+        if (!passwordChange.temporaryPasswordRequired) {
+            _state.value = SessionState.SignedIn(current)
+        }
     }
 
     @Synchronized

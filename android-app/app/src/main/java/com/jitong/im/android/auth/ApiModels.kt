@@ -9,6 +9,13 @@ internal data class LoginRequest(
     val installationId: String,
 )
 
+internal data class RegisterRequest(
+    val displayName: String,
+    val password: String,
+    val deviceClass: String = "MOBILE",
+    val installationId: String,
+)
+
 internal data class ReplacementConfirmationRequest(
     val replacementChallenge: String,
 )

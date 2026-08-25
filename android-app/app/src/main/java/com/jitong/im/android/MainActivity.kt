@@ -8,13 +8,12 @@ import android.content.Intent
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.viewModels
-import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.lightColorScheme
 import com.jitong.im.android.ui.AuthViewModel
 import com.jitong.im.android.ui.AiViewModel
 import com.jitong.im.android.ui.ContactViewModel
 import com.jitong.im.android.ui.GroupViewModel
 import com.jitong.im.android.ui.JitongApp
+import com.jitong.im.android.ui.JitongTheme
 import com.jitong.im.android.ui.MessageViewModel
 import com.jitong.im.android.ui.AvatarViewModel
 
@@ -57,7 +56,7 @@ class MainActivity : ComponentActivity() {
             requestPermissions(arrayOf(Manifest.permission.POST_NOTIFICATIONS), 1001)
         }
         setContent {
-            MaterialTheme(colorScheme = lightColorScheme()) {
+            JitongTheme {
                 JitongApp(
                     viewModel,
                     contactViewModel,

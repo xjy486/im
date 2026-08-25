@@ -9,6 +9,9 @@ import retrofit2.http.GET
 import retrofit2.http.POST
 
 internal interface AuthApi {
+    @POST("api/v1/auth/register")
+    fun register(@Body request: RegisterRequest): Call<LoginResponse>
+
     @POST("api/v1/auth/login")
     fun login(@Body request: LoginRequest): Call<LoginResponse>
 

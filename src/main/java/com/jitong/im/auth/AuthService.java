@@ -26,6 +26,7 @@ public class AuthService {
     private final PublicNumberGenerator publicNumberGenerator;
     private final AuthProperties properties;
     private final LoginRateLimiter rateLimiter;
+    private final RegistrationRateLimiter registrationRateLimiter;
     private final SecurityAuditSink auditSink;
     private final UserRetirementDataEraser retirementDataEraser;
     private final Clock clock;
@@ -38,6 +39,7 @@ public class AuthService {
             PublicNumberGenerator publicNumberGenerator,
             AuthProperties properties,
             LoginRateLimiter rateLimiter,
+            RegistrationRateLimiter registrationRateLimiter,
             SecurityAuditSink auditSink,
             UserRetirementDataEraser retirementDataEraser,
             ApplicationEventPublisher eventPublisher
@@ -48,6 +50,7 @@ public class AuthService {
                 publicNumberGenerator,
                 properties,
                 rateLimiter,
+                registrationRateLimiter,
                 auditSink,
                 retirementDataEraser,
                 Clock.systemUTC(),
@@ -60,6 +63,7 @@ public class AuthService {
             PublicNumberGenerator publicNumberGenerator,
             AuthProperties properties,
             LoginRateLimiter rateLimiter,
+            RegistrationRateLimiter registrationRateLimiter,
             SecurityAuditSink auditSink,
             UserRetirementDataEraser retirementDataEraser,
             Clock clock,
@@ -70,6 +74,7 @@ public class AuthService {
         this.publicNumberGenerator = publicNumberGenerator;
         this.properties = properties;
         this.rateLimiter = rateLimiter;
+        this.registrationRateLimiter = registrationRateLimiter;
         this.auditSink = auditSink;
         this.retirementDataEraser = retirementDataEraser;
         this.clock = clock;
@@ -79,6 +84,47 @@ public class AuthService {
     @Transactional
     User createPresetUser(String displayName, String password) {
         return repository.insertUser(displayName, passwordEncoder.encode(password), publicNumberGenerator);
+    }
+
+    @Transactional
+    LoginResponse register(
+            String displayName,
+            String password,
+            String ipAddress,
+            UUID requestId,
+            String requestedDeviceClass,
+        String requestedInstallationId
+    ) {
+        try {
+            registrationRateLimiter.acquire(ipAddress);
+        } catch (RateLimitExceededException exception) {
+            recordRegistration(null, null, requestId, AuditOutcome.REJECTED, ApiErrorDefinition.RATE_LIMITED);
+            throw exception;
+        }
+        DeviceClass deviceClass = DeviceClass.fromNullable(requestedDeviceClass);
+        Instant now = clock.instant();
+        User user = repository.insertUser(
+                displayName.trim(),
+                passwordEncoder.encode(password),
+                publicNumberGenerator);
+        DeviceSession device = new DeviceSession(UuidV7.random(), user.id(), deviceClass);
+        repository.insertDevice(
+                device.deviceId(),
+                user.id(),
+                deviceClass,
+                TokenDigests.sha256(normalizeInstallationId(requestedInstallationId)),
+                now);
+        TokenPair tokens = issueTokens(device.deviceId(), user.id(), deviceClass, now);
+        recordRegistration(user, device.deviceId(), requestId, AuditOutcome.SUCCEEDED, null);
+        return LoginResponse.of(
+                user,
+                tokens.accessToken(),
+                tokens.refreshToken(),
+                tokens.accessTokenExpiresAt(),
+                tokens.refreshTokenExpiresAt(),
+                tokens.deviceId(),
+                tokens.deviceClass(),
+                false);
     }
 
     @Transactional(noRollbackFor = DeviceReplacementRequiredException.class)
@@ -559,6 +605,26 @@ public class AuthService {
         auditSink.record(new SecurityAuditEvent(
                 UuidV7.random(),
                 SecurityAuditEventType.LOGIN,
+                outcome,
+                user == null ? null : user.id(),
+                deviceId,
+                user == null ? null : AuditSubjectType.USER,
+                user == null ? null : user.id(),
+                requestId,
+                error,
+                clock.instant()));
+    }
+
+    private void recordRegistration(
+            User user,
+            UUID deviceId,
+            UUID requestId,
+            AuditOutcome outcome,
+            ApiErrorDefinition error
+    ) {
+        auditSink.record(new SecurityAuditEvent(
+                UuidV7.random(),
+                SecurityAuditEventType.REGISTER,
                 outcome,
                 user == null ? null : user.id(),
                 deviceId,

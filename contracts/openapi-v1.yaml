@@ -4,6 +4,47 @@ info:
   version: 1.0.0
   description: Baseline operational contract. Business endpoints are added in later tracer bullets.
 paths:
+  /api/v1/auth/register:
+    post:
+      operationId: register
+      summary: Register a user, allocate an immutable account number, and start a MOBILE or PC session
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [displayName, password, installationId]
+              properties:
+                displayName:
+                  type: string
+                  minLength: 1
+                  maxLength: 128
+                  pattern: '.*\S.*'
+                password:
+                  type: string
+                  minLength: 8
+                  maxLength: 256
+                  pattern: '.*\S.*'
+                deviceClass:
+                  type: string
+                  enum: [MOBILE, PC]
+                  default: MOBILE
+                installationId:
+                  type: string
+                  minLength: 1
+                  maxLength: 256
+      responses:
+        '200':
+          description: Registered user and initial device credentials
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/LoginResponse' }
+        '400':
+          $ref: '#/components/responses/ApiError'
+        '429':
+          $ref: '#/components/responses/ApiError'
   /api/v1/auth/password/change:
     post:
       operationId: changePassword

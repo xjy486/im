@@ -13,6 +13,20 @@ internal class AuthRepository(
     private val installationIdentity: InstallationIdentity,
     private val gson: Gson = Gson(),
 ) {
+    suspend fun register(displayName: String, password: String) {
+        val response = execute {
+            authApi.register(
+                RegisterRequest(
+                    displayName = displayName,
+                    password = password,
+                    installationId = installationIdentity.value,
+                ),
+            )
+        }
+        if (!response.isSuccessful) throw response.toAuthException()
+        sessionManager.activate(response.bodyOrThrow(), showRegistrationAccount = true)
+    }
+
     suspend fun login(accountNo: String, password: String) {
         val response = execute {
             authApi.login(
@@ -115,11 +129,14 @@ internal class AuthRepository(
     fun requireReplacement(exception: DeviceReplacementRequiredException) =
         sessionManager.requireReplacement(exception)
 
-    fun showError(message: String) = sessionManager.showError(message)
+    fun showError(message: String, registration: Boolean = false) =
+        sessionManager.showError(message, registration)
 
     fun showPasswordChangeError(message: String) = sessionManager.showPasswordChangeError(message)
 
     fun requestPasswordChange() = sessionManager.requestPasswordChange()
+
+    fun cancelPasswordChange() = sessionManager.cancelPasswordChange()
 
     private suspend fun <T> execute(call: () -> retrofit2.Call<T>): Response<T> =
         withContext(Dispatchers.IO) { call().execute() }

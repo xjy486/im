@@ -41,6 +41,10 @@ jitong:
       max-failures: ${AUTH_LOGIN_MAX_FAILURES:5}
       window: ${AUTH_LOGIN_RATE_WINDOW:1m}
       block: ${AUTH_LOGIN_RATE_BLOCK:1m}
+    registration-rate-limit:
+      max-registrations: ${AUTH_REGISTRATION_MAX_REGISTRATIONS:5}
+      window: ${AUTH_REGISTRATION_RATE_WINDOW:1m}
+      block: ${AUTH_REGISTRATION_RATE_BLOCK:1m}
   group:
     invite-deep-link-base: ${GROUP_INVITE_DEEP_LINK_BASE:https://app.jitong.im/groups/invite}
     dissolution-purge-interval: ${GROUP_DISSOLUTION_PURGE_INTERVAL:3600000}

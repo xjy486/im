@@ -15,6 +15,8 @@ internal class AuthViewModel(
     private val repository: AuthRepository,
     val sessionState: StateFlow<SessionState>,
 ) : ViewModel() {
+    private var registrationInFlight = false
+
     init {
         if (sessionState.value is SessionState.Restoring) {
             viewModelScope.launch { repository.restore() }
@@ -34,6 +36,19 @@ internal class AuthViewModel(
                         repository.showError(failure.userMessage())
                     }
                 }
+        }
+    }
+
+    fun register(displayName: String, password: String) {
+        if (registrationInFlight) return
+        registrationInFlight = true
+        viewModelScope.launch {
+            runCatching { repository.register(displayName.trim(), password) }
+                .onFailure { failure ->
+                    logFailure("register", failure)
+                    repository.showError(failure.userMessage(), registration = true)
+                }
+                .also { registrationInFlight = false }
         }
     }
 
@@ -60,6 +75,10 @@ internal class AuthViewModel(
 
     fun requestPasswordChange() {
         repository.requestPasswordChange()
+    }
+
+    fun cancelPasswordChange() {
+        repository.cancelPasswordChange()
     }
 
     fun logout() {
