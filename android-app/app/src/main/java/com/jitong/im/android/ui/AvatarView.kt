@@ -20,6 +20,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
+import kotlinx.coroutines.CancellationException
 import java.util.UUID
 
 @Composable
@@ -62,7 +63,7 @@ internal fun RemoteAvatar(
 ) {
     var bytes by remember(userId, avatarVersion) { mutableStateOf<ByteArray?>(null) }
     LaunchedEffect(userId, avatarVersion) {
-        bytes = load(userId, avatarVersion)
+        bytes = runCatchingCancellable { load(userId, avatarVersion) }
     }
     AvatarView(bytes, fallback, modifier, size)
 }
@@ -78,7 +79,7 @@ internal fun RemoteGroupAvatar(
 ) {
     var bytes by remember(conversationId, avatarVersion) { mutableStateOf<ByteArray?>(null) }
     LaunchedEffect(conversationId, avatarVersion) {
-        bytes = load(conversationId, avatarVersion)
+        bytes = runCatchingCancellable { load(conversationId, avatarVersion) }
     }
     AvatarView(bytes, fallback, modifier, size)
 }
@@ -93,7 +94,16 @@ internal fun RemoteSearchGroupAvatar(
 ) {
     var bytes by remember(avatarUrl) { mutableStateOf<ByteArray?>(null) }
     LaunchedEffect(avatarUrl) {
-        bytes = load(avatarUrl)
+        bytes = runCatchingCancellable { load(avatarUrl) }
     }
     AvatarView(bytes, fallback, modifier, size)
 }
+
+private suspend fun <T> runCatchingCancellable(block: suspend () -> T): T? =
+    try {
+        block()
+    } catch (exception: CancellationException) {
+        throw exception
+    } catch (_: Exception) {
+        null
+    }

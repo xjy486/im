@@ -2,9 +2,13 @@ package com.jitong.im.android.media
 
 import com.jitong.im.android.local.EncryptedMediaCache
 import com.jitong.im.android.group.GroupAvatarUploader
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 import okhttp3.MultipartBody
 import okhttp3.RequestBody.Companion.toRequestBody
 import okhttp3.MediaType.Companion.toMediaType
+import okhttp3.ResponseBody
 import retrofit2.Response
 import java.io.IOException
 import java.security.MessageDigest
@@ -15,44 +19,46 @@ internal class AvatarRepository(
     private val currentUser: () -> UUID?,
     private val cache: () -> EncryptedMediaCache?,
 ) : GroupAvatarUploader {
-    suspend fun currentProfile(): AvatarProfileResponse =
+    suspend fun currentProfile(): AvatarProfileResponse = withContext(Dispatchers.IO) {
         currentUser()?.let { api.profile(it).bodyOrThrow("Profile load") }
             ?: throw IOException("No signed-in user")
-    suspend fun loadUserAvatar(userId: UUID, avatarVersion: Long): ByteArray? {
-        if (avatarVersion <= 0) return null
-        val name = userAvatarCacheName(userId, avatarVersion)
-        val encryptedCache = cache() ?: return null
-        encryptedCache.get(name)?.let { return it }
-        encryptedCache.deleteMatching("avatar-$userId-v", name)
-        val response = api.downloadAvatar(userId, "thumb", avatarVersion)
-        if (!response.isSuccessful) return null
-        val bytes = response.body()?.bytes() ?: return null
-        encryptedCache.put(name, bytes)
-        return bytes
     }
 
-    suspend fun loadGroupAvatar(conversationId: UUID, avatarVersion: Long): ByteArray? {
-        if (avatarVersion <= 0) return null
-        val name = groupAvatarCacheName(conversationId, avatarVersion)
-        val encryptedCache = cache() ?: return null
-        encryptedCache.get(name)?.let { return it }
-        encryptedCache.deleteMatching("group-avatar-$conversationId-v", name)
-        val response = api.downloadGroupAvatar(conversationId, "thumb", avatarVersion)
-        if (!response.isSuccessful) return null
-        val bytes = response.body()?.bytes() ?: return null
-        encryptedCache.put(name, bytes)
-        return bytes
-    }
+    suspend fun loadUserAvatar(userId: UUID, avatarVersion: Long): ByteArray? =
+        withContext(Dispatchers.IO) {
+            if (avatarVersion <= 0) return@withContext null
+            val name = userAvatarCacheName(userId, avatarVersion)
+            val encryptedCache = cache() ?: return@withContext null
+            encryptedCache.get(name)?.let { return@withContext it }
+            encryptedCache.deleteMatching("avatar-$userId-v", name)
+            val bytes = api.downloadAvatar(userId, "thumb", avatarVersion).readBodyBytesOrNull()
+                ?: return@withContext null
+            encryptedCache.put(name, bytes)
+            bytes
+        }
 
-    suspend fun loadAvatarUrl(avatarUrl: String): ByteArray? {
-        val encryptedCache = cache() ?: return null
+    suspend fun loadGroupAvatar(conversationId: UUID, avatarVersion: Long): ByteArray? =
+        withContext(Dispatchers.IO) {
+            if (avatarVersion <= 0) return@withContext null
+            val name = groupAvatarCacheName(conversationId, avatarVersion)
+            val encryptedCache = cache() ?: return@withContext null
+            encryptedCache.get(name)?.let { return@withContext it }
+            encryptedCache.deleteMatching("group-avatar-$conversationId-v", name)
+            val bytes = api.downloadGroupAvatar(conversationId, "thumb", avatarVersion)
+                .readBodyBytesOrNull()
+                ?: return@withContext null
+            encryptedCache.put(name, bytes)
+            bytes
+        }
+
+    suspend fun loadAvatarUrl(avatarUrl: String): ByteArray? = withContext(Dispatchers.IO) {
+        val encryptedCache = cache() ?: return@withContext null
         val name = "group-avatar-search-" + sha256(avatarUrl)
-        encryptedCache.get(name)?.let { return it }
-        val response = api.downloadAvatarUrl(avatarUrl)
-        if (!response.isSuccessful) return null
-        val bytes = response.body()?.bytes() ?: return null
+        encryptedCache.get(name)?.let { return@withContext it }
+        val bytes = api.downloadAvatarUrl(avatarUrl).readBodyBytesOrNull()
+            ?: return@withContext null
         encryptedCache.put(name, bytes)
-        return bytes
+        bytes
     }
 
     suspend fun replaceUserAvatar(
@@ -119,6 +125,17 @@ internal class AvatarRepository(
         MessageDigest.getInstance("SHA-256")
             .digest(value.toByteArray(Charsets.UTF_8))
             .joinToString("") { byte -> "%02x".format(byte) }
+
+    private fun Response<ResponseBody>.readBodyBytesOrNull(): ByteArray? {
+        if (!isSuccessful) return null
+        return try {
+            body()?.bytes()
+        } catch (exception: CancellationException) {
+            throw exception
+        } catch (_: Exception) {
+            null
+        }
+    }
 
     private fun <T> Response<T>.bodyOrThrow(operation: String): T {
         if (isSuccessful && body() != null) return body()!!
