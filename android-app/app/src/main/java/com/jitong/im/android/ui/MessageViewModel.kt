@@ -17,6 +17,7 @@ internal data class MessageUiState(
     val currentUserId: UUID? = null,
     val messages: List<LocalMessageEntity> = emptyList(),
     val searchQuery: String = "",
+    val searchConversationId: UUID? = null,
     val searchResults: List<LocalMessageEntity> = emptyList(),
     val searchLoading: Boolean = false,
     val draft: String = "",
@@ -36,7 +37,9 @@ internal class MessageViewModel(
             repository.searchInvalidations.collect {
                 val query = _state.value.searchQuery
                 if (query.isBlank()) return@collect
-                val results = runCatching { repository.search(query) }
+                val results = runCatching {
+                    repository.search(query, _state.value.searchConversationId)
+                }
                     .getOrElse {
                         if (_state.value.searchQuery == query) {
                             _state.value = _state.value.copy(
@@ -90,11 +93,15 @@ internal class MessageViewModel(
         )
     }
 
-    fun search() {
+    fun search(conversationId: UUID? = _state.value.searchConversationId) {
         val query = _state.value.searchQuery
         viewModelScope.launch {
-            _state.value = _state.value.copy(searchLoading = true, message = null)
-            runCatching { repository.search(query) }
+            _state.value = _state.value.copy(
+                searchConversationId = conversationId,
+                searchLoading = true,
+                message = null,
+            )
+            runCatching { repository.search(query, conversationId) }
                 .onSuccess { results ->
                     _state.value = _state.value.copy(searchResults = results)
                 }
@@ -109,7 +116,12 @@ internal class MessageViewModel(
     }
 
     fun clearSearch() {
-        _state.value = _state.value.copy(searchQuery = "", searchResults = emptyList())
+        _state.value = _state.value.copy(
+            searchQuery = "",
+            searchConversationId = null,
+            searchResults = emptyList(),
+            searchLoading = false,
+        )
     }
 
     fun clearForLogout() {

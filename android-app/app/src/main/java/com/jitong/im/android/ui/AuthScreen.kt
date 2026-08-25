@@ -9,6 +9,7 @@ import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
+import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -480,6 +481,7 @@ private fun HomeScreen(
             aiState = aiState,
             aiViewModel = aiViewModel,
             loadAvatar = avatarViewModel::loadUserAvatar,
+            myAvatarBytes = avatarState.bytes,
             initialMessageId = selectedMessageId,
             onBack = { selectedConversationId = null; selectedMessageId = null },
         )
@@ -490,6 +492,7 @@ private fun HomeScreen(
             group = selectedGroup,
             viewModel = messageViewModel,
             loadGroupAvatar = avatarViewModel::loadGroupAvatar,
+            myAvatarBytes = avatarState.bytes,
             onBack = { selectedGroupConversationId = null; selectedMessageId = null },
         )
         return
@@ -526,7 +529,7 @@ private fun HomeScreen(
                 },
                 onOpenQuickAdd = { showQuickAdd = true },
                 loadAvatar = avatarViewModel::loadUserAvatar,
-                onSearch = { query -> messageViewModel.setSearchQuery(query); messageViewModel.search() },
+                onSearch = { query -> messageViewModel.setSearchQuery(query); messageViewModel.search(null) },
                 messageState = messageState,
                 onOpenSearchResult = { id, msgId -> selectedConversationId = id.toString(); selectedMessageId = msgId },
                 modifier = Modifier.padding(padding),
@@ -1269,12 +1272,16 @@ private fun ConversationScreen(
     aiState: AiUiState,
     aiViewModel: AiViewModel,
     loadAvatar: suspend (UUID, Long) -> ByteArray?,
+    myAvatarBytes: ByteArray?,
     initialMessageId: String?,
     onBack: () -> Unit,
 ) {
     val state by viewModel.state.collectAsStateWithLifecycle()
     val listState = rememberLazyListState()
     var showAi by rememberSaveable { mutableStateOf(false) }
+    var showDetails by rememberSaveable { mutableStateOf(false) }
+    var showSearch by rememberSaveable { mutableStateOf(false) }
+    var scrollToMessageId by rememberSaveable { mutableStateOf<String?>(initialMessageId) }
     val context = LocalContext.current
     val imagePicker = rememberLauncherForActivityResult(ActivityResultContracts.GetContent()) { uri ->
         if (uri == null) return@rememberLauncherForActivityResult
@@ -1287,6 +1294,14 @@ private fun ConversationScreen(
     LaunchedEffect(state.messages, initialMessageId) {
         val index = initialMessageId?.let { id -> state.messages.indexOfFirst { it.messageId == id } } ?: state.messages.lastIndex
         if (index >= 0) listState.animateScrollToItem(index)
+    }
+    LaunchedEffect(state.messages, scrollToMessageId) {
+        val messageId = scrollToMessageId ?: return@LaunchedEffect
+        val index = state.messages.indexOfFirst { it.messageId == messageId }
+        if (index >= 0) {
+            listState.animateScrollToItem(index)
+            scrollToMessageId = null
+        }
     }
     LaunchedEffect(state.messages.size) {
         snapshotFlow { listState.layoutInfo.visibleItemsInfo.lastOrNull()?.index }.collect { index ->
@@ -1302,7 +1317,7 @@ private fun ConversationScreen(
                 onBack = onBack,
                 actions = {
                     IconButton(onClick = { showAi = true }) { Icon(Icons.Outlined.AutoAwesome, contentDescription = "私人 AI", tint = JitongColors.ai) }
-                    IconButton(onClick = {}) { Icon(Icons.Outlined.MoreHoriz, contentDescription = "更多") }
+                    IconButton(onClick = { showDetails = true }) { Icon(Icons.Outlined.MoreHoriz, contentDescription = "更多") }
                 },
             )
         },
@@ -1328,11 +1343,14 @@ private fun ConversationScreen(
                     message = message,
                     currentUserId = state.currentUserId?.toString(),
                     loadAvatar = loadAvatar,
+                    peerAvatarVersion = conversation.avatarVersion,
+                    peerAvatarFallback = conversation.avatarFallback,
                     selectedForAi = runCatching { UUID.fromString(message.messageId) }.getOrNull() in aiState.selectedMessageIds,
                     onToggleAi = { runCatching { UUID.fromString(message.messageId) }.getOrNull()?.let(aiViewModel::toggleMessage) },
                     onRecall = { viewModel.recall(message) },
                     onRetry = { runCatching { UUID.fromString(message.clientMsgId) }.getOrNull()?.let(viewModel::retry) },
                     loadMedia = viewModel::loadMedia,
+                    myAvatarBytes = myAvatarBytes,
                 )
             }
             state.message?.let { item { Text(it, color = MaterialTheme.colorScheme.error, modifier = Modifier.padding(horizontal = 8.dp)) } }
@@ -1346,6 +1364,55 @@ private fun ConversationScreen(
             onDismiss = { showAi = false },
         )
     }
+    if (showDetails) {
+        ConversationDetailsSheet(
+            title = conversation.peerDisplayName,
+            subtitle = conversation.peerAccountNo?.let { "账号 $it" },
+            avatar = {
+                RemoteAvatar(
+                    userId = conversation.peerUserId,
+                    avatarVersion = conversation.avatarVersion,
+                    fallback = conversation.avatarFallback,
+                    load = loadAvatar,
+                    size = 64.dp,
+                )
+            },
+            onSearch = {
+                viewModel.clearSearch()
+                showDetails = false
+                showSearch = true
+            },
+            onDismiss = { showDetails = false },
+        )
+    }
+    if (showSearch) {
+        ConversationSearchSheet(
+            title = "查找聊天记录",
+            query = state.searchQuery,
+            results = state.searchResults,
+            loading = state.searchLoading,
+            avatar = {
+                RemoteAvatar(
+                    userId = conversation.peerUserId,
+                    avatarVersion = conversation.avatarVersion,
+                    fallback = conversation.avatarFallback,
+                    load = loadAvatar,
+                    size = 42.dp,
+                )
+            },
+            onQueryChange = viewModel::setSearchQuery,
+            onSearch = { viewModel.search(conversation.conversationId) },
+            onOpenResult = { messageId ->
+                viewModel.clearSearch()
+                showSearch = false
+                scrollToMessageId = messageId
+            },
+            onDismiss = {
+                viewModel.clearSearch()
+                showSearch = false
+            },
+        )
+    }
 }
 
 @Composable
@@ -1353,10 +1420,14 @@ private fun GroupConversationScreen(
     group: GroupSummary,
     viewModel: MessageViewModel,
     loadGroupAvatar: suspend (UUID, Long) -> ByteArray?,
+    myAvatarBytes: ByteArray?,
     onBack: () -> Unit,
 ) {
     val state by viewModel.state.collectAsStateWithLifecycle()
     val listState = rememberLazyListState()
+    var showDetails by rememberSaveable { mutableStateOf(false) }
+    var showSearch by rememberSaveable { mutableStateOf(false) }
+    var scrollToMessageId by rememberSaveable { mutableStateOf<String?>(null) }
     val context = LocalContext.current
     val imagePicker = rememberLauncherForActivityResult(ActivityResultContracts.GetContent()) { uri ->
         if (uri == null) return@rememberLauncherForActivityResult
@@ -1366,6 +1437,14 @@ private fun GroupConversationScreen(
     LaunchedEffect(state.messages) {
         if (state.messages.isNotEmpty()) listState.animateScrollToItem(state.messages.lastIndex)
     }
+    LaunchedEffect(state.messages, scrollToMessageId) {
+        val messageId = scrollToMessageId ?: return@LaunchedEffect
+        val index = state.messages.indexOfFirst { it.messageId == messageId }
+        if (index >= 0) {
+            listState.animateScrollToItem(index)
+            scrollToMessageId = null
+        }
+    }
     Scaffold(
         containerColor = JitongColors.chatPage,
         topBar = {
@@ -1373,7 +1452,7 @@ private fun GroupConversationScreen(
                 title = group.name,
                 subtitle = "${group.memberCount} 人 · ${group.roleLabel()}",
                 onBack = onBack,
-                actions = { IconButton(onClick = {}) { Icon(Icons.Outlined.MoreHoriz, contentDescription = "群设置") } },
+                actions = { IconButton(onClick = { showDetails = true }) { Icon(Icons.Outlined.MoreHoriz, contentDescription = "群设置") } },
             )
         },
         bottomBar = {
@@ -1389,23 +1468,83 @@ private fun GroupConversationScreen(
         LazyColumn(state = listState, modifier = Modifier.fillMaxSize().padding(padding), contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 14.dp, vertical = 14.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
             if (state.messages.isEmpty()) item { EmptyChatState(group.name) }
             items(state.messages, key = { it.messageId }) { message ->
-                GroupChatMessageRow(message, state.currentUserId?.toString(), loadGroupAvatar, viewModel::loadMedia, onRecall = { viewModel.recall(message) })
+                GroupChatMessageRow(
+                    message = message,
+                    currentUserId = state.currentUserId?.toString(),
+                    loadAvatar = loadGroupAvatar,
+                    loadMedia = viewModel::loadMedia,
+                    onRecall = { viewModel.recall(message) },
+                    myAvatarBytes = myAvatarBytes,
+                )
             }
             state.message?.let { item { Text(it, color = MaterialTheme.colorScheme.error) } }
         }
     }
+    if (showDetails) {
+        ConversationDetailsSheet(
+            title = group.name,
+            subtitle = "${group.memberCount} 人 · ${group.roleLabel()}",
+            avatar = {
+                RemoteGroupAvatar(
+                    conversationId = group.conversationId,
+                    avatarVersion = group.avatarVersion,
+                    fallback = group.name,
+                    load = loadGroupAvatar,
+                    size = 64.dp,
+                )
+            },
+            onSearch = {
+                viewModel.clearSearch()
+                showDetails = false
+                showSearch = true
+            },
+            onDismiss = { showDetails = false },
+        )
+    }
+    if (showSearch) {
+        ConversationSearchSheet(
+            title = "查找聊天记录",
+            query = state.searchQuery,
+            results = state.searchResults,
+            loading = state.searchLoading,
+            avatar = {
+                RemoteGroupAvatar(
+                    conversationId = group.conversationId,
+                    avatarVersion = group.avatarVersion,
+                    fallback = group.name,
+                    load = loadGroupAvatar,
+                    size = 42.dp,
+                )
+            },
+            onQueryChange = viewModel::setSearchQuery,
+            onSearch = { viewModel.search(group.conversationId) },
+            onOpenResult = { messageId ->
+                viewModel.clearSearch()
+                showSearch = false
+                scrollToMessageId = messageId
+            },
+            onDismiss = {
+                viewModel.clearSearch()
+                showSearch = false
+            },
+        )
+    }
 }
 
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
 private fun ChatMessageRow(
     message: LocalMessageEntity,
     currentUserId: String?,
     loadAvatar: suspend (UUID, Long) -> ByteArray?,
+    peerAvatarVersion: Long,
+    peerAvatarFallback: String,
     selectedForAi: Boolean,
     onToggleAi: () -> Unit,
     onRecall: () -> Unit,
     onRetry: () -> Unit,
     loadMedia: suspend (LocalMessageEntity, Boolean) -> ByteArray?,
+    myAvatarBytes: ByteArray?,
 ) {
     if (message.type == "SYSTEM" || message.state == "RECALLED" || message.state == "MODERATED") {
         Box(Modifier.fillMaxWidth(), contentAlignment = Alignment.Center) {
@@ -1422,12 +1561,27 @@ private fun ChatMessageRow(
     Row(Modifier.fillMaxWidth(), horizontalArrangement = if (isMine) Arrangement.End else Arrangement.Start, verticalAlignment = Alignment.Top) {
         if (!isMine) {
             val userId = runCatching { UUID.fromString(message.senderId) }.getOrNull()
-            if (userId != null) RemoteAvatar(userId, 0, message.senderDisplayName.ifBlank { "?" }, loadAvatar, size = 40.dp) else AvatarPlaceholder(message.senderDisplayName, size = 40.dp)
+            if (userId != null) {
+                RemoteAvatar(
+                    userId = userId,
+                    avatarVersion = peerAvatarVersion,
+                    fallback = peerAvatarFallback.ifBlank { message.senderDisplayName.ifBlank { "?" } },
+                    load = loadAvatar,
+                    size = 40.dp,
+                )
+            } else {
+                AvatarPlaceholder(message.senderDisplayName, size = 40.dp)
+            }
             Spacer(Modifier.width(8.dp))
         }
         Column(horizontalAlignment = if (isMine) Alignment.End else Alignment.Start, verticalArrangement = Arrangement.spacedBy(4.dp), modifier = Modifier.fillMaxWidth(.82f)) {
             if (!isMine && message.senderDisplayName.isNotBlank()) Text(message.senderDisplayName, style = MaterialTheme.typography.bodySmall, color = JitongColors.secondaryText)
             Surface(
+                modifier = Modifier.combinedClickable(
+                    enabled = isMine && message.state == "ACTIVE" && message.localState == "SENT",
+                    onClick = {},
+                    onLongClick = onRecall,
+                ),
                 shape = RoundedCornerShape(18.dp),
                 color = if (isMine) JitongColors.outgoingBubble else JitongColors.incomingBubble,
                 shadowElevation = if (isMine) 0.dp else 1.dp,
@@ -1455,17 +1609,17 @@ private fun ChatMessageRow(
                 }
             }
             Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-                if (message.state == "ACTIVE" && message.localState == "SENT" && isMine) TextButton(onClick = onRecall, contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 4.dp, vertical = 0.dp)) { Text("撤回", style = MaterialTheme.typography.bodySmall) }
                 if (message.localState == "MANUAL_RETRY") TextButton(onClick = onRetry, contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 4.dp, vertical = 0.dp)) { Text("重试", style = MaterialTheme.typography.bodySmall, color = JitongColors.danger) }
             }
         }
         if (isMine) {
             Spacer(Modifier.width(8.dp))
-            AvatarPlaceholder("我", size = 40.dp)
+            AvatarView(myAvatarBytes, "我", size = 40.dp)
         }
     }
 }
 
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
 private fun GroupChatMessageRow(
     message: LocalMessageEntity,
@@ -1473,6 +1627,7 @@ private fun GroupChatMessageRow(
     loadAvatar: suspend (UUID, Long) -> ByteArray?,
     loadMedia: suspend (LocalMessageEntity, Boolean) -> ByteArray?,
     onRecall: () -> Unit,
+    myAvatarBytes: ByteArray?,
 ) {
     if (message.type == "SYSTEM" || message.state == "RECALLED" || message.state == "MODERATED") {
         Box(Modifier.fillMaxWidth(), contentAlignment = Alignment.Center) {
@@ -1489,12 +1644,188 @@ private fun GroupChatMessageRow(
         }
         Column(Modifier.fillMaxWidth(.82f), horizontalAlignment = if (isMine) Alignment.End else Alignment.Start, verticalArrangement = Arrangement.spacedBy(4.dp)) {
             if (!isMine) Text(message.senderDisplayName, style = MaterialTheme.typography.bodySmall, color = JitongColors.secondaryText)
-            Surface(shape = RoundedCornerShape(18.dp), color = if (isMine) JitongColors.outgoingBubble else JitongColors.incomingBubble, shadowElevation = if (isMine) 0.dp else 1.dp) {
+            Surface(
+                modifier = Modifier.combinedClickable(
+                    enabled = isMine && message.state == "ACTIVE" && message.localState == "SENT",
+                    onClick = {},
+                    onLongClick = onRecall,
+                ),
+                shape = RoundedCornerShape(18.dp),
+                color = if (isMine) JitongColors.outgoingBubble else JitongColors.incomingBubble,
+                shadowElevation = if (isMine) 0.dp else 1.dp,
+            ) {
                 if (message.type == "IMAGE") ImageMessageContent(message, loadMedia) else Text(message.text, modifier = Modifier.padding(horizontal = 13.dp, vertical = 10.dp), color = if (isMine) androidx.compose.ui.graphics.Color.White else JitongColors.text)
             }
-            if (isMine && message.localState == "SENT") TextButton(onClick = onRecall, contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 4.dp, vertical = 0.dp)) { Text("撤回", style = MaterialTheme.typography.bodySmall) }
         }
-        if (isMine) { Spacer(Modifier.width(8.dp)); AvatarPlaceholder("我", size = 40.dp) }
+        if (isMine) { Spacer(Modifier.width(8.dp)); AvatarView(myAvatarBytes, "我", size = 40.dp) }
+    }
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun ConversationDetailsSheet(
+    title: String,
+    subtitle: String?,
+    avatar: @Composable () -> Unit,
+    onSearch: () -> Unit,
+    onDismiss: () -> Unit,
+) {
+    val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
+    ModalBottomSheet(
+        onDismissRequest = onDismiss,
+        sheetState = sheetState,
+        containerColor = MaterialTheme.colorScheme.surface,
+    ) {
+        Column(
+            Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 20.dp)
+                .padding(bottom = 28.dp),
+            verticalArrangement = Arrangement.spacedBy(14.dp),
+        ) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Column(Modifier.weight(1f)) {
+                    Text("聊天信息", style = MaterialTheme.typography.headlineSmall)
+                    Text("会话资料与聊天记录", color = JitongColors.secondaryText)
+                }
+                IconButton(onClick = onDismiss) {
+                    Icon(Icons.Outlined.Close, contentDescription = "关闭")
+                }
+            }
+            SoftCard(Modifier.fillMaxWidth()) {
+                Row(
+                    Modifier
+                        .fillMaxWidth()
+                        .padding(16.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(14.dp),
+                ) {
+                    avatar()
+                    Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                        Text(title, style = MaterialTheme.typography.titleLarge, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                        subtitle?.let {
+                            Text(it, color = JitongColors.secondaryText, style = MaterialTheme.typography.bodyMedium)
+                        }
+                    }
+                    Icon(Icons.Outlined.ChevronRight, contentDescription = null, tint = JitongColors.tertiaryText)
+                }
+            }
+            SoftCard(Modifier.fillMaxWidth()) {
+                SettingsRow(
+                    icon = Icons.Outlined.Search,
+                    title = "查找聊天记录",
+                    subtitle = "搜索当前会话中的文字消息",
+                    onClick = onSearch,
+                )
+            }
+        }
+    }
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun ConversationSearchSheet(
+    title: String,
+    query: String,
+    results: List<LocalMessageEntity>,
+    loading: Boolean,
+    avatar: @Composable () -> Unit,
+    onQueryChange: (String) -> Unit,
+    onSearch: () -> Unit,
+    onOpenResult: (String) -> Unit,
+    onDismiss: () -> Unit,
+) {
+    val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
+    ModalBottomSheet(
+        onDismissRequest = onDismiss,
+        sheetState = sheetState,
+        containerColor = MaterialTheme.colorScheme.surface,
+    ) {
+        Column(
+            Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 20.dp)
+                .padding(bottom = 28.dp),
+            verticalArrangement = Arrangement.spacedBy(12.dp),
+        ) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Column(Modifier.weight(1f)) {
+                    Text(title, style = MaterialTheme.typography.headlineSmall)
+                    Text("只搜索当前会话，已撤回消息不会出现在结果中", color = JitongColors.secondaryText)
+                }
+                IconButton(onClick = onDismiss) {
+                    Icon(Icons.Outlined.Close, contentDescription = "关闭")
+                }
+            }
+            Row(
+                Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                OutlinedTextField(
+                    value = query,
+                    onValueChange = onQueryChange,
+                    modifier = Modifier.weight(1f),
+                    singleLine = true,
+                    placeholder = { Text("输入关键词") },
+                    leadingIcon = { Icon(Icons.Outlined.Search, contentDescription = null) },
+                )
+                Button(
+                    onClick = onSearch,
+                    enabled = query.isNotBlank() && !loading,
+                ) {
+                    Text("搜索")
+                }
+            }
+            when {
+                loading -> Box(Modifier.fillMaxWidth().padding(vertical = 24.dp), contentAlignment = Alignment.Center) {
+                    CircularProgressIndicator(modifier = Modifier.size(28.dp), strokeWidth = 2.dp)
+                }
+                query.isBlank() -> Text("输入关键词后搜索聊天记录", color = JitongColors.secondaryText)
+                results.isEmpty() -> Text("没有找到匹配的聊天记录", color = JitongColors.secondaryText)
+                else -> {
+                    LazyColumn(
+                        modifier = Modifier.fillMaxWidth().height(360.dp),
+                        verticalArrangement = Arrangement.spacedBy(8.dp),
+                    ) {
+                        items(results, key = { it.messageId }) { result ->
+                            SoftCard(
+                                Modifier
+                                    .fillMaxWidth()
+                                    .clickable { onOpenResult(result.messageId) },
+                            ) {
+                                Row(
+                                    Modifier.padding(12.dp),
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.spacedBy(10.dp),
+                                ) {
+                                    avatar()
+                                    Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(3.dp)) {
+                                        Text(
+                                            result.senderDisplayName.ifBlank { "聊天记录" },
+                                            style = MaterialTheme.typography.titleSmall,
+                                            maxLines = 1,
+                                            overflow = TextOverflow.Ellipsis,
+                                        )
+                                        Text(
+                                            result.text,
+                                            maxLines = 2,
+                                            overflow = TextOverflow.Ellipsis,
+                                            color = JitongColors.secondaryText,
+                                        )
+                                    }
+                                    Icon(
+                                        Icons.Outlined.ChevronRight,
+                                        contentDescription = "定位消息",
+                                        tint = JitongColors.tertiaryText,
+                                    )
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
     }
 }
 
