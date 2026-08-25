@@ -22,6 +22,7 @@ import com.jitong.im.android.message.MessageApi
 import com.jitong.im.android.message.PendingMessageScheduler
 import com.jitong.im.android.message.MessageRepository
 import com.jitong.im.android.message.MessageWebSocket
+import com.jitong.im.android.message.SyncReadyHandler
 import com.jitong.im.android.push.PushTokenApi
 import com.jitong.im.android.push.PushTokenRepository
 import com.jitong.im.android.push.PushTokenRegistrationScheduler
@@ -102,6 +103,10 @@ internal class AppContainer(context: Context) {
     private var notificationSyncPending = false
 
     private val messageScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+    private val syncReadyHandler = SyncReadyHandler(
+        synchronize = messageRepository::synchronize,
+        onFailure = { PendingMessageScheduler.enqueue(appContext) },
+    )
 
     init {
         messageRepository.setPendingSendScheduler {
@@ -125,7 +130,7 @@ internal class AppContainer(context: Context) {
                         when (event.operation) {
                             "sync.ready" -> {
                                 val watermark = event.body?.highWatermark ?: return@collect
-                                messageRepository.synchronize(userId, watermark)
+                                syncReadyHandler.handle(userId, watermark)
                             }
                             "message.created", "message.ack", "message.recalled", "message.moderated", "conversation.read",
                             "user.profile.updated", "group.profile.updated",
