@@ -8,7 +8,9 @@ for script in \
     "$PROJECT_ROOT/scripts/release/init-demo.sh" \
     "$PROJECT_ROOT/scripts/release/compose-smoke.sh" \
     "$PROJECT_ROOT/scripts/release/android-smoke.sh" \
-    "$PROJECT_ROOT/scripts/release/macos-smoke.sh"
+    "$PROJECT_ROOT/scripts/release/macos-smoke.sh" \
+    "$PROJECT_ROOT/scripts/acceptance/standard-demo.sh" \
+    "$PROJECT_ROOT/scripts/acceptance/self-test.sh"
 do
     sh -n "$script"
 done
@@ -18,6 +20,7 @@ done
 "$PROJECT_ROOT/scripts/release/compose-smoke.sh" --help >/dev/null
 "$PROJECT_ROOT/scripts/release/android-smoke.sh" --help >/dev/null
 "$PROJECT_ROOT/scripts/release/macos-smoke.sh" --help >/dev/null
+"$PROJECT_ROOT/scripts/acceptance/standard-demo.sh" --help >/dev/null
 
 for required in \
     "$PROJECT_ROOT/.env.example" \

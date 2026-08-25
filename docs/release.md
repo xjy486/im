@@ -141,6 +141,20 @@ CADDY_EMAIL=ops@example.com \
 生成的四个用户显示名为 `Jitong Demo Alice`、`Bob`、`Carol` 和 `Dave`。不要把
 `demo-accounts.json` 复制到 issue、日志或发布包。
 
+服务端 API 标准演示可以在本地 Compose 栈启动后运行。它会创建临时四账号，
+执行 T39 的联系人、C2C、媒体、头像、撤回、公开群治理和同类设备替换链路，
+并输出不含凭证和消息正文的 Markdown 证据：
+
+```sh
+ADMIN_API_KEY="$(sed -n 's/^ADMIN_API_KEY=//p' .env)"
+./scripts/acceptance/standard-demo.sh \
+  --base-url "http://127.0.0.1:$(sed -n 's/^JITONG_HTTP_PORT=//p' .env)" \
+  --admin-api-key "$ADMIN_API_KEY"
+```
+
+完整验收矩阵与客户端人工演示步骤见
+`docs/acceptance/t39-standard-demo.md`。
+
 ## 升级
 
 1. 先确认当前 `.env`、管理员 API Key 和备份密钥仍在安全位置。

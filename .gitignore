@@ -14,4 +14,5 @@ target/
 /.restore-work-*/
 /.restore-smoke-*/
 /release-dist/
+/acceptance-evidence/
 /demo-accounts*.json

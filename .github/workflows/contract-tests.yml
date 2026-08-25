@@ -24,6 +24,8 @@ jobs:
         run: ./scripts/backup/self-test.sh
       - name: Run release tooling self-test
         run: ./scripts/release/self-test.sh
+      - name: Run acceptance tooling self-test
+        run: ./scripts/acceptance/self-test.sh
       - name: Validate production TLS configuration
         env:
           POSTGRES_PASSWORD: validation-only
@@ -41,3 +43,12 @@ jobs:
             caddy validate --config /etc/caddy/Caddyfile.production
       - name: Run Compose startup and restart smoke
         run: ./scripts/dev-smoke.sh
+      - name: Run four-account standard demo
+        run: |
+          ADMIN_API_KEY="$(sed -n 's/^ADMIN_API_KEY=//p' .env)"
+          HTTP_PORT="$(sed -n 's/^JITONG_HTTP_PORT=//p' .env)"
+          AI_PROVIDER_ENABLED=false \
+            ./scripts/acceptance/standard-demo.sh \
+            --base-url "http://127.0.0.1:${HTTP_PORT:-8080}" \
+            --admin-api-key "$ADMIN_API_KEY" \
+            --password 'ci-standard-demo-password'

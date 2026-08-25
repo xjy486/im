@@ -1,6 +1,8 @@
 package com.jitong.im.android.local
 
+import android.content.Context
 import androidx.room.Room
+import androidx.sqlite.db.SupportSQLiteStatement
 import androidx.test.core.app.ApplicationProvider
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import com.jitong.im.search.LocalSearchText
@@ -14,6 +16,7 @@ import org.junit.runner.RunWith
 @RunWith(AndroidJUnit4::class)
 class AccountDatabaseSearchTest {
     private lateinit var database: AccountDatabase
+    private var performanceDatabase: AccountDatabase? = null
 
     @Before
     fun setUp() {
@@ -40,6 +43,9 @@ class AccountDatabaseSearchTest {
     @After
     fun tearDown() {
         database.close()
+        performanceDatabase?.close()
+        ApplicationProvider.getApplicationContext<Context>()
+            .deleteDatabase(PERFORMANCE_DB)
     }
 
     @Test
@@ -105,21 +111,57 @@ class AccountDatabaseSearchTest {
 
     @Test
     fun common_english_search_stays_under_200ms_p95_for_100k_messages() {
-        database.runInTransaction {
+        performanceDatabase = Room.databaseBuilder(
+            ApplicationProvider.getApplicationContext(),
+            AccountDatabase::class.java,
+            PERFORMANCE_DB,
+        )
+            .allowMainThreadQueries()
+            .build()
+        val benchmarkDatabase = performanceDatabase!!
+        benchmarkDatabase.conversationDao().upsert(
+            LocalConversationEntity(
+                conversationId = CONVERSATION_ID,
+                peerUserId = "user-2",
+                peerAccountNo = "22345678902",
+                peerDisplayName = "Bob",
+                status = "ACTIVE",
+                relationship = "ACTIVE",
+                lastSequence = 100_000,
+                updatedAt = 1,
+            ),
+        )
+        val messageInsert = benchmarkDatabase.openHelper.writableDatabase.compileStatement(
+            """
+            INSERT INTO local_message (
+                messageId, conversationId, senderId, senderDisplayName,
+                clientMsgId, conversationSeq, type, state, localState, text,
+                searchText, mediaId, localMediaPath, serverAcceptedAt, recalledAt,
+                systemEventType, systemTargetUserId, systemRole, moderatedByUserId,
+                moderatedReason, moderatedAt, createdAt
+            ) VALUES (?, ?, ?, '', ?, ?, 'TEXT', 'ACTIVE', 'RECEIVED', ?,
+                       ?, NULL, NULL, ?, NULL, NULL, NULL, NULL, NULL, NULL, NULL, ?)
+            """.trimIndent(),
+        )
+        val searchInsert = benchmarkDatabase.openHelper.writableDatabase.compileStatement(
+            "INSERT INTO local_message_search (messageId, terms) VALUES (?, ?)",
+        )
+        benchmarkDatabase.runInTransaction {
             (1L..100_000L).forEach { sequence ->
-                database.messageDao().upsert(
-                    message(
-                        id = "performance-$sequence",
-                        text = "common keyword message $sequence",
-                        sequence = sequence,
-                    ),
-                )
+                bindPerformanceMessage(messageInsert, sequence)
+                messageInsert.executeInsert()
+                searchInsert.clearBindings()
+                searchInsert.bindString(1, "performance-$sequence")
+                searchInsert.bindString(2, "common keyword message $sequence")
+                searchInsert.executeInsert()
             }
         }
+        messageInsert.close()
+        searchInsert.close()
 
         val plan = LocalSearchText.plan("common")!!
         repeat(5) {
-            database.messageDao().searchIndexed(
+            benchmarkDatabase.messageDao().searchIndexed(
                 null,
                 plan.ftsMatch,
                 plan.normalizedQuery,
@@ -128,7 +170,7 @@ class AccountDatabaseSearchTest {
         }
         val samples = List(20) {
             val started = System.nanoTime()
-            database.messageDao().searchIndexed(
+            benchmarkDatabase.messageDao().searchIndexed(
                 null,
                 plan.ftsMatch,
                 plan.normalizedQuery,
@@ -162,7 +204,23 @@ class AccountDatabaseSearchTest {
         createdAt = sequence,
     )
 
+    private fun bindPerformanceMessage(statement: SupportSQLiteStatement, sequence: Long) {
+        val id = "performance-$sequence"
+        val text = "common keyword message $sequence"
+        statement.clearBindings()
+        statement.bindString(1, id)
+        statement.bindString(2, CONVERSATION_ID)
+        statement.bindString(3, "user-1")
+        statement.bindString(4, "client-$id")
+        statement.bindLong(5, sequence)
+        statement.bindString(6, text)
+        statement.bindString(7, text)
+        statement.bindString(8, "2026-08-21T00:00:00Z")
+        statement.bindLong(9, sequence)
+    }
+
     private companion object {
         const val CONVERSATION_ID = "conversation-1"
+        const val PERFORMANCE_DB = "account-database-search-performance"
     }
 }

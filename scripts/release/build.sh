@@ -244,15 +244,20 @@ cp "$PROJECT_ROOT/config/firebase.properties.example" "$OUTPUT_DIR/config/fireba
 cp -R "$PROJECT_ROOT/infra/caddy/." "$OUTPUT_DIR/infra/caddy/"
 mkdir -p "$OUTPUT_DIR/scripts/release"
 cp "$PROJECT_ROOT/scripts/release/"*.sh "$OUTPUT_DIR/scripts/release/"
+mkdir -p "$OUTPUT_DIR/scripts/acceptance"
+cp "$PROJECT_ROOT/scripts/acceptance/"*.sh "$OUTPUT_DIR/scripts/acceptance/"
 cp "$PROJECT_ROOT/scripts/docker-runtime.sh" "$OUTPUT_DIR/scripts/docker-runtime.sh"
 cp "$PROJECT_ROOT/scripts/dev-env.sh" "$OUTPUT_DIR/scripts/dev-env.sh"
 cp "$PROJECT_ROOT/scripts/dev-up.sh" "$OUTPUT_DIR/scripts/dev-up.sh"
 cp "$PROJECT_ROOT/scripts/dev-smoke.sh" "$OUTPUT_DIR/scripts/dev-smoke.sh"
 cp -R "$PROJECT_ROOT/scripts/backup" "$OUTPUT_DIR/scripts/backup"
+mkdir -p "$OUTPUT_DIR/docs/acceptance"
+cp "$PROJECT_ROOT/docs/acceptance/"*.md "$OUTPUT_DIR/docs/acceptance/"
 mkdir -p "$OUTPUT_DIR/.mvn/wrapper"
 cp "$PROJECT_ROOT/mvnw" "$PROJECT_ROOT/mvnw.cmd" "$OUTPUT_DIR/"
 cp "$PROJECT_ROOT/.mvn/wrapper/maven-wrapper.properties" "$OUTPUT_DIR/.mvn/wrapper/"
 chmod 755 "$OUTPUT_DIR/scripts/"*.sh "$OUTPUT_DIR/scripts/release/"*.sh \
+    "$OUTPUT_DIR/scripts/acceptance/"*.sh \
     "$OUTPUT_DIR/scripts/backup/"*.sh
 
 cat >"$OUTPUT_DIR/Dockerfile" <<EOF

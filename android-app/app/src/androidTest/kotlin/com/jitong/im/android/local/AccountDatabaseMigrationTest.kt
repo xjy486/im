@@ -74,6 +74,8 @@ class AccountDatabaseMigrationTest {
             AccountDatabase.MIGRATION_13_14,
             AccountDatabase.MIGRATION_14_15,
             AccountDatabase.MIGRATION_15_16,
+            AccountDatabase.MIGRATION_16_17,
+            AccountDatabase.MIGRATION_17_18,
         ).close()
 
         migratedDatabase = Room.databaseBuilder(
@@ -89,6 +91,8 @@ class AccountDatabaseMigrationTest {
                 AccountDatabase.MIGRATION_13_14,
                 AccountDatabase.MIGRATION_14_15,
                 AccountDatabase.MIGRATION_15_16,
+                AccountDatabase.MIGRATION_16_17,
+                AccountDatabase.MIGRATION_17_18,
             )
             .build()
 
