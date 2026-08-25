@@ -134,8 +134,13 @@ internal class AppContainer(context: Context) {
                             }
                             "message.created", "message.ack", "message.recalled", "message.moderated", "conversation.read",
                             "user.profile.updated", "group.profile.updated",
-                            "membership.revoked", "membership.granted", "group.dissolved", "error" ->
-                                messageRepository.apply(event, userId)
+                            "membership.revoked", "membership.granted", "group.dissolved",
+                            "contact.relationship.changed", "error" ->
+                                runCatching { messageRepository.apply(event, userId) }
+                                    .onFailure { exception ->
+                                        if (exception is CancellationException) throw exception
+                                        PendingMessageScheduler.enqueue(appContext)
+                                    }
                             "ai.job.updated", "ai.artifact.deleted", "ai.job.deleted",
                             "ai.action-item.updated", "ai.action-item.deleted" ->
                                 aiRepository.refresh()

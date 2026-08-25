@@ -28,7 +28,6 @@ import okhttp3.MultipartBody
 import okhttp3.RequestBody.Companion.toRequestBody
 import java.io.IOException
 import java.util.UUID
-import java.util.concurrent.ConcurrentHashMap
 
 internal class MessageRepository(
     private val api: MessageApi,
@@ -39,11 +38,12 @@ internal class MessageRepository(
     private val mediaApi: com.jitong.im.android.media.MediaApi? = null,
     private val mediaCache: () -> EncryptedMediaCache? = { null },
 ) {
-    private val pendingAcks = ConcurrentHashMap<UUID, CompletableDeferred<MessageResponse>>()
+    private val pendingAcks = PendingRealtimeAckRegistry()
     private val pendingFlushMutex = Mutex()
     private var pendingSendScheduler: (() -> Unit)? = null
     private var automaticSendingEnabled = false
     internal val searchInvalidations = MutableSharedFlow<Unit>(extraBufferCapacity = 1)
+    internal val relationshipChanges = MutableSharedFlow<UUID>(extraBufferCapacity = 8)
 
     suspend fun search(
         query: String,
@@ -203,6 +203,22 @@ internal class MessageRepository(
                 .forEach { conversationId ->
                     applyGroupProfile(syncApi.groupProfile(conversationId).syncBodyOrThrow())
                 }
+            val relationshipConversationIds = page.events
+                .filter {
+                    it.eventType == "CONTACT_RELATIONSHIP_CHANGED"
+                        && it.conversationId != null
+                }
+                .mapNotNull { it.conversationId }
+                .distinct()
+            if (relationshipConversationIds.isNotEmpty()) {
+                val conversations = syncApi.conversations().syncBodyOrThrow()
+                conversations
+                    .filter { it.conversationId in relationshipConversationIds }
+                    .forEach {
+                        applyConversationSummary(it)
+                        relationshipChanges.tryEmit(it.conversationId)
+                    }
+            }
             if (page.events.any { it.eventType.startsWith("AI_") }) {
                 refreshAiData()
             }
@@ -833,27 +849,27 @@ internal class MessageRepository(
         text: String,
     ): MessageResponse {
         val acknowledgement = CompletableDeferred<MessageResponse>()
-        pendingAcks[clientMsgId] = acknowledgement
-        if (!webSocket.send(conversationId, clientMsgId, text)) {
+        val requestId = UUID.randomUUID()
+        pendingAcks.register(clientMsgId, requestId, acknowledgement)
+        if (!webSocket.send(conversationId, clientMsgId, text, requestId)) {
+            pendingAcks.remove(clientMsgId)
             val response = api.send(
                 conversationId,
                 SendMessageRequest(clientMsgId = clientMsgId, text = text),
             )
             if (!response.isSuccessful || response.body() == null) {
-                pendingAcks.remove(clientMsgId)
                 throw MessageSendException(
                     retryable = response.code() >= 500 || response.code() == 408,
                     message = "Message send failed with HTTP ${response.code()}",
                 )
             }
-            pendingAcks.remove(clientMsgId)
             return response.body()!!
         } else {
-            val accepted = withTimeoutOrNull(10_000) { acknowledgement.await() }
-            pendingAcks.remove(clientMsgId)
-            if (accepted != null) {
-                return accepted
-            } else {
+            try {
+                val accepted = withTimeoutOrNull(10_000) { acknowledgement.await() }
+                if (accepted != null) {
+                    return accepted
+                }
                 val response = api.send(
                     conversationId,
                     SendMessageRequest(clientMsgId = clientMsgId, text = text),
@@ -865,6 +881,8 @@ internal class MessageRepository(
                     )
                 }
                 return response.body()!!
+            } finally {
+                pendingAcks.remove(clientMsgId)
             }
         }
     }
@@ -889,13 +907,18 @@ internal class MessageRepository(
         mediaId: UUID,
     ): MessageResponse {
         val acknowledgement = CompletableDeferred<MessageResponse>()
-        pendingAcks[clientMsgId] = acknowledgement
-        if (!webSocket.sendImage(conversationId, clientMsgId, mediaId)) {
+        val requestId = UUID.randomUUID()
+        pendingAcks.register(clientMsgId, requestId, acknowledgement)
+        if (!webSocket.sendImage(conversationId, clientMsgId, mediaId, requestId)) {
+            pendingAcks.remove(clientMsgId)
             return sendImageViaHttp(conversationId, clientMsgId, mediaId)
         }
-        val accepted = withTimeoutOrNull(10_000) { acknowledgement.await() }
-        pendingAcks.remove(clientMsgId)
-        return accepted ?: sendImageViaHttp(conversationId, clientMsgId, mediaId)
+        try {
+            val accepted = withTimeoutOrNull(10_000) { acknowledgement.await() }
+            return accepted ?: sendImageViaHttp(conversationId, clientMsgId, mediaId)
+        } finally {
+            pendingAcks.remove(clientMsgId)
+        }
     }
 
     private suspend fun sendImageViaHttp(
@@ -965,12 +988,17 @@ internal class MessageRepository(
 
     suspend fun apply(event: WireEvent, currentUserId: UUID) {
         val body = event.body ?: return
-        val db = database() ?: return
         if (event.operation == "error") {
-            throw MessageSendException(
-                retryable = body.code == "INVALID_REQUEST",
-                message = body.message ?: "Realtime message command failed")
+            event.requestId?.let { requestId ->
+                pendingAcks.fail(
+                    requestId,
+                    body.code,
+                    body.message,
+                )
+            }
+            return
         }
+        val db = database() ?: return
         if (event.operation == "user.profile.updated") {
             val profileUserId = body.userId ?: return
             val profileVersion = body.avatarVersion ?: return
@@ -1054,6 +1082,42 @@ internal class MessageRepository(
                     ),
                 )
             }
+            syncApi.acknowledge(SyncAckRequest(syncSeq)).syncBodyOrThrow()
+            return
+        }
+        if (event.operation == "contact.relationship.changed") {
+            val conversationId = body.conversationId ?: return
+            val syncSeq = body.syncSeq ?: return
+            val lastSyncSeq = withContext(Dispatchers.IO) {
+                db.syncStateDao().current()?.lastSyncSeq ?: 0L
+            }
+            if (syncSeq <= lastSyncSeq) return
+            if (syncSeq != lastSyncSeq + 1) {
+                synchronize(currentUserId, syncSeq)
+                return
+            }
+            syncApi.conversations()
+                .syncBodyOrThrow()
+                .firstOrNull { it.conversationId == conversationId }
+                ?.let { applyConversationSummary(it) }
+                ?: withContext(Dispatchers.IO) {
+                    db.conversationDao().updateRelationship(
+                        conversationId = conversationId.toString(),
+                        status = "READ_ONLY",
+                        relationship = "READ_ONLY",
+                        updatedAt = System.currentTimeMillis(),
+                    )
+                }
+            withContext(Dispatchers.IO) {
+                db.syncStateDao().upsert(
+                    SyncStateEntity(
+                        deviceId = deviceId()?.toString().orEmpty(),
+                        lastSyncSeq = syncSeq,
+                        lastFullRestoreAt = db.syncStateDao().current()?.lastFullRestoreAt,
+                    ),
+                )
+            }
+            relationshipChanges.tryEmit(conversationId)
             syncApi.acknowledge(SyncAckRequest(syncSeq)).syncBodyOrThrow()
             return
         }
@@ -1254,7 +1318,8 @@ internal class MessageRepository(
                 )
             }
         }
-        pendingAcks[clientMsgId]?.complete(
+        pendingAcks.complete(
+            clientMsgId,
             MessageResponse(
                 messageId = messageId,
                 conversationId = conversationId,

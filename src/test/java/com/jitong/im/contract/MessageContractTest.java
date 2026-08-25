@@ -153,6 +153,71 @@ class MessageContractTest extends ContractTestEnvironment {
     }
 
     @Test
+    void contact_removal_is_delivered_to_both_users_as_a_relationship_sync_event() throws Exception {
+        TestUser alice = createUser("Alice");
+        TestUser bob = createUser("Bob");
+        String aliceToken = login(alice.accountNo(), "alice-contact-sync-installation");
+        String bobToken = login(bob.accountNo(), "bob-contact-sync-installation");
+
+        JsonNode request = post(
+                "/api/v1/contact-requests",
+                aliceToken,
+                Map.of("accountNo", bob.accountNo(), "verification", ""));
+        UUID requestId = UUID.fromString(request.get("requestId").asText());
+        UUID conversationId = UUID.fromString(exchange(
+                HttpMethod.POST,
+                "/api/v1/contact-requests/" + requestId + "/accept",
+                bobToken,
+                null).getBody().get("conversationId").asText());
+
+        long aliceBeforeRemoval = syncHighWatermark(aliceToken);
+        long bobBeforeRemoval = syncHighWatermark(bobToken);
+
+        assertThat(exchangeVoid(
+                HttpMethod.DELETE,
+                "/api/v1/contacts/" + bob.userId(),
+                aliceToken).getStatusCode()).isEqualTo(HttpStatus.NO_CONTENT);
+
+        JsonNode aliceSync = exchange(
+                HttpMethod.GET,
+                "/api/v1/sync?after=" + aliceBeforeRemoval + "&limit=200",
+                aliceToken,
+                null).getBody();
+        JsonNode bobSync = exchange(
+                HttpMethod.GET,
+                "/api/v1/sync?after=" + bobBeforeRemoval + "&limit=200",
+                bobToken,
+                null).getBody();
+
+        assertThat(syncEvents(aliceSync))
+                .anySatisfy(event -> {
+                    assertThat(event.get("eventType").asText())
+                            .isEqualTo("CONTACT_RELATIONSHIP_CHANGED");
+                    assertThat(event.get("entityId").asText())
+                            .isEqualTo(conversationId.toString());
+                    assertThat(event.get("conversationId").asText())
+                            .isEqualTo(conversationId.toString());
+                });
+        assertThat(syncEvents(bobSync))
+                .anySatisfy(event -> {
+                    assertThat(event.get("eventType").asText())
+                            .isEqualTo("CONTACT_RELATIONSHIP_CHANGED");
+                    assertThat(event.get("entityId").asText())
+                            .isEqualTo(conversationId.toString());
+                    assertThat(event.get("conversationId").asText())
+                            .isEqualTo(conversationId.toString());
+                });
+
+        JsonNode bobConversation = exchange(
+                HttpMethod.GET,
+                "/api/v1/conversations",
+                bobToken,
+                null).getBody().get(0);
+        assertThat(bobConversation.get("status").asText()).isEqualTo("READ_ONLY");
+        assertThat(bobConversation.get("relationship").asText()).isEqualTo("READ_ONLY");
+    }
+
+    @Test
     void rejects_text_and_frame_boundary_with_stable_errors() throws Exception {
         TestUser alice = createUser("Alice");
         TestUser bob = createUser("Bob");
@@ -457,6 +522,20 @@ class MessageContractTest extends ContractTestEnvironment {
             }
         }
         throw new AssertionError("Missing read state for " + userId);
+    }
+
+    private long syncHighWatermark(String token) {
+        return exchange(
+                HttpMethod.GET,
+                "/api/v1/sync?after=0&until=0",
+                token,
+                null).getBody().get("highWatermark").asLong();
+    }
+
+    private List<JsonNode> syncEvents(JsonNode page) {
+        List<JsonNode> events = new java.util.ArrayList<>();
+        page.get("events").forEach(events::add);
+        return events;
     }
 
     private WebSocket openWebSocket(

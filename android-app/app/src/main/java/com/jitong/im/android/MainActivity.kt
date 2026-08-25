@@ -24,7 +24,10 @@ class MainActivity : ComponentActivity() {
     }
     private val contactViewModel: ContactViewModel by viewModels {
         val container = (application as JitongApplication).container
-        ContactViewModel.Factory(container.contactRepository)
+        ContactViewModel.Factory(
+            container.contactRepository,
+            container.messageRepository,
+        )
     }
     private val messageViewModel: MessageViewModel by viewModels {
         val container = (application as JitongApplication).container

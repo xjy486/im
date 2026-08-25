@@ -218,6 +218,8 @@ class MessageOutboxDelivery implements OutboxDelivery {
                     MessageWire.membershipGranted(record.conversationId(), record.syncSeq());
             case "GROUP_DISSOLVED" ->
                     MessageWire.groupDissolved(record.conversationId(), record.syncSeq());
+            case "CONTACT_RELATIONSHIP_CHANGED" ->
+                    MessageWire.contactRelationshipChanged(record.conversationId(), record.syncSeq());
             case "AI_JOB_QUEUED", "AI_JOB_STARTED", "AI_JOB_COMPLETED", "AI_JOB_FAILED" -> {
                 if (aiService == null) {
                     yield null;
@@ -267,7 +269,7 @@ class MessageOutboxDelivery implements OutboxDelivery {
             if (!sessions.isEmpty()) {
                 for (WebSocketSession session : sessions) {
                     try {
-                        session.sendMessage(new TextMessage(payload));
+                        sendPayload(session, payload);
                         delivered = true;
                     } catch (IOException ignored) {
                         sessions.remove(session);
@@ -286,6 +288,17 @@ class MessageOutboxDelivery implements OutboxDelivery {
         return deliverViaFcm(record);
     }
 
+    void send(WebSocketSession session, MessageWire.WireEnvelope envelope) throws IOException {
+        String payload = objectMapper.writeValueAsString(envelope);
+        synchronized (sessionsLock) {
+            sendPayload(session, payload);
+        }
+    }
+
+    private void sendPayload(WebSocketSession session, String payload) throws IOException {
+        session.sendMessage(new TextMessage(payload));
+    }
+
     private boolean deliverViaFcm(OutboxRecord record) {
         if (!pushTokenService.isMobile(record.targetDeviceId())) {
             return true;
@@ -297,6 +310,8 @@ class MessageOutboxDelivery implements OutboxDelivery {
             case "USER_PROFILE_UPDATED", "GROUP_PROFILE_UPDATED" ->
                     fcmSender.sendProfileChanged(token);
             case "GROUP_DISSOLVED" ->
+                    fcmSender.sendProfileChanged(token);
+            case "CONTACT_RELATIONSHIP_CHANGED" ->
                     fcmSender.sendProfileChanged(token);
             default -> FcmDeliveryResult.SENT;
         };

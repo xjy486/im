@@ -791,6 +791,30 @@ class LocalDatabase internal constructor(
         }
     }
 
+    fun updateConversationRelationship(
+        conversationId: String,
+        status: String,
+        relationship: String,
+    ) {
+        pool.connection.use { connection ->
+            connection.prepareStatement(
+                """
+                UPDATE local_conversations
+                SET status = ?,
+                    relationship = ?,
+                    updated_at = ?
+                WHERE conversation_id = ?
+                """.trimIndent(),
+            ).use { statement ->
+                statement.setString(1, status)
+                statement.setString(2, relationship)
+                statement.setLong(3, System.currentTimeMillis())
+                statement.setString(4, conversationId)
+                statement.executeUpdate()
+            }
+        }
+    }
+
     fun updatePeerProfile(
         userId: String,
         displayName: String,

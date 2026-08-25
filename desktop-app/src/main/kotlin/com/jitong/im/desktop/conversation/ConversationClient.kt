@@ -1058,6 +1058,15 @@ class ConversationClient(
         events: List<DesktopSyncEvent>,
     ) {
         events
+            .filter { it.eventType == "CONTACT_RELATIONSHIP_CHANGED" && it.conversationId != null }
+            .map { it.conversationId!! }
+            .distinct()
+            .forEach { conversationId ->
+                list(accessToken)
+                    .firstOrNull { it.conversationId == conversationId }
+                    ?.let { applyConversation(local, it) }
+            }
+        events
             .filter { it.eventType == "USER_PROFILE_UPDATED" }
             .map { it.entityId }
             .distinct()
@@ -1490,6 +1499,7 @@ class ConversationClient(
         local: LocalDatabase,
         envelope: DesktopRealtimeEnvelope,
         currentUserId: String,
+        accessToken: String? = null,
     ) {
         val body = envelope.body ?: return
         val syncSeq = body.syncSeq
@@ -1554,6 +1564,21 @@ class ConversationClient(
             syncSeq?.let(local::saveLastSyncSeq)
             return
         }
+        if (envelope.operation == "contact.relationship.changed") {
+            val conversationId = body.conversationId ?: return
+            if (accessToken != null) {
+                list(accessToken)
+                    .firstOrNull { it.conversationId == conversationId }
+                    ?.let { applyConversation(local, it) }
+            } else {
+                local.updateConversationRelationship(
+                    conversationId = conversationId,
+                    status = "READ_ONLY",
+                    relationship = "READ_ONLY")
+            }
+            syncSeq?.let(local::saveLastSyncSeq)
+            return
+        }
         if (envelope.operation.startsWith("ai.")) {
             syncSeq?.let(local::saveLastSyncSeq)
             return
@@ -1586,7 +1611,7 @@ class ConversationClient(
         if (envelope.operation.startsWith("ai.")) {
             refreshAiData(accessToken, local)
         }
-        applyRealtime(local, envelope, currentUserId)
+        applyRealtime(local, envelope, currentUserId, accessToken)
     }
 
     private fun DesktopRealtimeBody.toMessage(): DesktopMessage? {

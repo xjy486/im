@@ -25,6 +25,9 @@
       "$ref": "#/$defs/membershipEnvelope"
     },
     {
+      "$ref": "#/$defs/contactRelationshipEnvelope"
+    },
+    {
       "$ref": "#/$defs/aiJobEnvelope"
     },
     {
@@ -194,6 +197,24 @@
             },
             "body": {
               "$ref": "#/$defs/membershipBody"
+            }
+          }
+        }
+      ]
+    },
+    "contactRelationshipEnvelope": {
+      "allOf": [
+        {
+          "$ref": "#/$defs/baseEnvelope"
+        },
+        {
+          "type": "object",
+          "properties": {
+            "operation": {
+              "const": "contact.relationship.changed"
+            },
+            "body": {
+              "$ref": "#/$defs/relationshipBody"
             }
           }
         }
@@ -444,6 +465,15 @@
       }
     },
     "membershipBody": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["conversationId", "syncSeq"],
+      "properties": {
+        "conversationId": { "type": "string", "format": "uuid" },
+        "syncSeq": { "type": "integer", "minimum": 1 }
+      }
+    },
+    "relationshipBody": {
       "type": "object",
       "additionalProperties": false,
       "required": ["conversationId", "syncSeq"],

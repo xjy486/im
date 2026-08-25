@@ -161,7 +161,7 @@ class MessageWebSocketHandler extends TextWebSocketHandler {
     }
 
     private void send(WebSocketSession session, MessageWire.WireEnvelope envelope) throws IOException {
-        session.sendMessage(new TextMessage(objectMapper.writeValueAsString(envelope)));
+        outboxDelivery.send(session, envelope);
     }
 
 }

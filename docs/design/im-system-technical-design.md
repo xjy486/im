@@ -244,6 +244,14 @@ challenge 保存 `replaced_device_id`、`new_installation_id_hash`、`device_cla
 
 关系结束后不再同步昵称、头像及在线资料变化。
 
+关系结束还必须在同一个事务中写入双方的用户同步流。事件类型为
+`CONTACT_RELATIONSHIP_CHANGED`，`entityId` 和 `conversationId` 均指向 C2C 会话；
+事件不携带删除方、拉黑方或原因等隐私信息。活动设备通过 outbox 收到
+`contact.relationship.changed`，离线 MOBILE 设备收到不含内容的 `PROFILE_CHANGED`
+FCM 提示后补拉同步流。客户端收到事件后重新读取权威会话摘要，将本地关系更新为
+`READ_ONLY` 并关闭发送入口；服务端发送命令仍必须再次校验联系人关系，客户端灰态
+只属于用户体验，不属于安全边界。
+
 ## 9. 会话与群聊
 
 ### 9.1 会话类型
@@ -386,8 +394,23 @@ challenge 保存 `replaced_device_id`、`new_installation_id_hash`、`device_cla
 - AI_BUDGET_EXCEEDED；
 - CONTEXT_CHANGED；
 - RATE_LIMITED。
+- CONTACT_RELATIONSHIP_CHANGED（用户同步事件，不是客户端可提交的命令）。
 
 REST 用 OpenAPI 描述，WSS 和 AI 输出用版本化 JSON Schema 描述。
+
+关系变更 WSS 通知使用：
+
+    {
+      "version": 1,
+      "operation": "contact.relationship.changed",
+      "requestId": null,
+      "body": {
+        "conversationId": "uuid",
+        "syncSeq": 123
+      }
+    }
+
+该通知只负责低延迟唤醒和快速更新，完整会话状态以 `/sync` 后的权威摘要为准。
 
 ## 12. 可靠消息事务
 

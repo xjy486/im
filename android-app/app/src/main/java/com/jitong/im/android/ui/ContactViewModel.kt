@@ -8,6 +8,7 @@ import com.jitong.im.android.contact.ContactRequestSummary
 import com.jitong.im.android.contact.ContactSearchResult
 import com.jitong.im.android.contact.ContactSummary
 import com.jitong.im.android.contact.ConversationSummary
+import com.jitong.im.android.message.MessageRepository
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -26,9 +27,18 @@ internal data class ContactUiState(
 
 internal class ContactViewModel(
     private val repository: ContactRepository,
+    private val messageRepository: MessageRepository,
 ) : ViewModel() {
     private val _state = MutableStateFlow(ContactUiState())
     val state: StateFlow<ContactUiState> = _state.asStateFlow()
+
+    init {
+        viewModelScope.launch {
+            messageRepository.relationshipChanges.collect {
+                runCatching { refreshData() }
+            }
+        }
+    }
 
     fun setSearchAccountNo(value: String) {
         _state.value = _state.value.copy(searchAccountNo = value.filter(Char::isDigit).take(11), message = null)
@@ -118,9 +128,12 @@ internal class ContactViewModel(
         }
     }
 
-    class Factory(private val repository: ContactRepository) : ViewModelProvider.Factory {
+    class Factory(
+        private val repository: ContactRepository,
+        private val messageRepository: MessageRepository,
+    ) : ViewModelProvider.Factory {
         @Suppress("UNCHECKED_CAST")
         override fun <T : ViewModel> create(modelClass: Class<T>): T =
-            ContactViewModel(repository) as T
+            ContactViewModel(repository, messageRepository) as T
     }
 }

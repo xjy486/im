@@ -163,6 +163,14 @@ final class MessageWire {
                 new MembershipBody(conversationId, syncSeq));
     }
 
+    static WireEnvelope contactRelationshipChanged(UUID conversationId, long syncSeq) {
+        return new WireEnvelope(
+                1,
+                "contact.relationship.changed",
+                null,
+                new RelationshipBody(conversationId, syncSeq));
+    }
+
     static WireEnvelope aiJob(AiDelivery delivery, long syncSeq) {
         return new WireEnvelope(
                 1,
@@ -286,6 +294,12 @@ final class MessageWire {
     }
 
     record MembershipBody(
+            UUID conversationId,
+            long syncSeq
+    ) {
+    }
+
+    record RelationshipBody(
             UUID conversationId,
             long syncSeq
     ) {

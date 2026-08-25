@@ -258,6 +258,22 @@ interface LocalConversationDao {
         visibleAfterSeq: Long,
         updatedAt: Long,
     )
+
+    @Query(
+        """
+        UPDATE local_conversation
+        SET status = :status,
+            relationship = :relationship,
+            updatedAt = :updatedAt
+        WHERE conversationId = :conversationId
+        """,
+    )
+    fun updateRelationship(
+        conversationId: String,
+        status: String,
+        relationship: String,
+        updatedAt: Long,
+    )
 }
 
 @Dao

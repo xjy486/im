@@ -44,24 +44,26 @@ internal class MessageWebSocket(
     }
 
     @Synchronized
-    fun send(conversationId: UUID, clientMsgId: UUID, text: String): Boolean {
+    fun send(conversationId: UUID, clientMsgId: UUID, text: String, requestId: UUID): Boolean {
         return send(
             conversationId = conversationId,
             clientMsgId = clientMsgId,
             type = "TEXT",
             text = text,
             mediaId = null,
+            requestId = requestId,
         )
     }
 
     @Synchronized
-    fun sendImage(conversationId: UUID, clientMsgId: UUID, mediaId: UUID): Boolean {
+    fun sendImage(conversationId: UUID, clientMsgId: UUID, mediaId: UUID, requestId: UUID): Boolean {
         return send(
             conversationId = conversationId,
             clientMsgId = clientMsgId,
             type = "IMAGE",
             text = null,
             mediaId = mediaId,
+            requestId = requestId,
         )
     }
 
@@ -71,8 +73,8 @@ internal class MessageWebSocket(
         type: String,
         text: String?,
         mediaId: UUID?,
+        requestId: UUID,
     ): Boolean {
-        val requestId = UUID.randomUUID()
         return socket?.send(
             gson.toJson(
                 WireEnvelope(

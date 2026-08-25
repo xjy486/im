@@ -7,6 +7,7 @@ import com.jitong.im.audit.AuditSubjectType;
 import com.jitong.im.audit.SecurityAuditEvent;
 import com.jitong.im.audit.SecurityAuditEventType;
 import com.jitong.im.audit.SecurityAuditSink;
+import com.jitong.im.sync.SyncService;
 import org.springframework.beans.factory.annotation.Autowired;
 import com.jitong.im.platform.error.ApiErrorDefinition;
 import org.springframework.stereotype.Service;
@@ -27,6 +28,7 @@ public class ContactService {
     private final AuthService authService;
     private final ContactRateLimiter rateLimiter;
     private final SecurityAuditSink auditSink;
+    private final SyncService syncService;
     private final Clock clock;
 
     @Autowired
@@ -34,9 +36,10 @@ public class ContactService {
             ContactRepository repository,
             AuthService authService,
             ContactRateLimiter rateLimiter,
-            SecurityAuditSink auditSink
+            SecurityAuditSink auditSink,
+            SyncService syncService
     ) {
-        this(repository, authService, rateLimiter, auditSink, Clock.systemUTC());
+        this(repository, authService, rateLimiter, auditSink, syncService, Clock.systemUTC());
     }
 
     ContactService(
@@ -44,12 +47,14 @@ public class ContactService {
             AuthService authService,
             ContactRateLimiter rateLimiter,
             SecurityAuditSink auditSink,
+            SyncService syncService,
             Clock clock
     ) {
         this.repository = repository;
         this.authService = authService;
         this.rateLimiter = rateLimiter;
         this.auditSink = auditSink;
+        this.syncService = syncService;
         this.clock = clock;
     }
 
@@ -59,8 +64,14 @@ public class ContactService {
             ContactRateLimiter rateLimiter,
             Clock clock
     ) {
-        this(repository, authService, rateLimiter, event -> {
-        }, clock);
+        this(
+                repository,
+                authService,
+                rateLimiter,
+                event -> {
+                },
+                null,
+                clock);
     }
 
     public ContactSearchResult search(String authorization, String accountNo, String ipAddress) {
@@ -228,7 +239,9 @@ public class ContactService {
         if (contact == null || !"ACTIVE".equals(contact.status())) {
             throw new ContactException(ApiErrorDefinition.USER_NOT_FOUND);
         }
+        UUID conversationId = repository.findConversation(userId, peerUserId);
         repository.removeContact(userId, peerUserId, clock.instant());
+        recordRelationshipChange(List.of(userId, peerUserId), conversationId);
     }
 
     @Transactional
@@ -239,8 +252,10 @@ public class ContactService {
         requireActiveUser(blockedUserId);
         Instant now = clock.instant();
         repository.insertBlock(blockerId, blockedUserId);
+        UUID conversationId = repository.findConversation(blockerId, blockedUserId);
         repository.removeContact(blockerId, blockedUserId, now);
         repository.cancelPendingRequests(blockerId, blockedUserId, now);
+        recordRelationshipChange(List.of(blockerId, blockedUserId), conversationId);
         auditSink.record(new SecurityAuditEvent(
                 UuidV7.random(),
                 SecurityAuditEventType.CONTACT_BLOCK,
@@ -298,6 +313,20 @@ public class ContactService {
     public void updateSearchability(String authorization, boolean searchable) {
         UUID userId = authService.requireUserId(authorization);
         repository.updateSearchability(userId, searchable);
+    }
+
+    private void recordRelationshipChange(
+            List<UUID> userIds,
+            UUID conversationId
+    ) {
+        if (syncService == null || conversationId == null) {
+            return;
+        }
+        syncService.recordEventForUsers(
+                userIds,
+                "CONTACT_RELATIONSHIP_CHANGED",
+                conversationId,
+                conversationId);
     }
 
     public boolean canSendC2c(UUID senderId, UUID recipientId) {
