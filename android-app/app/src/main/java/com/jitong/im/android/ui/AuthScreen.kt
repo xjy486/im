@@ -2,9 +2,6 @@ package com.jitong.im.android.ui
 
 import android.graphics.Bitmap
 import android.graphics.Color
-import android.content.ClipData
-import android.content.ClipboardManager
-import android.content.Context
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
@@ -147,7 +144,7 @@ internal fun JitongApp(
             SessionState.Restoring -> RestoringScreen()
             is SessionState.ReplacementRequired -> ReplacementScreen(current, viewModel)
             is SessionState.PasswordChangeRequired -> PasswordChangeScreen(current, viewModel)
-            is SessionState.SignedIn -> SignedInContent(
+            is SessionState.SignedIn -> HomeScreen(
                 state = current,
                 authViewModel = viewModel,
                 contactViewModel = contactViewModel,
@@ -157,38 +154,6 @@ internal fun JitongApp(
                 groupViewModel = groupViewModel,
             )
             is SessionState.Error -> LoginScreen(viewModel, current.message, current.registration)
-        }
-    }
-}
-
-@Composable
-private fun SignedInContent(
-    state: SessionState.SignedIn,
-    authViewModel: AuthViewModel,
-    contactViewModel: ContactViewModel,
-    messageViewModel: MessageViewModel,
-    aiViewModel: AiViewModel,
-    avatarViewModel: AvatarViewModel,
-    groupViewModel: GroupViewModel,
-) {
-    var showRegistrationAccount by rememberSaveable(state.session.userId) {
-        mutableStateOf(state.showRegistrationAccount)
-    }
-    Box(Modifier.fillMaxSize()) {
-        HomeScreen(
-            state = state,
-            authViewModel = authViewModel,
-            contactViewModel = contactViewModel,
-            messageViewModel = messageViewModel,
-            aiViewModel = aiViewModel,
-            avatarViewModel = avatarViewModel,
-            groupViewModel = groupViewModel,
-        )
-        if (showRegistrationAccount) {
-            RegistrationAccountDialog(
-                accountNo = state.session.accountNo,
-                onDismiss = { showRegistrationAccount = false },
-            )
         }
     }
 }
@@ -321,47 +286,6 @@ private fun LoginScreen(
             )
         }
     }
-}
-
-@Composable
-private fun RegistrationAccountDialog(
-    accountNo: String,
-    onDismiss: () -> Unit,
-) {
-    val context = LocalContext.current
-    AlertDialog(
-        onDismissRequest = onDismiss,
-        title = { Text("注册成功") },
-        text = {
-            Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                Text("这是你的即通账号，请保存好。以后登录和搜索好友都需要完整输入这 11 位账号。")
-                Surface(
-                    modifier = Modifier.fillMaxWidth(),
-                    shape = RoundedCornerShape(14.dp),
-                    color = MaterialTheme.colorScheme.primaryContainer,
-                ) {
-                    Text(
-                        accountNo,
-                        modifier = Modifier.padding(16.dp),
-                        style = MaterialTheme.typography.headlineSmall,
-                        color = MaterialTheme.colorScheme.onPrimaryContainer,
-                    )
-                }
-            }
-        },
-        confirmButton = {
-            TextButton(onClick = {
-                val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
-                clipboard.setPrimaryClip(ClipData.newPlainText("即通账号", accountNo))
-                onDismiss()
-            }) {
-                Text("复制并进入")
-            }
-        },
-        dismissButton = {
-            TextButton(onClick = onDismiss) { Text("进入") }
-        },
-    )
 }
 
 @Composable

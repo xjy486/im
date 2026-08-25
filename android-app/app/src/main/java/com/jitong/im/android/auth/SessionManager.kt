@@ -12,10 +12,7 @@ import java.io.IOException
 sealed interface SessionState {
     data object SignedOut : SessionState
     data object Restoring : SessionState
-    data class SignedIn(
-        val session: SessionSnapshot,
-        val showRegistrationAccount: Boolean = false,
-    ) : SessionState
+    data class SignedIn(val session: SessionSnapshot) : SessionState
     data class PasswordChangeRequired(
         val session: SessionSnapshot,
         val temporaryPasswordRequired: Boolean,
@@ -56,10 +53,7 @@ internal class SessionManager(
         beforeLogout = callback
     }
 
-    suspend fun activate(
-        response: LoginResponse,
-        showRegistrationAccount: Boolean = false,
-    ) {
+    suspend fun activate(response: LoginResponse) {
         val snapshot = response.toSessionSnapshot()
         sessionStore.write(snapshot)
         withContext(Dispatchers.IO) {
@@ -68,7 +62,7 @@ internal class SessionManager(
         _state.value = if (snapshot.passwordMustChange) {
             SessionState.PasswordChangeRequired(snapshot, temporaryPasswordRequired = true)
         } else {
-            SessionState.SignedIn(snapshot, showRegistrationAccount = showRegistrationAccount)
+            SessionState.SignedIn(snapshot)
         }
     }
 

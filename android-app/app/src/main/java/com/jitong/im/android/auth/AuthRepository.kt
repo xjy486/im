@@ -24,7 +24,7 @@ internal class AuthRepository(
             )
         }
         if (!response.isSuccessful) throw response.toAuthException()
-        sessionManager.activate(response.bodyOrThrow(), showRegistrationAccount = true)
+        sessionManager.activate(response.bodyOrThrow())
     }
 
     suspend fun login(accountNo: String, password: String) {
