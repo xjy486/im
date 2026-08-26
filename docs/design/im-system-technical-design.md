@@ -217,6 +217,9 @@ challenge 保存 `replaced_device_id`、`new_installation_id_hash`、`device_cla
 - `EXPIRED`。
 
 申请七天过期，可附带最多 100 字符验证信息。同一用户对只能存在一个待处理申请；双方交叉申请时自动接受。
+申请创建后，接收方用户同步流写入 `CONTACT_REQUEST_CREATED`，活动设备通过
+`contact.request.created` 收到低延迟通知；无 WSS 的 MOBILE 设备收到 `CONTACT_REQUEST`
+FCM 提示后补拉同步流。接收方客户端据此刷新申请列表，申请正文仍只通过认证接口读取。
 
 ### 8.2 C2C 创建
 
@@ -395,6 +398,7 @@ FCM 提示后补拉同步流。客户端收到事件后重新读取权威会话�
 - CONTEXT_CHANGED；
 - RATE_LIMITED。
 - CONTACT_RELATIONSHIP_CHANGED（用户同步事件，不是客户端可提交的命令）。
+- CONTACT_REQUEST_CREATED（用户同步事件，不是客户端可提交的命令）。
 
 REST 用 OpenAPI 描述，WSS 和 AI 输出用版本化 JSON Schema 描述。
 

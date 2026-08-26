@@ -28,6 +28,9 @@
       "$ref": "#/$defs/contactRelationshipEnvelope"
     },
     {
+      "$ref": "#/$defs/contactRequestEnvelope"
+    },
+    {
       "$ref": "#/$defs/aiJobEnvelope"
     },
     {
@@ -215,6 +218,24 @@
             },
             "body": {
               "$ref": "#/$defs/relationshipBody"
+            }
+          }
+        }
+      ]
+    },
+    "contactRequestEnvelope": {
+      "allOf": [
+        {
+          "$ref": "#/$defs/baseEnvelope"
+        },
+        {
+          "type": "object",
+          "properties": {
+            "operation": {
+              "const": "contact.request.created"
+            },
+            "body": {
+              "$ref": "#/$defs/contactRequestBody"
             }
           }
         }
@@ -479,6 +500,15 @@
       "required": ["conversationId", "syncSeq"],
       "properties": {
         "conversationId": { "type": "string", "format": "uuid" },
+        "syncSeq": { "type": "integer", "minimum": 1 }
+      }
+    },
+    "contactRequestBody": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["requestId", "syncSeq"],
+      "properties": {
+        "requestId": { "type": "string", "format": "uuid" },
         "syncSeq": { "type": "integer", "minimum": 1 }
       }
     },

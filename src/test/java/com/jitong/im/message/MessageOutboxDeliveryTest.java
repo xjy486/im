@@ -159,6 +159,32 @@ class MessageOutboxDeliveryTest {
     }
 
     @Test
+    void delivers_contact_request_events_over_websocket_without_content() throws Exception {
+        OutboxRecord record = record("CONTACT_REQUEST_CREATED");
+        WebSocketSession session = mock(WebSocketSession.class);
+        AtomicReference<String> payload = new AtomicReference<>();
+        when(messageRepository.findUserIdForDevice(record.targetDeviceId())).thenReturn(UUID.randomUUID());
+        when(session.isOpen()).thenReturn(true);
+        doAnswer(invocation -> {
+            org.springframework.web.socket.TextMessage message = invocation.getArgument(0);
+            payload.set(message.getPayload());
+            return null;
+        }).when(session).sendMessage(any());
+        delivery.register(record.targetDeviceId(), session);
+
+        assertThat(delivery.deliver(record)).isTrue();
+
+        JsonNode envelope = objectMapper.readTree(payload.get());
+        assertThat(envelope.get("operation").asText())
+                .isEqualTo("contact.request.created");
+        assertThat(envelope.get("body").get("requestId").asText())
+                .isEqualTo(record.entityId().toString());
+        assertThat(envelope.get("body").get("syncSeq").asLong())
+                .isEqualTo(record.syncSeq());
+        verifyNoInteractions(fcmSender);
+    }
+
+    @Test
     void clears_a_permanently_invalid_token_without_revoking_the_device() {
         OutboxRecord record = record("MESSAGE_CREATED");
         when(messageRepository.findUserIdForDevice(record.targetDeviceId())).thenReturn(UUID.randomUUID());

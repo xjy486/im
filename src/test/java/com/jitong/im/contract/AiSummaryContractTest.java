@@ -123,7 +123,7 @@ class AiSummaryContractTest extends ContractTestEnvironment {
                 "/api/v1/conversations/" + conversationId + "/ai/summary",
                 HttpMethod.POST,
                 aliceToken,
-                Map.of("requestId", UUID.randomUUID(), "afterSeq", 0, "untilSeq", 1))
+                Map.of("requestId", UUID.randomUUID(), "afterSeq", 0, "untilSeq", 2))
                 .getStatusCode()).isEqualTo(HttpStatus.FORBIDDEN);
 
         assertThat(exchange(
@@ -138,7 +138,7 @@ class AiSummaryContractTest extends ContractTestEnvironment {
                 "/api/v1/conversations/" + conversationId + "/ai/summary",
                 HttpMethod.POST,
                 aliceToken,
-                Map.of("requestId", requestId, "afterSeq", 0, "untilSeq", 2))
+                Map.of("requestId", requestId, "afterSeq", 0, "untilSeq", 3))
                 .getBody();
         UUID jobId = UUID.fromString(queued.get("jobId").asText());
         assertThat(queued.get("status").asText()).isEqualTo("QUEUED");
@@ -392,12 +392,12 @@ class AiSummaryContractTest extends ContractTestEnvironment {
                     "/api/v1/conversations/" + bobConversation + "/ai/summary",
                     HttpMethod.POST,
                     aliceToken,
-                    Map.of("requestId", UUID.randomUUID(), "afterSeq", 0, "untilSeq", 1)));
+                    Map.of("requestId", UUID.randomUUID(), "afterSeq", 0, "untilSeq", 2)));
             calls.add(() -> exchange(
                     "/api/v1/conversations/" + carolConversation + "/ai/summary",
                     HttpMethod.POST,
                     aliceToken,
-                    Map.of("requestId", UUID.randomUUID(), "afterSeq", 0, "untilSeq", 1)));
+                    Map.of("requestId", UUID.randomUUID(), "afterSeq", 0, "untilSeq", 2)));
 
             List<ResponseEntity<JsonNode>> responses = executor.invokeAll(calls).stream()
                     .map(future -> {
@@ -1204,7 +1204,12 @@ class AiSummaryContractTest extends ContractTestEnvironment {
                 aliceToken,
                 null).getBody().get("result");
         assertThat(result.get("replies")).hasSize(3);
-        assertThat(jdbc.sql("SELECT COUNT(*) FROM messages WHERE conversation_id = :conversationId")
+        assertThat(jdbc.sql("""
+                        SELECT COUNT(*)
+                        FROM messages
+                        WHERE conversation_id = :conversationId
+                          AND type <> 'SYSTEM'
+                        """)
                 .param("conversationId", conversationId)
                 .query(Long.class)
                 .single()).isEqualTo(1);
@@ -1215,7 +1220,12 @@ class AiSummaryContractTest extends ContractTestEnvironment {
                 Map.of("clientMsgId", UUID.randomUUID(), "text", "Yes — I can join after 10:00."));
         assertThat(sent.get("senderId").asText()).isEqualTo(alice.userId().toString());
         assertThat(sent.get("text").asText()).isEqualTo("Yes — I can join after 10:00.");
-        assertThat(jdbc.sql("SELECT COUNT(*) FROM messages WHERE conversation_id = :conversationId")
+        assertThat(jdbc.sql("""
+                        SELECT COUNT(*)
+                        FROM messages
+                        WHERE conversation_id = :conversationId
+                          AND type <> 'SYSTEM'
+                        """)
                 .param("conversationId", conversationId)
                 .query(Long.class)
                 .single()).isEqualTo(2);
@@ -1549,7 +1559,7 @@ class AiSummaryContractTest extends ContractTestEnvironment {
                 "/api/v1/conversations/" + conversationId + "/ai/summary",
                 HttpMethod.POST,
                 token,
-                Map.of("requestId", UUID.randomUUID(), "afterSeq", 0, "untilSeq", untilSeq));
+                Map.of("requestId", UUID.randomUUID(), "afterSeq", 0, "untilSeq", untilSeq + 1));
     }
 
     private SentImage sendImage(

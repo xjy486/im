@@ -100,11 +100,18 @@ class AccountDeletionContractTest extends ContractTestEnvironment {
         assertThat(conversation.get("status").asText()).isEqualTo("READ_ONLY");
         assertThat(conversation.get("peerDisplayName").asText()).isEqualTo("已注销用户");
 
-        JsonNode history = exchange(
+        JsonNode history = null;
+        for (JsonNode candidate : exchange(
                 HttpMethod.GET,
                 "/api/v1/conversations/" + conversationId + "/messages?afterSeq=0&limit=200",
                 bobToken,
-                null).getBody().get("messages").get(0);
+                null).getBody().get("messages")) {
+            if ("TEXT".equals(candidate.get("type").asText())) {
+                history = candidate;
+                break;
+            }
+        }
+        assertThat(history).isNotNull();
         assertThat(history.get("messageId").asText()).isEqualTo(message.get("messageId").asText());
         assertThat(history.get("senderDisplayName").asText()).isEqualTo("已注销用户");
         assertThat(exchange(

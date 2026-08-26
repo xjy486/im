@@ -14,6 +14,7 @@ internal fun LocalMessageEntity.groupMessageText(): String =
                 "GROUP_PROFILE_UPDATED" -> "群资料已更新"
                 "AI_POLICY_CHANGED" -> "群 AI 策略已更新"
                 "GROUP_DISSOLVED" -> "群聊已解散"
+                "CONTACT_ESTABLISHED" -> "你们已经成功加上好友了"
                 else -> "群系统事件：${systemEventType ?: "UNKNOWN"}"
             }
             buildString {

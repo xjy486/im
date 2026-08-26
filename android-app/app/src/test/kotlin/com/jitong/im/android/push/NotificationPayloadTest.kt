@@ -18,6 +18,18 @@ class NotificationPayloadTest {
     }
 
     @Test
+    fun accepts_content_free_contact_request_payload() {
+        val payload = NotificationPayload.from(
+            mapOf(
+                "version" to "1",
+                "type" to "CONTACT_REQUEST",
+            ),
+        )
+
+        assertEquals("CONTACT_REQUEST", payload?.type)
+    }
+
+    @Test
     fun rejects_payloads_with_unknown_type_or_version() {
         assertNull(NotificationPayload.from(mapOf("version" to "1", "type" to "MESSAGE_BODY")))
         assertNull(NotificationPayload.from(mapOf("version" to "2", "type" to "NEW_MESSAGE")))

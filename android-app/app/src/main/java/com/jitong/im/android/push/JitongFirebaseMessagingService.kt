@@ -14,13 +14,17 @@ internal class JitongFirebaseMessagingService : FirebaseMessagingService() {
         val payload = NotificationPayload.from(message.data) ?: return
         val application = application as? JitongApplication
         if (payload.type == "PROFILE_CHANGED") {
-            application?.containerOrNull()?.handleNotification("PROFILE_CHANGED")
+            application?.containerOrNull()?.handleNotification(payload.type)
             return
+        }
+        if (payload.type == "CONTACT_REQUEST") {
+            application?.containerOrNull()?.handleNotification(payload.type)
         }
         NotificationChannels.ensure(this)
         val notificationId = (System.currentTimeMillis() and 0x7fffffff).toInt()
         val intent = Intent(this, NotificationClickActivity::class.java).apply {
             flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP
+            putExtra("notification_type", payload.type)
         }
         val pendingIntent = PendingIntent.getActivity(
             this,
@@ -33,7 +37,13 @@ internal class JitongFirebaseMessagingService : FirebaseMessagingService() {
             NotificationCompat.Builder(this, NotificationChannels.NEW_MESSAGE)
                 .setSmallIcon(R.drawable.ic_launcher_foreground)
                 .setContentTitle("即通")
-                .setContentText("你有一条新消息，点击查看")
+                .setContentText(
+                    if (payload.type == "CONTACT_REQUEST") {
+                        "你收到一条好友申请，点击查看"
+                    } else {
+                        "你有一条新消息，点击查看"
+                    },
+                )
                 .setAutoCancel(true)
                 .setContentIntent(pendingIntent)
                 .build(),

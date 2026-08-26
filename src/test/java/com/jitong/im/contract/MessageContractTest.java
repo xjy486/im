@@ -61,7 +61,9 @@ class MessageContractTest extends ContractTestEnvironment {
         AtomicReference<JsonNode> peerBody = new AtomicReference<>();
         OkHttpClient client = new OkHttpClient();
         WebSocket peer = openWebSocket(client, bobToken, operation -> {
-            if ("message.created".equals(operation.get("operation").asText())) {
+            if ("message.created".equals(operation.get("operation").asText())
+                    && !"CONTACT_ESTABLISHED".equals(
+                            operation.get("body").path("systemEventType").asText())) {
                 peerBody.set(operation.get("body"));
                 peerEvent.countDown();
             }
@@ -85,7 +87,7 @@ class MessageContractTest extends ContractTestEnvironment {
         assertThat(ack.await(5, TimeUnit.SECONDS)).isTrue();
         assertThat(peerEvent.await(5, TimeUnit.SECONDS)).isTrue();
         assertThat(ackBody.get().get("clientMsgId").asText()).isEqualTo(clientMsgId.toString());
-        assertThat(peerBody.get().get("conversationSeq").asLong()).isEqualTo(1);
+        assertThat(peerBody.get().get("conversationSeq").asLong()).isEqualTo(2);
         assertThat(peerBody.get().get("text").asText()).isEqualTo("websocket hello");
         sender.close(1000, "test complete");
         peer.close(1000, "test complete");
@@ -125,24 +127,37 @@ class MessageContractTest extends ContractTestEnvironment {
                 aliceToken,
                 Map.of("clientMsgId", UUID.randomUUID(), "text", "second"));
 
-        assertThat(first.get("conversationSeq").asLong()).isEqualTo(1);
+        assertThat(first.get("conversationSeq").asLong()).isEqualTo(2);
         assertThat(retry.get("messageId").asText()).isEqualTo(first.get("messageId").asText());
-        assertThat(retry.get("conversationSeq").asLong()).isEqualTo(1);
-        assertThat(second.get("conversationSeq").asLong()).isEqualTo(2);
+        assertThat(retry.get("conversationSeq").asLong()).isEqualTo(2);
+        assertThat(second.get("conversationSeq").asLong()).isEqualTo(3);
 
         JsonNode history = exchange(
                 HttpMethod.GET,
                 "/api/v1/conversations/" + conversationId + "/messages?afterSeq=0&limit=200",
                 bobToken,
                 null).getBody();
-        assertThat(history.get("messages")).hasSize(2);
-        assertThat(history.get("messages").get(0).get("conversationSeq").asLong()).isEqualTo(1);
+        assertThat(history.get("messages")).hasSize(3);
+        assertThat(history.get("messages").get(0).get("type").asText()).isEqualTo("SYSTEM");
+        assertThat(history.get("messages").get(0).get("systemEventType").asText())
+                .isEqualTo("CONTACT_ESTABLISHED");
         assertThat(history.get("messages").get(1).get("conversationSeq").asLong()).isEqualTo(2);
+        assertThat(history.get("messages").get(2).get("conversationSeq").asLong()).isEqualTo(3);
 
         assertThat(exchangeVoid(
                 HttpMethod.DELETE,
                 "/api/v1/contacts/" + bob.userId(),
                 aliceToken).getStatusCode()).isEqualTo(HttpStatus.NO_CONTENT);
+        assertThat(exchange(
+                HttpMethod.GET,
+                "/api/v1/contacts",
+                aliceToken,
+                null).getBody()).isEmpty();
+        assertThat(exchange(
+                HttpMethod.GET,
+                "/api/v1/contacts",
+                bobToken,
+                null).getBody()).isEmpty();
         ResponseEntity<JsonNode> rejectedRetry = exchange(
                 HttpMethod.POST,
                 "/api/v1/conversations/" + conversationId + "/messages",
@@ -150,6 +165,13 @@ class MessageContractTest extends ContractTestEnvironment {
                 Map.of("clientMsgId", clientMsgId, "text", "first"));
         assertThat(rejectedRetry.getStatusCode()).isEqualTo(HttpStatus.FORBIDDEN);
         assertThat(rejectedRetry.getBody().get("code").asText()).isEqualTo("NOT_CONTACT");
+        ResponseEntity<JsonNode> rejectedPeerSend = exchange(
+                HttpMethod.POST,
+                "/api/v1/conversations/" + conversationId + "/messages",
+                bobToken,
+                Map.of("clientMsgId", UUID.randomUUID(), "text", "peer cannot send"));
+        assertThat(rejectedPeerSend.getStatusCode()).isEqualTo(HttpStatus.FORBIDDEN);
+        assertThat(rejectedPeerSend.getBody().get("code").asText()).isEqualTo("NOT_CONTACT");
     }
 
     @Test

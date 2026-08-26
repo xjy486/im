@@ -7,6 +7,7 @@ import com.jitong.im.audit.AuditSubjectType;
 import com.jitong.im.audit.SecurityAuditEvent;
 import com.jitong.im.audit.SecurityAuditEventType;
 import com.jitong.im.audit.SecurityAuditSink;
+import com.jitong.im.message.ContactMessageService;
 import com.jitong.im.sync.SyncService;
 import org.springframework.beans.factory.annotation.Autowired;
 import com.jitong.im.platform.error.ApiErrorDefinition;
@@ -29,6 +30,7 @@ public class ContactService {
     private final ContactRateLimiter rateLimiter;
     private final SecurityAuditSink auditSink;
     private final SyncService syncService;
+    private final ContactMessageService contactMessageService;
     private final Clock clock;
 
     @Autowired
@@ -37,9 +39,17 @@ public class ContactService {
             AuthService authService,
             ContactRateLimiter rateLimiter,
             SecurityAuditSink auditSink,
-            SyncService syncService
+            SyncService syncService,
+            ContactMessageService contactMessageService
     ) {
-        this(repository, authService, rateLimiter, auditSink, syncService, Clock.systemUTC());
+        this(
+                repository,
+                authService,
+                rateLimiter,
+                auditSink,
+                syncService,
+                contactMessageService,
+                Clock.systemUTC());
     }
 
     ContactService(
@@ -48,6 +58,7 @@ public class ContactService {
             ContactRateLimiter rateLimiter,
             SecurityAuditSink auditSink,
             SyncService syncService,
+            ContactMessageService contactMessageService,
             Clock clock
     ) {
         this.repository = repository;
@@ -55,6 +66,7 @@ public class ContactService {
         this.rateLimiter = rateLimiter;
         this.auditSink = auditSink;
         this.syncService = syncService;
+        this.contactMessageService = contactMessageService;
         this.clock = clock;
     }
 
@@ -70,6 +82,7 @@ public class ContactService {
                 rateLimiter,
                 event -> {
                 },
+                null,
                 null,
                 clock);
     }
@@ -177,6 +190,7 @@ public class ContactService {
                 recipientId,
                 request.verification() == null ? "" : request.verification(),
                 now.plus(REQUEST_LIFETIME));
+        recordContactRequestCreated(recipientId, created.id());
         return response(created, null);
     }
 
@@ -329,6 +343,17 @@ public class ContactService {
                 conversationId);
     }
 
+    private void recordContactRequestCreated(UUID recipientId, UUID requestId) {
+        if (syncService == null) {
+            return;
+        }
+        syncService.recordEventForUsers(
+                List.of(recipientId),
+                "CONTACT_REQUEST_CREATED",
+                requestId,
+                null);
+    }
+
     public boolean canSendC2c(UUID senderId, UUID recipientId) {
         ContactRepository.ContactRecord contact = !senderId.equals(recipientId)
                 ? repository.findContact(senderId, recipientId)
@@ -352,7 +377,14 @@ public class ContactService {
             repository.updateRequestStatus(request.id(), "ACCEPTED", now);
         }
         repository.upsertActiveContact(firstUserId, secondUserId);
-        return repository.findOrCreateConversation(firstUserId, secondUserId);
+        UUID conversationId = repository.findOrCreateConversation(firstUserId, secondUserId);
+        contactMessageService.recordEstablished(
+                conversationId,
+                firstUserId,
+                secondUserId,
+                now);
+        recordRelationshipChange(List.of(firstUserId, secondUserId), conversationId);
+        return conversationId;
     }
 
     private ContactRepository.ContactRequestRecord lockAndLoadRequest(UUID requestId) {

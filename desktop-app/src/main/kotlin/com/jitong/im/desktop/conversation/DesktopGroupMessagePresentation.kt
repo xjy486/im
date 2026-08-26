@@ -14,6 +14,7 @@ internal fun LocalMessage.groupMessageText(): String =
                 "GROUP_PROFILE_UPDATED" -> "Group profile updated"
                 "AI_POLICY_CHANGED" -> "Group AI policy updated"
                 "GROUP_DISSOLVED" -> "Group dissolved"
+                "CONTACT_ESTABLISHED" -> "You are now contacts"
                 else -> "Group system event: ${systemEventType ?: "UNKNOWN"}"
             }
             buildString {

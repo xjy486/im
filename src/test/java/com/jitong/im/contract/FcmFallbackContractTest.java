@@ -65,6 +65,26 @@ class FcmFallbackContractTest extends ContractTestEnvironment {
         verify(fcmSender, timeout(5_000)).sendNewMessage("bob-fcm-token");
     }
 
+    @Test
+    void sends_a_contact_request_fcm_prompt_when_a_mobile_device_has_no_websocket() throws Exception {
+        when(fcmSender.sendContactRequest(anyString())).thenReturn(FcmDeliveryResult.SENT);
+
+        TestUser alice = createUser("FCM request sender");
+        TestUser bob = createUser("FCM request receiver");
+        String aliceToken = login(alice.accountNo(), "fcm-request-alice-installation");
+        String bobToken = login(bob.accountNo(), "fcm-request-bob-installation");
+        registerPushToken(bobToken, "bob-request-fcm-token", 1);
+
+        ResponseEntity<JsonNode> response = exchange(
+                HttpMethod.POST,
+                "/api/v1/contact-requests",
+                aliceToken,
+                Map.of("accountNo", bob.accountNo(), "verification", ""));
+        assertThat(response.getStatusCode()).isEqualTo(HttpStatus.OK);
+
+        verify(fcmSender, timeout(5_000)).sendContactRequest("bob-request-fcm-token");
+    }
+
     private TestUser createUser(String displayName) throws Exception {
         HttpHeaders headers = jsonHeaders();
         headers.set("X-Admin-Api-Key", ContractDependencies.ADMIN_API_KEY);

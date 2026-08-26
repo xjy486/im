@@ -14,6 +14,7 @@ import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 
 import java.util.Map;
+import java.util.List;
 import java.util.UUID;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -86,6 +87,90 @@ class ContactContractTest extends ContractTestEnvironment {
                 bobToken,
                 null);
         assertThat(oldRequest.getStatusCode()).isEqualTo(HttpStatus.CONFLICT);
+    }
+
+    @Test
+    void notifies_the_recipient_when_a_contact_request_is_created() throws Exception {
+        TestUser alice = createUser("Alice");
+        TestUser bob = createUser("Bob");
+        String aliceToken = login(alice.accountNo(), "alice-request-notification");
+        String bobToken = login(bob.accountNo(), "bob-request-notification");
+
+        long bobBeforeRequest = syncHighWatermark(bobToken);
+        JsonNode request = createRequest(aliceToken, bob.accountNo());
+        UUID requestId = UUID.fromString(request.get("requestId").asText());
+
+        JsonNode bobRequests = exchange(
+                HttpMethod.GET,
+                "/api/v1/contact-requests",
+                bobToken,
+                null).getBody();
+        assertThat(bobRequests)
+                .anySatisfy(item -> {
+                    assertThat(item.get("requestId").asText()).isEqualTo(requestId.toString());
+                    assertThat(item.get("incoming").asBoolean()).isTrue();
+                    assertThat(item.get("status").asText()).isEqualTo("PENDING");
+                });
+
+        JsonNode bobSync = exchange(
+                HttpMethod.GET,
+                "/api/v1/sync?after=" + bobBeforeRequest + "&limit=200",
+                bobToken,
+                null).getBody();
+        assertThat(syncEvents(bobSync))
+                .anySatisfy(event -> {
+                    assertThat(event.get("eventType").asText())
+                            .isEqualTo("CONTACT_REQUEST_CREATED");
+                    assertThat(event.get("entityId").asText())
+                            .isEqualTo(requestId.toString());
+                    assertThat(event.get("conversationId").isNull()).isTrue();
+                });
+    }
+
+    @Test
+    void accepting_a_contact_creates_a_shared_success_system_message_and_updates_both_relationships()
+            throws Exception {
+        TestUser alice = createUser("Alice");
+        TestUser bob = createUser("Bob");
+        String aliceToken = login(alice.accountNo(), "alice-accept-notification");
+        String bobToken = login(bob.accountNo(), "bob-accept-notification");
+
+        JsonNode request = createRequest(aliceToken, bob.accountNo());
+        UUID requestId = UUID.fromString(request.get("requestId").asText());
+        long aliceBeforeAccept = syncHighWatermark(aliceToken);
+        long bobBeforeAccept = syncHighWatermark(bobToken);
+
+        JsonNode accepted = exchange(
+                HttpMethod.POST,
+                "/api/v1/contact-requests/" + requestId + "/accept",
+                bobToken,
+                null).getBody();
+        UUID conversationId = UUID.fromString(accepted.get("conversationId").asText());
+
+        for (String token : List.of(aliceToken, bobToken)) {
+            JsonNode history = exchange(
+                    HttpMethod.GET,
+                    "/api/v1/conversations/" + conversationId + "/messages?afterSeq=0&limit=200",
+                    token,
+                    null).getBody();
+            assertThat(history.get("messages")).hasSize(1);
+            JsonNode welcome = history.get("messages").get(0);
+            assertThat(welcome.get("type").asText()).isEqualTo("SYSTEM");
+            assertThat(welcome.get("systemEventType").asText()).isEqualTo("CONTACT_ESTABLISHED");
+        }
+
+        for (Map.Entry<String, Long> entry : Map.of(
+                aliceToken, aliceBeforeAccept,
+                bobToken, bobBeforeAccept).entrySet()) {
+            JsonNode sync = exchange(
+                    HttpMethod.GET,
+                    "/api/v1/sync?after=" + entry.getValue() + "&limit=200",
+                    entry.getKey(),
+                    null).getBody();
+            assertThat(syncEvents(sync))
+                    .extracting(event -> event.get("eventType").asText())
+                    .contains("CONTACT_RELATIONSHIP_CHANGED", "MESSAGE_CREATED");
+        }
     }
 
     @Test
@@ -279,6 +364,20 @@ class ContactContractTest extends ContractTestEnvironment {
                 "/api/v1/contact-requests",
                 token,
                 Map.of("accountNo", accountNo, "verification", "hello")).getBody();
+    }
+
+    private long syncHighWatermark(String token) {
+        return exchange(
+                HttpMethod.GET,
+                "/api/v1/sync?after=0&until=0",
+                token,
+                null).getBody().get("highWatermark").asLong();
+    }
+
+    private List<JsonNode> syncEvents(JsonNode page) {
+        List<JsonNode> events = new java.util.ArrayList<>();
+        page.get("events").forEach(events::add);
+        return events;
     }
 
     private ResponseEntity<JsonNode> exchange(

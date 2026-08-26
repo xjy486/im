@@ -13,6 +13,12 @@ final class FcmPayload {
                 "type", "NEW_MESSAGE");
     }
 
+    static Map<String, String> contactRequestData() {
+        return Map.of(
+                "version", "1",
+                "type", "CONTACT_REQUEST");
+    }
+
     static Map<String, String> profileChangedData() {
         return Map.of(
                 "version", "1",

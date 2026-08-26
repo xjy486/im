@@ -44,6 +44,7 @@ internal class MessageRepository(
     private var automaticSendingEnabled = false
     internal val searchInvalidations = MutableSharedFlow<Unit>(extraBufferCapacity = 1)
     internal val relationshipChanges = MutableSharedFlow<UUID>(extraBufferCapacity = 8)
+    internal val contactRequestChanges = MutableSharedFlow<Unit>(extraBufferCapacity = 8)
 
     suspend fun search(
         query: String,
@@ -218,6 +219,9 @@ internal class MessageRepository(
                         applyConversationSummary(it)
                         relationshipChanges.tryEmit(it.conversationId)
                     }
+            }
+            if (page.events.any { it.eventType == "CONTACT_REQUEST_CREATED" }) {
+                contactRequestChanges.tryEmit(Unit)
             }
             if (page.events.any { it.eventType.startsWith("AI_") }) {
                 refreshAiData()
@@ -1121,6 +1125,29 @@ internal class MessageRepository(
             syncApi.acknowledge(SyncAckRequest(syncSeq)).syncBodyOrThrow()
             return
         }
+        if (event.operation == "contact.request.created") {
+            val syncSeq = body.syncSeq ?: return
+            val lastSyncSeq = withContext(Dispatchers.IO) {
+                db.syncStateDao().current()?.lastSyncSeq ?: 0L
+            }
+            if (syncSeq <= lastSyncSeq) return
+            if (syncSeq != lastSyncSeq + 1) {
+                synchronize(currentUserId, syncSeq)
+                return
+            }
+            withContext(Dispatchers.IO) {
+                db.syncStateDao().upsert(
+                    SyncStateEntity(
+                        deviceId = deviceId()?.toString().orEmpty(),
+                        lastSyncSeq = syncSeq,
+                        lastFullRestoreAt = db.syncStateDao().current()?.lastFullRestoreAt,
+                    ),
+                )
+            }
+            contactRequestChanges.tryEmit(Unit)
+            syncApi.acknowledge(SyncAckRequest(syncSeq)).syncBodyOrThrow()
+            return
+        }
         if (event.operation == "conversation.read") {
             val conversationId = body.conversationId ?: return
             val userId = body.userId ?: return
@@ -1270,6 +1297,12 @@ internal class MessageRepository(
                             localMediaPath = null,
                             serverAcceptedAt = body.serverAcceptedAt,
                             recalledAt = body.recalledAt,
+                            systemEventType = body.systemEventType,
+                            systemTargetUserId = body.systemTargetUserId?.toString(),
+                            systemRole = body.systemRole,
+                            moderatedByUserId = body.moderatedByUserId?.toString(),
+                            moderatedReason = body.moderatedReason,
+                            moderatedAt = body.moderatedAt,
                             createdAt = existing?.createdAt ?: System.currentTimeMillis(),
                         ),
                     )

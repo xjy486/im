@@ -34,6 +34,19 @@ class GroupMessagePresentationTest {
         )
     }
 
+    @Test
+    fun renders_contact_established_as_the_success_message() {
+        val message = message(
+            type = "SYSTEM",
+            systemEventType = "CONTACT_ESTABLISHED",
+        )
+
+        assertEquals(
+            "你们已经成功加上好友了",
+            message.groupMessageText(),
+        )
+    }
+
     private fun message(
         type: String = "TEXT",
         state: String = "ACTIVE",

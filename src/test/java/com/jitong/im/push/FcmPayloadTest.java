@@ -22,4 +22,12 @@ class FcmPayloadTest {
                 "type", "PROFILE_CHANGED"));
     }
 
+    @Test
+    void contact_request_payload_contains_only_version_and_event_type() {
+        assertThat(FcmPayload.contactRequestData())
+                .containsExactlyInAnyOrderEntriesOf(java.util.Map.of(
+                        "version", "1",
+                        "type", "CONTACT_REQUEST"));
+    }
+
 }

@@ -4,5 +4,7 @@ public interface FcmSender {
 
     FcmDeliveryResult sendNewMessage(String token);
 
+    FcmDeliveryResult sendContactRequest(String token);
+
     FcmDeliveryResult sendProfileChanged(String token);
 }

@@ -35,6 +35,11 @@ class ConfiguredFcmSender implements FcmSender {
     }
 
     @Override
+    public FcmDeliveryResult sendContactRequest(String token) {
+        return send(token, FcmPayload.contactRequestData());
+    }
+
+    @Override
     public FcmDeliveryResult sendProfileChanged(String token) {
         return send(token, FcmPayload.profileChangedData());
     }

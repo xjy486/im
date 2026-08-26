@@ -12,6 +12,8 @@ import com.jitong.im.android.message.MessageRepository
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.merge
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.launch
 import java.util.UUID
 
@@ -34,7 +36,10 @@ internal class ContactViewModel(
 
     init {
         viewModelScope.launch {
-            messageRepository.relationshipChanges.collect {
+            merge(
+                messageRepository.relationshipChanges.map { Unit },
+                messageRepository.contactRequestChanges,
+            ).collect {
                 runCatching { refreshData() }
             }
         }
