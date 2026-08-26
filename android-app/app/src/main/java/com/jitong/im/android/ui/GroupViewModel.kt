@@ -103,7 +103,10 @@ internal class GroupViewModel(
         }
         launchRequest {
             repository.addMember(group.conversationId, accountNo)
-            _state.value = _state.value.copy(directInviteAccountNo = "")
+            _state.value = _state.value.copy(
+                directInviteAccountNo = "",
+                message = "已邀请成员加入群聊",
+            )
             refreshMembersIfLoaded(group.conversationId)
             refreshData()
         }
@@ -209,12 +212,13 @@ internal class GroupViewModel(
             _state.value = _state.value.copy(message = "只有群主或管理员可以打开群管理")
             return
         }
+        _state.value = _state.value.copy(
+            name = group.name,
+            description = group.description,
+            visibility = group.visibility,
+            message = null,
+        )
         launchRequest {
-            _state.value = _state.value.copy(
-                name = group.name,
-                description = group.description,
-                visibility = group.visibility,
-            )
             refreshMembers(group.conversationId)
         }
     }

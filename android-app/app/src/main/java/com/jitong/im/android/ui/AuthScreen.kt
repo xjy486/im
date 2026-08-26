@@ -1431,8 +1431,9 @@ private fun GroupCreateContent(state: GroupUiState, viewModel: GroupViewModel) {
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-private fun GroupManagementSheet(group: GroupSummary, state: GroupUiState, viewModel: GroupViewModel, onDismiss: () -> Unit) {
+internal fun GroupManagementSheet(group: GroupSummary, state: GroupUiState, viewModel: GroupViewModel, onDismiss: () -> Unit) {
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
+    var showDirectInviteDialog by rememberSaveable { mutableStateOf(false) }
     LaunchedEffect(group.conversationId) { viewModel.loadMembers(group) }
     ModalBottomSheet(onDismissRequest = onDismiss, sheetState = sheetState) {
         Column(Modifier.fillMaxWidth().verticalScroll(rememberScrollState()).padding(horizontal = 20.dp).padding(bottom = 28.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
@@ -1444,11 +1445,33 @@ private fun GroupManagementSheet(group: GroupSummary, state: GroupUiState, viewM
                 IconButton(onClick = onDismiss) { Icon(Icons.Outlined.Close, contentDescription = "关闭") }
             }
             if (GroupGovernancePolicy.canEditProfile(group.role)) {
-                OutlinedTextField(state.name.ifBlank { group.name }, viewModel::setName, label = { Text("群名称") }, singleLine = true, modifier = Modifier.fillMaxWidth())
-                OutlinedTextField(state.description.ifBlank { group.description }, viewModel::setDescription, label = { Text("群简介") }, modifier = Modifier.fillMaxWidth())
-                Button(onClick = { viewModel.updateProfile(group) }, modifier = Modifier.fillMaxWidth()) { Text("保存群资料") }
+                OutlinedTextField(
+                    value = state.name,
+                    onValueChange = viewModel::setName,
+                    label = { Text("群名称") },
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth(),
+                )
+                OutlinedTextField(
+                    value = state.description,
+                    onValueChange = viewModel::setDescription,
+                    label = { Text("群简介") },
+                    modifier = Modifier.fillMaxWidth(),
+                )
+                Button(
+                    onClick = { viewModel.updateProfile(group) },
+                    enabled = state.name.isNotBlank() && !state.loading,
+                    modifier = Modifier.fillMaxWidth(),
+                ) { Text("保存群资料") }
             }
-            SettingsRow(Icons.Outlined.GroupAdd, "邀请成员", "直接邀请账号加入群聊", onClick = {})
+            if (GroupGovernancePolicy.canEditProfile(group.role)) {
+                SettingsRow(
+                    Icons.Outlined.GroupAdd,
+                    "邀请成员",
+                    "直接邀请账号加入群聊",
+                    onClick = { showDirectInviteDialog = true },
+                )
+            }
             if (GroupGovernancePolicy.canApproveJoinRequests(group.role)) {
                 val pending = state.joinRequests.count { it.conversationId == group.conversationId && it.status == "PENDING" }
                 SettingsRow(Icons.Outlined.Check, "入群审批", if (pending == 0) "暂无待处理申请" else "$pending 条待处理申请", onClick = { viewModel.loadJoinRequests(group) })
@@ -1466,6 +1489,68 @@ private fun GroupManagementSheet(group: GroupSummary, state: GroupUiState, viewM
             }
         }
     }
+    if (showDirectInviteDialog) {
+        DirectInviteDialog(
+            accountNo = state.directInviteAccountNo,
+            loading = state.loading,
+            message = state.message,
+            onAccountNoChange = viewModel::setDirectInviteAccountNo,
+            onInvite = { viewModel.directInvite(group) },
+            onDismiss = {
+                if (!state.loading) {
+                    showDirectInviteDialog = false
+                    viewModel.setDirectInviteAccountNo("")
+                }
+            },
+        )
+    }
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun DirectInviteDialog(
+    accountNo: String,
+    loading: Boolean,
+    message: String?,
+    onAccountNoChange: (String) -> Unit,
+    onInvite: () -> Unit,
+    onDismiss: () -> Unit,
+) {
+    AlertDialog(
+        onDismissRequest = { if (!loading) onDismiss() },
+        title = { Text("邀请成员") },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Text("输入对方的 11 位账号，直接加入群聊。", color = JitongColors.secondaryText)
+                OutlinedTextField(
+                    value = accountNo,
+                    onValueChange = onAccountNoChange,
+                    label = { Text("成员账号") },
+                    singleLine = true,
+                    enabled = !loading,
+                )
+                message?.let { Text(it, color = JitongColors.secondaryText) }
+            }
+        },
+        confirmButton = {
+            Button(
+                onClick = onInvite,
+                enabled = accountNo.matches(Regex("[1-9][0-9]{10}")) && !loading,
+            ) {
+                if (loading) {
+                    CircularProgressIndicator(
+                        modifier = Modifier.size(20.dp),
+                        strokeWidth = 2.dp,
+                    )
+                } else {
+                    Text("发送邀请")
+                }
+            }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss, enabled = !loading) { Text("取消") }
+        },
+    )
 }
 
 @OptIn(ExperimentalMaterial3Api::class)
