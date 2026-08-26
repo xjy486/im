@@ -70,7 +70,7 @@ internal class AiViewModel(
         _state.value = _state.value.copy(
             consentEnabled = consent.enabled,
             enabledForBoth = consent.enabledForBoth,
-            message = if (consent.enabledForBoth) "双方已开启私人 AI" else "已更新，等待对方同意",
+            message = null,
         )
     }
 
