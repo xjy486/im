@@ -72,6 +72,21 @@ internal class AvatarViewModel(
         }
     }
 
+    fun updateDisplayName(displayName: String) {
+        val normalizedDisplayName = displayName.trim()
+        if (normalizedDisplayName.isEmpty()) return
+        viewModelScope.launch {
+            _state.value = _state.value.copy(loading = true, message = null)
+            runCatching {
+                val profile = repository.updateUserProfile(normalizedDisplayName)
+                _state.value = _state.value.copy(profile = profile)
+            }.onFailure {
+                _state.value = _state.value.copy(message = "账户名更新失败")
+            }
+            _state.value = _state.value.copy(loading = false)
+        }
+    }
+
     suspend fun loadUserAvatar(userId: java.util.UUID, avatarVersion: Long): ByteArray? =
         repository.loadUserAvatar(userId, avatarVersion)
 

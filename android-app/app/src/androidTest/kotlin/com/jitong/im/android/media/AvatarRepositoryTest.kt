@@ -100,6 +100,10 @@ class AvatarRepositoryTest {
 
         override suspend fun removeAvatar(): Response<Void> = error("not used")
 
+        override suspend fun updateProfile(
+            request: UserProfileUpdateRequest,
+        ): Response<AvatarProfileResponse> = error("not used")
+
         override suspend fun downloadAvatar(
             userId: UUID,
             variant: String,

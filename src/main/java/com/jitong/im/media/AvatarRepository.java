@@ -20,7 +20,7 @@ class AvatarRepository {
 
     AvatarOwner findUserForUpdate(UUID userId) {
         return jdbc.sql("""
-                        SELECT id, avatar_media_id, avatar_version
+                        SELECT id, display_name, avatar_media_id, avatar_version
                         FROM users
                         WHERE id = :userId AND status = 'ACTIVE'
                         FOR UPDATE
@@ -28,6 +28,7 @@ class AvatarRepository {
                 .param("userId", userId)
                 .query((row, rowNum) -> new AvatarOwner(
                         row.getObject("id", UUID.class),
+                        row.getString("display_name"),
                         row.getObject("avatar_media_id", UUID.class),
                         row.getLong("avatar_version")))
                 .optional()
@@ -86,6 +87,17 @@ class AvatarRepository {
                         """)
                 .param("userId", userId)
                 .param("avatarVersion", nextVersion)
+                .update();
+    }
+
+    void updateUserDisplayName(UUID userId, String displayName) {
+        jdbc.sql("""
+                        UPDATE users
+                        SET display_name = :displayName
+                        WHERE id = :userId AND status = 'ACTIVE'
+                        """)
+                .param("userId", userId)
+                .param("displayName", displayName)
                 .update();
     }
 
@@ -321,7 +333,15 @@ class AvatarRepository {
         return value == null ? null : value.toInstant();
     }
 
-    record AvatarOwner(UUID userId, UUID avatarMediaId, long avatarVersion) {
+    record AvatarOwner(
+            UUID userId,
+            String displayName,
+            UUID avatarMediaId,
+            long avatarVersion
+    ) {
+        AvatarOwner(UUID userId, UUID avatarMediaId, long avatarVersion) {
+            this(userId, null, avatarMediaId, avatarVersion);
+        }
     }
 
     record UserProfile(

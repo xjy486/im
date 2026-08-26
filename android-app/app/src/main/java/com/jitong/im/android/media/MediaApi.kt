@@ -8,6 +8,7 @@ import retrofit2.http.Multipart
 import retrofit2.http.POST
 import retrofit2.http.PUT
 import retrofit2.http.DELETE
+import retrofit2.http.Body
 import retrofit2.http.Part
 import retrofit2.http.Path
 import retrofit2.http.Query
@@ -43,6 +44,11 @@ internal interface MediaApi {
 
     @DELETE("api/v1/users/me/avatar")
     suspend fun removeAvatar(): Response<Void>
+
+    @PUT("api/v1/users/me/profile")
+    suspend fun updateProfile(
+        @Body request: UserProfileUpdateRequest,
+    ): Response<AvatarProfileResponse>
 
     @Streaming
     @GET("api/v1/users/{userId}/avatar")
@@ -110,4 +116,8 @@ internal data class AvatarProfileResponse(
     val avatarUrl: String?,
     val avatarVersion: Long,
     val avatarFallback: String,
+)
+
+internal data class UserProfileUpdateRequest(
+    val displayName: String,
 )

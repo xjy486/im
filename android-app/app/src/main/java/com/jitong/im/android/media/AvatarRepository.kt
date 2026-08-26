@@ -24,6 +24,12 @@ internal class AvatarRepository(
             ?: throw IOException("No signed-in user")
     }
 
+    suspend fun updateUserProfile(displayName: String): AvatarProfileResponse =
+        withContext(Dispatchers.IO) {
+            api.updateProfile(UserProfileUpdateRequest(displayName.trim()))
+                .bodyOrThrow("Profile update")
+        }
+
     suspend fun loadUserAvatar(userId: UUID, avatarVersion: Long): ByteArray? =
         withContext(Dispatchers.IO) {
             if (avatarVersion <= 0) return@withContext null

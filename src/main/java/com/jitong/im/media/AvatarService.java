@@ -179,6 +179,27 @@ public class AvatarService {
     }
 
     @Transactional
+    public UserProfile updateUserProfile(UUID userId, String displayName) {
+        String normalizedDisplayName = displayName == null ? "" : displayName.trim();
+        if (normalizedDisplayName.isEmpty() || normalizedDisplayName.length() > 128) {
+            throw new MediaException(ApiErrorDefinition.INVALID_REQUEST);
+        }
+        AvatarRepository.AvatarOwner owner = avatarRepository.findUserForUpdate(userId);
+        if (owner == null) {
+            throw new MediaException(ApiErrorDefinition.USER_NOT_FOUND);
+        }
+        if (!normalizedDisplayName.equals(owner.displayName())) {
+            avatarRepository.updateUserDisplayName(userId, normalizedDisplayName);
+            syncService.recordEventForUsers(
+                    avatarRepository.profileEventRecipients(userId),
+                    "USER_PROFILE_UPDATED",
+                    userId,
+                    null);
+        }
+        return profile(userId);
+    }
+
+    @Transactional
     public AvatarUploadResponse replaceGroupAvatar(
             UUID ownerUserId,
             UUID conversationId,

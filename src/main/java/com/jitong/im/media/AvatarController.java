@@ -1,6 +1,7 @@
 package com.jitong.im.media;
 
 import com.jitong.im.auth.AuthService;
+import jakarta.validation.Valid;
 import org.springframework.core.io.InputStreamResource;
 import org.springframework.http.CacheControl;
 import org.springframework.http.HttpHeaders;
@@ -53,6 +54,19 @@ class AvatarController {
                 uploadId,
                 file,
                 crop(cropX, cropY, cropWidth, cropHeight));
+    }
+
+    @PutMapping(
+            value = "/users/me/profile",
+            consumes = MediaType.APPLICATION_JSON_VALUE,
+            produces = MediaType.APPLICATION_JSON_VALUE)
+    AvatarService.UserProfile updateProfile(
+            @RequestHeader(value = "Authorization", required = false) String authorization,
+            @Valid @org.springframework.web.bind.annotation.RequestBody UserProfileUpdateRequest request
+    ) {
+        return avatarService.updateUserProfile(
+                authService.requireUserId(authorization),
+                request.displayName());
     }
 
     @DeleteMapping("/users/me/avatar")

@@ -114,6 +114,53 @@ class AvatarServiceTest {
                 .isEqualTo(ApiErrorDefinition.MEDIA_FORBIDDEN);
     }
 
+    @Test
+    void updating_a_display_name_persists_it_and_emits_a_profile_event() {
+        MediaRepository mediaRepository = mock(MediaRepository.class);
+        MediaStorage storage = mock(MediaStorage.class);
+        AvatarRepository avatarRepository = mock(AvatarRepository.class);
+        SyncService syncService = mock(SyncService.class);
+        UUID userId = UUID.randomUUID();
+        when(avatarRepository.findUserForUpdate(userId)).thenReturn(
+                new AvatarRepository.AvatarOwner(userId, "Old name", null, 0));
+        when(avatarRepository.profileEventRecipients(userId)).thenReturn(java.util.List.of(userId));
+        when(avatarRepository.findUserProfile(userId)).thenReturn(
+                new AvatarRepository.UserProfile(userId, "New name", null, 0));
+
+        AvatarService service = new AvatarService(
+                mediaRepository,
+                storage,
+                avatarRepository,
+                syncService,
+                Clock.systemUTC());
+
+        AvatarService.UserProfile profile = service.updateUserProfile(userId, "  New name  ");
+
+        assertThat(profile.displayName()).isEqualTo("New name");
+        verify(avatarRepository).updateUserDisplayName(userId, "New name");
+        verify(syncService).recordEventForUsers(
+                eq(java.util.List.of(userId)),
+                eq("USER_PROFILE_UPDATED"),
+                eq(userId),
+                eq(null));
+    }
+
+    @Test
+    void updating_a_display_name_rejects_blank_values() {
+        AvatarRepository avatarRepository = mock(AvatarRepository.class);
+        AvatarService service = new AvatarService(
+                mock(MediaRepository.class),
+                mock(MediaStorage.class),
+                avatarRepository,
+                mock(SyncService.class),
+                Clock.systemUTC());
+
+        assertThatThrownBy(() -> service.updateUserProfile(UUID.randomUUID(), "   "))
+                .isInstanceOf(MediaException.class)
+                .extracting(exception -> ((MediaException) exception).definition())
+                .isEqualTo(ApiErrorDefinition.INVALID_REQUEST);
+    }
+
     private byte[] png() throws Exception {
         BufferedImage image = new BufferedImage(200, 100, BufferedImage.TYPE_INT_RGB);
         ByteArrayOutputStream output = new ByteArrayOutputStream();

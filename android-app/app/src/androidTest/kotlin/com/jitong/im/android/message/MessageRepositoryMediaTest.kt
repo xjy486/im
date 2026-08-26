@@ -76,6 +76,11 @@ class MessageRepositoryMediaTest {
 
             override suspend fun removeAvatar(): Response<Void> = error("not used")
 
+            override suspend fun updateProfile(
+                request: com.jitong.im.android.media.UserProfileUpdateRequest,
+            ): Response<com.jitong.im.android.media.AvatarProfileResponse> =
+                error("not used")
+
             override suspend fun downloadAvatar(
                 userId: UUID,
                 variant: String,
@@ -176,6 +181,11 @@ class MessageRepositoryMediaTest {
                 error("not used")
 
             override suspend fun removeAvatar(): Response<Void> = error("not used")
+
+            override suspend fun updateProfile(
+                request: com.jitong.im.android.media.UserProfileUpdateRequest,
+            ): Response<com.jitong.im.android.media.AvatarProfileResponse> =
+                error("not used")
 
             override suspend fun downloadAvatar(
                 userId: UUID,

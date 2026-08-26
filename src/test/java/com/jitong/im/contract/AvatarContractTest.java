@@ -103,6 +103,44 @@ class AvatarContractTest extends ContractTestEnvironment {
     }
 
     @Test
+    void updates_the_current_users_display_name_and_returns_the_new_profile() throws Exception {
+        TestUser alice = createUser("Alice");
+        String aliceToken = login(alice.accountNo(), "profile-alice");
+
+        ResponseEntity<JsonNode> response = exchange(
+                HttpMethod.PUT,
+                "/api/v1/users/me/profile",
+                aliceToken,
+                Map.of("displayName", "Alice updated"));
+
+        assertThat(response.getStatusCode()).isEqualTo(HttpStatus.OK);
+        assertThat(response.getBody().get("userId").asText()).isEqualTo(alice.userId().toString());
+        assertThat(response.getBody().get("displayName").asText()).isEqualTo("Alice updated");
+
+        ResponseEntity<JsonNode> profile = exchange(
+                HttpMethod.GET,
+                "/api/v1/users/" + alice.userId() + "/profile",
+                aliceToken,
+                null);
+        assertThat(profile.getStatusCode()).isEqualTo(HttpStatus.OK);
+        assertThat(profile.getBody().get("displayName").asText()).isEqualTo("Alice updated");
+    }
+
+    @Test
+    void rejects_a_blank_display_name_update() throws Exception {
+        TestUser alice = createUser("Alice");
+        String aliceToken = login(alice.accountNo(), "profile-alice-blank");
+
+        ResponseEntity<JsonNode> response = exchange(
+                HttpMethod.PUT,
+                "/api/v1/users/me/profile",
+                aliceToken,
+                Map.of("displayName", "   "));
+
+        assertThat(response.getStatusCode()).isEqualTo(HttpStatus.BAD_REQUEST);
+    }
+
+    @Test
     void group_avatar_is_independent_and_visible_only_to_active_members() throws Exception {
         TestUser owner = createUser("Group owner");
         TestUser member = createUser("Group member");

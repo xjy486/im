@@ -466,6 +466,26 @@ paths:
           $ref: '#/components/responses/ApiError'
         '404':
           $ref: '#/components/responses/ApiError'
+  /api/v1/users/me/profile:
+    put:
+      operationId: updateMyUserProfile
+      summary: Update the authenticated user's display name
+      security: [{ bearerAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/UserProfileUpdateRequest' }
+      responses:
+        '200':
+          description: Updated user profile
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/UserProfile' }
+        '400':
+          $ref: '#/components/responses/ApiError'
+        '401':
+          $ref: '#/components/responses/ApiError'
   /api/v1/groups/{conversationId}/avatar:
     put:
       operationId: replaceGroupAvatar
@@ -2027,6 +2047,16 @@ components:
         avatarUrl: { type: [string, 'null'] }
         avatarVersion: { type: integer, format: int64, minimum: 0 }
         avatarFallback: { type: string, minLength: 1, maxLength: 2 }
+    UserProfileUpdateRequest:
+      type: object
+      additionalProperties: false
+      required: [displayName]
+      properties:
+        displayName:
+          type: string
+          minLength: 1
+          maxLength: 128
+          pattern: '.*\S.*'
     GroupProfile:
       type: object
       additionalProperties: false
