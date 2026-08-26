@@ -855,8 +855,8 @@ private fun MessageListRow(
                 )
             }
         }
-        Divider(color = JitongColors.divider, modifier = Modifier.padding(start = 84.dp))
     }
+    Divider(color = JitongColors.divider, modifier = Modifier.padding(start = 84.dp))
 }
 
 @Composable
