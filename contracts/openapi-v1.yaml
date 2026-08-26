@@ -2006,7 +2006,7 @@ components:
         avatarVersion: { type: integer, format: int64, minimum: 0 }
     ConversationSummary:
       type: object
-      required: [version, conversationId, peerUserId, peerAccountNo, peerDisplayName, status, relationship, blockedByMe, readSeq, peerReadSeq, avatarVersion, searchVisible, searchVisibleAfterSeq]
+      required: [version, conversationId, peerUserId, peerAccountNo, peerDisplayName, status, relationship, blockedByMe, readSeq, peerReadSeq, avatarVersion, searchVisible, searchVisibleAfterSeq, unreadCount, latestMessage]
       properties:
         version: { const: 1 }
         conversationId: { type: string, format: uuid }
@@ -2018,10 +2018,25 @@ components:
         blockedByMe: { type: boolean }
         readSeq: { type: integer, format: int64, minimum: 0 }
         peerReadSeq: { type: integer, format: int64, minimum: 0 }
+        unreadCount: { type: integer, format: int64, minimum: 0 }
+        latestMessage:
+          oneOf:
+            - $ref: '#/components/schemas/ConversationLatestMessage'
+            - type: 'null'
         searchVisible: { type: boolean }
         searchVisibleAfterSeq: { type: integer, format: int64, minimum: 0 }
         avatarUrl: { type: [string, 'null'] }
         avatarVersion: { type: integer, format: int64, minimum: 0 }
+    ConversationLatestMessage:
+      type: object
+      required: [conversationSeq, type, state, serverAcceptedAt]
+      properties:
+        conversationSeq: { type: integer, format: int64, minimum: 1 }
+        type: { type: string, enum: [TEXT, IMAGE, SYSTEM] }
+        state: { type: string, enum: [ACTIVE, RECALLED, MODERATED] }
+        text: { type: [string, 'null'] }
+        serverAcceptedAt: { type: string, format: date-time }
+        systemEventType: { type: [string, 'null'] }
     AvatarUploadResponse:
       type: object
       additionalProperties: false
