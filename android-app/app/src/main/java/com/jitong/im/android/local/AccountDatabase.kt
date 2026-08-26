@@ -51,6 +51,12 @@ data class LocalConversationEntity(
     val searchVisibleAfterSeq: Long = 0,
 )
 
+@Entity(tableName = "local_conversation_list_visibility")
+data class LocalConversationListVisibilityEntity(
+    @PrimaryKey val conversationId: String,
+    val hiddenAfterSequence: Long,
+)
+
 @Entity(
     tableName = "local_message",
     indices = [
@@ -274,6 +280,25 @@ interface LocalConversationDao {
         relationship: String,
         updatedAt: Long,
     )
+}
+
+@Dao
+interface LocalConversationListVisibilityDao {
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    fun hide(visibility: LocalConversationListVisibilityEntity)
+
+    @Query("DELETE FROM local_conversation_list_visibility WHERE conversationId = :conversationId")
+    fun show(conversationId: String)
+
+    @Query("SELECT * FROM local_conversation_list_visibility")
+    fun hidden(): List<LocalConversationListVisibilityEntity>
+
+    @Query(
+        "SELECT EXISTS(" +
+            "SELECT 1 FROM local_conversation_list_visibility " +
+            "WHERE conversationId = :conversationId)",
+    )
+    fun isHidden(conversationId: String): Boolean
 }
 
 @Dao
@@ -514,6 +539,13 @@ interface LocalMessageDao {
     fun listAll(): List<LocalMessageEntity>
 
     @Query(
+        "SELECT * FROM local_message " +
+            "WHERE conversationId IN (:conversationIds) " +
+            "AND localState IN ('SENT', 'RECEIVED')",
+    )
+    fun listAcceptedForConversations(conversationIds: List<String>): List<LocalMessageEntity>
+
+    @Query(
         "SELECT mediaId FROM local_message " +
             "WHERE localState IN ('SENT', 'RECEIVED') " +
             "AND type = 'IMAGE' AND mediaId IS NOT NULL",
@@ -604,6 +636,7 @@ interface SyncStateDao {
     entities = [
         LocalAccountEntity::class,
         LocalConversationEntity::class,
+        LocalConversationListVisibilityEntity::class,
         LocalMessageEntity::class,
         LocalMessageSearchEntity::class,
         LocalSearchStateEntity::class,
@@ -614,12 +647,13 @@ interface SyncStateDao {
         LocalAiArtifactEntity::class,
         LocalAiActionItemEntity::class,
     ],
-    version = 18,
+    version = 19,
     exportSchema = true,
 )
 abstract class AccountDatabase : RoomDatabase() {
     abstract fun accountDao(): LocalAccountDao
     abstract fun conversationDao(): LocalConversationDao
+    abstract fun conversationListVisibilityDao(): LocalConversationListVisibilityDao
     abstract fun conversationReadStateDao(): LocalConversationReadStateDao
     abstract fun messageDao(): LocalMessageDao
     abstract fun searchStateDao(): LocalSearchStateDao
@@ -943,6 +977,19 @@ abstract class AccountDatabase : RoomDatabase() {
                     """.trimIndent(),
                 )
                 database.execSQL("DROP TABLE local_conversation_v17")
+            }
+        }
+
+        val MIGRATION_18_19 = object : androidx.room.migration.Migration(18, 19) {
+            override fun migrate(database: androidx.sqlite.db.SupportSQLiteDatabase) {
+                database.execSQL(
+                    """
+                    CREATE TABLE IF NOT EXISTS local_conversation_list_visibility (
+                        conversationId TEXT NOT NULL PRIMARY KEY,
+                        hiddenAfterSequence INTEGER NOT NULL
+                    )
+                    """.trimIndent(),
+                )
             }
         }
 

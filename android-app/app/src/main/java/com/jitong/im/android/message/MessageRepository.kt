@@ -5,6 +5,7 @@ import com.jitong.im.android.local.AccountDatabase
 import com.jitong.im.android.local.EncryptedMediaCache
 import com.jitong.im.android.local.LocalConversationReadStateEntity
 import com.jitong.im.android.local.LocalConversationEntity
+import com.jitong.im.android.local.LocalConversationListVisibilityEntity
 import com.jitong.im.android.local.LocalGroupProfileEntity
 import com.jitong.im.android.local.LocalAccountEntity
 import com.jitong.im.android.local.LocalMessageEntity
@@ -14,6 +15,8 @@ import com.jitong.im.android.local.PendingMessageCommandEntity
 import com.jitong.im.android.media.ImageNormalizer
 import com.jitong.im.android.local.SyncStateEntity
 import com.jitong.im.android.contact.ContactRelationshipChange
+import com.jitong.im.android.group.GroupPreview
+import com.jitong.im.android.group.GroupSummary
 import com.jitong.im.search.LocalSearchText
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableSharedFlow
@@ -120,6 +123,99 @@ internal class MessageRepository(
         }
         searchInvalidations.tryEmit(Unit)
     }
+
+    suspend fun hideConversationFromMessageList(
+        conversationId: UUID,
+        hiddenAfterSequence: Long? = null,
+    ) =
+        withContext(Dispatchers.IO) {
+            val db = database() ?: return@withContext
+            db.conversationListVisibilityDao().hide(
+                LocalConversationListVisibilityEntity(
+                    conversationId = conversationId.toString(),
+                    hiddenAfterSequence = hiddenAfterSequence
+                        ?: db.messageDao().lastConversationSeq(conversationId.toString()),
+                ),
+            )
+            conversationChanges.tryEmit(Unit)
+        }
+
+    suspend fun filterC2cConversationsForMessageList(
+        conversations: List<com.jitong.im.android.contact.ConversationSummary>,
+    ): List<com.jitong.im.android.contact.ConversationSummary> =
+        withContext(Dispatchers.IO) {
+            val db = database() ?: return@withContext conversations
+            val hidden = db.conversationListVisibilityDao().hidden().associateBy { it.conversationId }
+            conversations.filter { conversation ->
+                val visibility = hidden[conversation.conversationId.toString()]
+                    ?: return@filter true
+                val latest = conversation.latestMessage
+                val hasNewMessage = latest != null &&
+                    latest.type != "SYSTEM" &&
+                    latest.conversationSeq > visibility.hiddenAfterSequence
+                if (hasNewMessage) {
+                    db.conversationListVisibilityDao().show(conversation.conversationId.toString())
+                    true
+                } else {
+                    false
+                }
+            }
+        }
+
+    suspend fun filterGroupsForMessageList(groups: List<GroupSummary>): List<GroupSummary> =
+        withContext(Dispatchers.IO) {
+            if (groups.isEmpty()) return@withContext emptyList()
+            val db = database() ?: return@withContext groups
+            val currentUserId = db.accountDao().current()?.userId
+            val hidden = db.conversationListVisibilityDao().hidden().associateBy { it.conversationId }
+            val messages = db.messageDao().listAcceptedForConversations(
+                groups.map { it.conversationId.toString() },
+            ).groupBy { it.conversationId }
+
+            groups.mapNotNull { group ->
+                val conversationMessages = messages[group.conversationId.toString()].orEmpty()
+                val latest = conversationMessages
+                    .filter { it.conversationSeq != null }
+                    .maxByOrNull { it.conversationSeq!! }
+                val visibility = hidden[group.conversationId.toString()]
+                val hasNewMessage = visibility != null &&
+                    latest != null &&
+                    latest.type != "SYSTEM" &&
+                    latest.conversationSeq!! > visibility.hiddenAfterSequence
+                if (hasNewMessage) {
+                    db.conversationListVisibilityDao().show(group.conversationId.toString())
+                }
+                if (visibility != null && !hasNewMessage) {
+                    return@mapNotNull null
+                }
+
+                val readSeq = currentUserId?.let {
+                    db.conversationReadStateDao().find(
+                        group.conversationId.toString(),
+                        it,
+                    )?.readSeq
+                } ?: 0L
+                group.copy(
+                    unreadCount = conversationMessages.count {
+                        currentUserId != null &&
+                            it.senderId != currentUserId &&
+                            it.type != "SYSTEM" &&
+                            it.state == "ACTIVE" &&
+                            (it.conversationSeq ?: 0L) > readSeq
+                    },
+                    latestMessage = latest?.let {
+                        GroupPreview(
+                            conversationSeq = it.conversationSeq ?: 0L,
+                            type = it.type,
+                            text = it.text,
+                            state = it.state,
+                            serverAcceptedAt = it.serverAcceptedAt.orEmpty(),
+                            systemEventType = it.systemEventType,
+                        )
+                    },
+                )
+            }
+        }
 
     fun observe(conversationId: UUID): Flow<List<LocalMessageEntity>> =
         database()?.messageDao()?.observe(conversationId.toString())
@@ -1390,6 +1486,9 @@ internal class MessageRepository(
                             createdAt = existing?.createdAt ?: System.currentTimeMillis(),
                         ),
                     )
+                    if (event.operation == "message.created" && body.type != "SYSTEM") {
+                        db.conversationListVisibilityDao().show(conversationId.toString())
+                    }
                     db.syncStateDao().upsert(
                         SyncStateEntity(
                             deviceId = deviceId()?.toString().orEmpty(),
@@ -1433,6 +1532,9 @@ internal class MessageRepository(
                         createdAt = existing?.createdAt ?: System.currentTimeMillis(),
                     ),
                 )
+                if (event.operation == "message.created" && body.type != "SYSTEM") {
+                    db.conversationListVisibilityDao().show(conversationId.toString())
+                }
             }
         }
         conversationChanges.tryEmit(Unit)
@@ -1552,6 +1654,7 @@ internal class MessageRepository(
                     },
                     localMediaPath = null,
                 ))
+                db.conversationListVisibilityDao().show(response.conversationId.toString())
                 existing?.localMediaPath
             }
         }

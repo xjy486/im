@@ -110,6 +110,35 @@ class AccountDatabaseSearchTest {
     }
 
     @Test
+    fun hiding_a_conversation_keeps_its_messages_without_reusing_search_visibility() {
+        database.messageDao().upsert(message("kept", "history remains", 1))
+        database.conversationListVisibilityDao().hide(
+            LocalConversationListVisibilityEntity(
+                conversationId = CONVERSATION_ID,
+                hiddenAfterSequence = 1,
+            ),
+        )
+
+        assertTrue(database.conversationListVisibilityDao().isHidden(CONVERSATION_ID))
+        assertEquals(1, database.messageDao().listAll().count { it.messageId == "kept" })
+        assertTrue(
+            database.messageDao()
+                .searchIndexed(
+                    null,
+                    LocalSearchText.plan("history")!!.ftsMatch,
+                    "history",
+                    100,
+                )
+                .isNotEmpty(),
+        )
+
+        database.conversationListVisibilityDao().show(CONVERSATION_ID)
+
+        assertTrue(!database.conversationListVisibilityDao().isHidden(CONVERSATION_ID))
+        assertEquals(1, database.messageDao().listAll().count { it.messageId == "kept" })
+    }
+
+    @Test
     fun common_english_search_stays_under_200ms_p95_for_100k_messages() {
         performanceDatabase = Room.databaseBuilder(
             ApplicationProvider.getApplicationContext(),

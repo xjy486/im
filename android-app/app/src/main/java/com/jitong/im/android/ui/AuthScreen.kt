@@ -79,12 +79,15 @@ import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Surface
+import androidx.compose.material3.SwipeToDismissBox
+import androidx.compose.material3.SwipeToDismissBoxValue
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TextField
 import androidx.compose.material3.TextFieldDefaults
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.material3.rememberModalBottomSheetState
+import androidx.compose.material3.rememberSwipeToDismissBoxState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -535,16 +538,37 @@ private fun HomeScreen(
                     openGroupManagementId = null
                     showQuickAdd = false
                 },
-                unreadCount = contactState.conversations.sumOf { it.unreadCount },
+                unreadCount = contactState.messageListConversations.sumOf { it.unreadCount } +
+                    groupState.messageListGroups.sumOf { it.unreadCount },
             )
         },
     ) { padding ->
         when (selectedTab) {
             JitongTab.Messages -> MessagesHome(
-                conversations = contactState.conversations,
-                onOpen = {
-                    selectedConversationId = it.toString()
+                conversations = contactState.messageListConversations,
+                groups = groupState.messageListGroups,
+                searchConversations = contactState.conversations,
+                onOpenConversation = { id ->
+                    selectedConversationId = id.toString()
                     selectedGroupConversationId = null
+                },
+                onOpenGroup = { id ->
+                    selectedGroupConversationId = id.toString()
+                    selectedConversationId = null
+                },
+                onHide = { entry ->
+                    when (entry.type) {
+                        MessageListConversationType.C2C ->
+                            contactViewModel.hideConversationFromMessageList(
+                                entry.conversationId,
+                                entry.sortSequence.coerceAtLeast(0),
+                            )
+                        MessageListConversationType.GROUP ->
+                            groupViewModel.hideConversationFromMessageList(
+                                entry.conversationId,
+                                entry.sortSequence.coerceAtLeast(0),
+                            )
+                    }
                 },
                 onAddContact = {
                     contactSection = "search"
@@ -552,9 +576,13 @@ private fun HomeScreen(
                 },
                 onOpenQuickAdd = { showQuickAdd = true },
                 loadAvatar = avatarViewModel::loadUserAvatar,
+                loadGroupAvatar = avatarViewModel::loadGroupAvatar,
                 onSearch = { query -> messageViewModel.setSearchQuery(query); messageViewModel.search(null) },
                 messageState = messageState,
-                onOpenSearchResult = { id, msgId -> selectedConversationId = id.toString(); selectedMessageId = msgId },
+                onOpenSearchResult = { id, msgId ->
+                    selectedConversationId = id.toString()
+                    selectedMessageId = msgId
+                },
                 modifier = Modifier.padding(padding),
             )
             JitongTab.Contacts -> ContactsHome(
@@ -624,16 +652,25 @@ private fun HomeScreen(
 @Composable
 private fun MessagesHome(
     conversations: List<ConversationSummary>,
-    onOpen: (UUID) -> Unit,
+    groups: List<GroupSummary>,
+    searchConversations: List<ConversationSummary>,
+    onOpenConversation: (UUID) -> Unit,
+    onOpenGroup: (UUID) -> Unit,
+    onHide: (MessageListEntry) -> Unit,
     onAddContact: () -> Unit,
     onOpenQuickAdd: () -> Unit,
     loadAvatar: suspend (UUID, Long) -> ByteArray?,
+    loadGroupAvatar: suspend (UUID, Long) -> ByteArray?,
     onSearch: (String) -> Unit,
     messageState: MessageUiState,
     onOpenSearchResult: (UUID, String) -> Unit,
     modifier: Modifier = Modifier,
 ) {
     var searchMode by rememberSaveable { mutableStateOf(false) }
+    val entries = remember(conversations, groups) {
+        (conversations.map(::messageListEntry) + groups.map(::messageListEntry))
+            .sortedForMessageList()
+    }
     Column(modifier.fillMaxSize()) {
         JitongHeader(
             title = "消息",
@@ -653,14 +690,14 @@ private fun MessagesHome(
                 if (messageState.searchQuery.isNotBlank()) {
                     LocalSearchResults(
                         state = messageState,
-                        conversations = conversations,
-                        onOpen = onOpenSearchResult,
-                    )
+                    conversations = searchConversations,
+                    onOpen = onOpenSearchResult,
+                )
                 }
             }
         }
         if (!searchMode || messageState.searchQuery.isBlank()) {
-            if (conversations.isEmpty()) {
+            if (entries.isEmpty()) {
                 EmptyState(
                     icon = Icons.Outlined.ChatBubbleOutline,
                     title = "还没有聊天",
@@ -673,13 +710,126 @@ private fun MessagesHome(
                     modifier = Modifier.fillMaxSize(),
                     contentPadding = androidx.compose.foundation.layout.PaddingValues(vertical = 8.dp),
                 ) {
-                    items(conversations, key = { it.conversationId }) { conversation ->
-                        ConversationRow(conversation, loadAvatar, onClick = { onOpen(conversation.conversationId) })
+                    items(entries, key = { it.conversationId }) { entry ->
+                        MessageListRow(
+                            entry = entry,
+                            loadAvatar = loadAvatar,
+                            loadGroupAvatar = loadGroupAvatar,
+                            onOpen = {
+                                when (entry.type) {
+                                    MessageListConversationType.C2C -> onOpenConversation(entry.conversationId)
+                                    MessageListConversationType.GROUP -> onOpenGroup(entry.conversationId)
+                                }
+                            },
+                            onHide = { onHide(entry) },
+                        )
                     }
                 }
             }
         }
     }
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun MessageListRow(
+    entry: MessageListEntry,
+    loadAvatar: suspend (UUID, Long) -> ByteArray?,
+    loadGroupAvatar: suspend (UUID, Long) -> ByteArray?,
+    onOpen: () -> Unit,
+    onHide: () -> Unit,
+) {
+    val dismissState = rememberSwipeToDismissBoxState(
+        confirmValueChange = { value ->
+            if (value == SwipeToDismissBoxValue.EndToStart) {
+                onHide()
+                true
+            } else {
+                false
+            }
+        },
+    )
+    SwipeToDismissBox(
+        state = dismissState,
+        enableDismissFromStartToEnd = false,
+        backgroundContent = {
+            Box(
+                Modifier.fillMaxSize().background(JitongColors.danger),
+                contentAlignment = Alignment.CenterEnd,
+            ) {
+                Icon(
+                    Icons.Outlined.DeleteOutline,
+                    contentDescription = "删除会话",
+                    tint = androidx.compose.ui.graphics.Color.White,
+                    modifier = Modifier.padding(horizontal = 24.dp),
+                )
+            }
+        },
+        content = {
+            Row(
+                Modifier
+                    .fillMaxWidth()
+                    .clickable(onClick = onOpen)
+                    .background(JitongColors.page)
+                    .padding(horizontal = 18.dp, vertical = 12.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(12.dp),
+            ) {
+                Box {
+                    when (val conversation = entry.conversation) {
+                        null -> {
+                            val group = requireNotNull(entry.group)
+                            RemoteGroupAvatar(
+                                conversationId = group.conversationId,
+                                avatarVersion = group.avatarVersion,
+                                fallback = group.name,
+                                load = loadGroupAvatar,
+                                size = 54.dp,
+                            )
+                        }
+                        else -> RemoteAvatar(
+                            userId = conversation.peerUserId,
+                            avatarVersion = conversation.avatarVersion,
+                            fallback = conversation.avatarFallback,
+                            load = loadAvatar,
+                            size = 54.dp,
+                        )
+                    }
+                    UnreadBadge(
+                        count = entry.unreadCount,
+                        modifier = Modifier.align(Alignment.TopEnd),
+                    )
+                }
+                Column(
+                    Modifier.weight(1f),
+                    verticalArrangement = Arrangement.spacedBy(4.dp),
+                ) {
+                    Text(
+                        entry.title,
+                        style = MaterialTheme.typography.titleMedium,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                    Text(
+                        entry.preview,
+                        color = JitongColors.secondaryText,
+                        style = MaterialTheme.typography.bodyMedium,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                }
+                if (entry.conversation?.blockedByMe == true) {
+                    Icon(
+                        Icons.Outlined.Block,
+                        contentDescription = "已拉黑",
+                        tint = JitongColors.tertiaryText,
+                        modifier = Modifier.size(18.dp),
+                    )
+                }
+            }
+            Divider(color = JitongColors.divider, modifier = Modifier.padding(start = 84.dp))
+        },
+    )
 }
 
 @Composable
@@ -968,7 +1118,8 @@ private fun ContactListContent(
     onOpenConversation: (UUID) -> Unit,
     onAddContact: () -> Unit,
 ) {
-    if (state.contacts.isEmpty()) {
+    val readOnlyConversations = state.conversations.filter { it.status == "READ_ONLY" }
+    if (state.contacts.isEmpty() && readOnlyConversations.isEmpty()) {
         EmptyState(
             icon = Icons.Outlined.PersonAdd,
             title = "还没有联系人",
@@ -980,13 +1131,21 @@ private fun ContactListContent(
     }
     LazyColumn(Modifier.fillMaxSize(), contentPadding = androidx.compose.foundation.layout.PaddingValues(vertical = 8.dp)) {
         items(state.contacts, key = { it.userId }) { contact -> ContactRow(contact, viewModel, loadAvatar, onOpenConversation) }
-        val readOnly = state.conversations.filter { it.status == "READ_ONLY" }
-        if (readOnly.isNotEmpty()) item { SectionLabel("历史联系人") }
-        items(readOnly, key = { it.conversationId }) { conversation ->
-            Row(Modifier.fillMaxWidth().padding(horizontal = 18.dp, vertical = 10.dp), verticalAlignment = Alignment.CenterVertically) {
+        if (readOnlyConversations.isNotEmpty()) item { SectionLabel("历史联系人") }
+        items(readOnlyConversations, key = { it.conversationId }) { conversation ->
+            Row(
+                Modifier
+                    .fillMaxWidth()
+                    .clickable { onOpenConversation(conversation.conversationId) }
+                    .padding(horizontal = 18.dp, vertical = 10.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
                 Column(Modifier.weight(1f)) {
                     Text(conversation.peerDisplayName, style = MaterialTheme.typography.titleMedium)
                     Text("历史消息，只读", color = JitongColors.secondaryText)
+                }
+                IconButton(onClick = { onOpenConversation(conversation.conversationId) }) {
+                    Icon(Icons.Outlined.ChatBubbleOutline, contentDescription = "查看聊天记录", tint = JitongColors.blue)
                 }
                 if (conversation.blockedByMe) TextButton(onClick = { viewModel.unblock(conversation.peerUserId) }) { Text("解除拉黑") }
             }

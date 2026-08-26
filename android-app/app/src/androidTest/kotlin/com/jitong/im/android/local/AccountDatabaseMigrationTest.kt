@@ -33,7 +33,7 @@ class AccountDatabaseMigrationTest {
     }
 
     @Test
-    fun migrates_v9_search_schema_through_v16_and_rebuilds_legacy_messages() {
+    fun migrates_v9_search_schema_through_v19_and_rebuilds_legacy_messages() {
         helper.createDatabase(TEST_DB, 9).apply {
             execSQL(
                 """
@@ -65,7 +65,7 @@ class AccountDatabaseMigrationTest {
 
         helper.runMigrationsAndValidate(
             TEST_DB,
-            16,
+            19,
             true,
             AccountDatabase.MIGRATION_9_10,
             AccountDatabase.MIGRATION_10_11,
@@ -76,6 +76,7 @@ class AccountDatabaseMigrationTest {
             AccountDatabase.MIGRATION_15_16,
             AccountDatabase.MIGRATION_16_17,
             AccountDatabase.MIGRATION_17_18,
+            AccountDatabase.MIGRATION_18_19,
         ).close()
 
         migratedDatabase = Room.databaseBuilder(
@@ -93,6 +94,7 @@ class AccountDatabaseMigrationTest {
                 AccountDatabase.MIGRATION_15_16,
                 AccountDatabase.MIGRATION_16_17,
                 AccountDatabase.MIGRATION_17_18,
+                AccountDatabase.MIGRATION_18_19,
             )
             .build()
 
@@ -128,6 +130,15 @@ class AccountDatabaseMigrationTest {
             0,
             migratedDatabase!!.openHelper.writableDatabase
                 .query("SELECT COUNT(*) FROM local_ai_action_item")
+                .use { cursor ->
+                    assertTrue(cursor.moveToFirst())
+                    cursor.getInt(0)
+                },
+        )
+        assertEquals(
+            0,
+            migratedDatabase!!.openHelper.writableDatabase
+                .query("SELECT COUNT(*) FROM local_conversation_list_visibility")
                 .use { cursor ->
                     assertTrue(cursor.moveToFirst())
                     cursor.getInt(0)

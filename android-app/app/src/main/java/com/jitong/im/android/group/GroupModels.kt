@@ -37,7 +37,32 @@ internal data class GroupSummary(
     val memberCount: Int,
     val aiEnabled: Boolean = false,
     val aiPolicyVersion: Long = 1,
+    val unreadCount: Int = 0,
+    val latestMessage: GroupPreview? = null,
 )
+
+internal data class GroupPreview(
+    val conversationSeq: Long,
+    val type: String,
+    val text: String?,
+    val state: String,
+    val serverAcceptedAt: String,
+    val systemEventType: String? = null,
+) {
+    val sortTimestamp: Long
+        get() = runCatching {
+            java.time.Instant.parse(serverAcceptedAt).toEpochMilli()
+        }.getOrDefault(Long.MIN_VALUE)
+}
+
+internal fun GroupPreview.displayText(): String = when {
+    type == "SYSTEM" && systemEventType == "GROUP_CREATED" -> "群聊已创建"
+    state == "RECALLED" -> "消息已撤回"
+    state == "MODERATED" -> "消息已被移除"
+    type == "IMAGE" -> "图片"
+    type == "TEXT" && !text.isNullOrBlank() -> text
+    else -> "消息"
+}
 
 internal data class GroupSearchResult(
     val name: String,

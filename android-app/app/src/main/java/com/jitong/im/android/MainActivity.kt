@@ -44,6 +44,7 @@ class MainActivity : ComponentActivity() {
             clearGroupData = { conversationId ->
                 container.messageRepository.clearGroupData(conversationId)
             },
+            messageRepository = container.messageRepository,
         )
     }
     private val aiViewModel: AiViewModel by viewModels {

@@ -45,6 +45,7 @@ internal data class ContactUiState(
     val searchResult: ContactSearchResult? = null,
     val contacts: List<ContactSummary> = emptyList(),
     val conversations: List<ConversationSummary> = emptyList(),
+    val messageListConversations: List<ConversationSummary> = emptyList(),
     val requests: List<ContactRequestSummary> = emptyList(),
     val message: String? = null,
 )
@@ -167,23 +168,53 @@ internal class ContactViewModel(
         }
     }
 
+    fun hideConversationFromMessageList(
+        conversationId: UUID,
+        hiddenAfterSequence: Long,
+    ) {
+        viewModelScope.launch {
+            runCatching {
+                messageRepository.hideConversationFromMessageList(
+                    conversationId,
+                    hiddenAfterSequence,
+                )
+                _state.value = _state.value.copy(
+                    messageListConversations = _state.value.messageListConversations
+                        .filterNot { it.conversationId == conversationId },
+                )
+            }.onFailure {
+                _state.value = _state.value.copy(message = "删除会话失败，请稍后重试")
+            }
+        }
+    }
+
     internal suspend fun refreshLatest() {
         refreshMutex.withLock {
             val current = _state.value
             val requests = repository.requests()
             val contacts = repository.contacts()
-            val conversations = repository.conversations().sortedForMessageList()
+            val conversations = repository.conversations()
+            val messageListConversations = messageRepository
+                .filterC2cConversationsForMessageList(conversations)
+                .sortedForMessageList()
             _state.value = current.copy(
                 contacts = contacts,
                 conversations = conversations,
+                messageListConversations = messageListConversations,
                 requests = requests,
             )
         }
     }
 
     internal suspend fun refreshConversationPreviews() {
-        val conversations = repository.conversations().sortedForMessageList()
-        _state.value = _state.value.copy(conversations = conversations)
+        val conversations = repository.conversations()
+        val messageListConversations = messageRepository
+            .filterC2cConversationsForMessageList(conversations)
+            .sortedForMessageList()
+        _state.value = _state.value.copy(
+            conversations = conversations,
+            messageListConversations = messageListConversations,
+        )
     }
 
     internal fun refreshNow() {

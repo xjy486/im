@@ -11,6 +11,7 @@ import com.jitong.im.android.group.GroupMemberSummary
 import com.jitong.im.android.group.GroupGovernancePolicy
 import com.jitong.im.android.group.GroupSearchResult
 import com.jitong.im.android.group.GroupSummary
+import com.jitong.im.android.message.MessageRepository
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -24,6 +25,7 @@ internal data class GroupUiState(
     val visibility: String = "PUBLIC",
     val avatar: ByteArray? = null,
     val groups: List<GroupSummary> = emptyList(),
+    val messageListGroups: List<GroupSummary> = emptyList(),
     val searchQuery: String = "",
     val searchResults: List<GroupSearchResult> = emptyList(),
     val inviteToken: String = "",
@@ -41,9 +43,20 @@ internal data class GroupUiState(
 internal class GroupViewModel(
     private val repository: GroupRepository,
     private val clearGroupData: suspend (UUID) -> Unit = {},
+    private val messageRepository: MessageRepository? = null,
 ) : ViewModel() {
     private val _state = MutableStateFlow(GroupUiState())
     val state: StateFlow<GroupUiState> = _state.asStateFlow()
+
+    init {
+        messageRepository?.let { messages ->
+            viewModelScope.launch {
+                messages.conversationChanges.collect {
+                    runCatching { refreshData() }
+                }
+            }
+        }
+    }
 
     fun setName(value: String) {
         _state.value = _state.value.copy(name = value, message = null)
@@ -155,6 +168,23 @@ internal class GroupViewModel(
             repository.leave(group.conversationId)
             clearGroupData(group.conversationId)
             refreshData()
+        }
+    }
+
+    fun hideConversationFromMessageList(
+        conversationId: UUID,
+        hiddenAfterSequence: Long,
+    ) {
+        viewModelScope.launch {
+            runCatching {
+                messageRepository?.hideConversationFromMessageList(
+                    conversationId,
+                    hiddenAfterSequence,
+                )
+                refreshData()
+            }.onFailure {
+                _state.value = _state.value.copy(message = "删除会话失败，请稍后重试")
+            }
         }
     }
 
@@ -326,7 +356,11 @@ internal class GroupViewModel(
     }
 
     private suspend fun refreshData() {
-        _state.value = _state.value.copy(groups = repository.list())
+        val groups = repository.list()
+        _state.value = _state.value.copy(
+            groups = groups,
+            messageListGroups = messageRepository?.filterGroupsForMessageList(groups) ?: groups,
+        )
     }
 
     private fun launchRequest(block: suspend () -> Unit) {
@@ -343,9 +377,10 @@ internal class GroupViewModel(
     class Factory(
         private val repository: GroupRepository,
         private val clearGroupData: suspend (UUID) -> Unit = {},
+        private val messageRepository: MessageRepository? = null,
     ) : ViewModelProvider.Factory {
         @Suppress("UNCHECKED_CAST")
         override fun <T : ViewModel> create(modelClass: Class<T>): T =
-            GroupViewModel(repository, clearGroupData) as T
+            GroupViewModel(repository, clearGroupData, messageRepository) as T
     }
 }
