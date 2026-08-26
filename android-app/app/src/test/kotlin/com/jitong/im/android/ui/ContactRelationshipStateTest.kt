@@ -1,0 +1,53 @@
+package com.jitong.im.android.ui
+
+import com.jitong.im.android.contact.ContactRelationshipChange
+import com.jitong.im.android.contact.ContactSummary
+import com.jitong.im.android.contact.ConversationSummary
+import java.util.UUID
+import kotlin.test.Test
+import kotlin.test.assertEquals
+
+class ContactRelationshipStateTest {
+
+    @Test
+    fun removing_a_contact_immediately_hides_the_contact_and_disables_the_c2c_conversation() {
+        val peerUserId = UUID.randomUUID()
+        val conversationId = UUID.randomUUID()
+        val state = ContactUiState(
+            contacts = listOf(
+                ContactSummary(
+                    version = 1,
+                    userId = peerUserId,
+                    accountNo = "12345678901",
+                    displayName = "Bob",
+                    conversationId = conversationId,
+                    relationship = "ACTIVE",
+                ),
+            ),
+            conversations = listOf(
+                ConversationSummary(
+                    version = 1,
+                    conversationId = conversationId,
+                    peerUserId = peerUserId,
+                    peerAccountNo = "12345678901",
+                    peerDisplayName = "Bob",
+                    status = "ACTIVE",
+                    relationship = "ACTIVE",
+                    blockedByMe = false,
+                ),
+            ),
+        )
+
+        val actual = state.applyRelationshipChange(
+            ContactRelationshipChange(
+                conversationId = conversationId,
+                status = "READ_ONLY",
+                relationship = "READ_ONLY",
+            ),
+        )
+
+        assertEquals(emptyList(), actual.contacts)
+        assertEquals("READ_ONLY", actual.conversations.single().status)
+        assertEquals("READ_ONLY", actual.conversations.single().relationship)
+    }
+}

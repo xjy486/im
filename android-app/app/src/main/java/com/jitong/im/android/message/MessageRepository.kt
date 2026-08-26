@@ -13,9 +13,11 @@ import com.jitong.im.android.local.LocalAiActionItemEntity
 import com.jitong.im.android.local.PendingMessageCommandEntity
 import com.jitong.im.android.media.ImageNormalizer
 import com.jitong.im.android.local.SyncStateEntity
+import com.jitong.im.android.contact.ContactRelationshipChange
 import com.jitong.im.search.LocalSearchText
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableSharedFlow
+import kotlinx.coroutines.channels.BufferOverflow
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.CompletableDeferred
@@ -43,7 +45,11 @@ internal class MessageRepository(
     private var pendingSendScheduler: (() -> Unit)? = null
     private var automaticSendingEnabled = false
     internal val searchInvalidations = MutableSharedFlow<Unit>(extraBufferCapacity = 1)
-    internal val relationshipChanges = MutableSharedFlow<UUID>(extraBufferCapacity = 8)
+    internal val relationshipChanges = MutableSharedFlow<ContactRelationshipChange>(
+        replay = 1,
+        extraBufferCapacity = 8,
+        onBufferOverflow = BufferOverflow.DROP_OLDEST,
+    )
     internal val contactRequestChanges = MutableSharedFlow<Unit>(extraBufferCapacity = 8)
 
     suspend fun search(
@@ -217,7 +223,13 @@ internal class MessageRepository(
                     .filter { it.conversationId in relationshipConversationIds }
                     .forEach {
                         applyConversationSummary(it)
-                        relationshipChanges.tryEmit(it.conversationId)
+                        relationshipChanges.tryEmit(
+                            ContactRelationshipChange(
+                                conversationId = it.conversationId,
+                                status = it.status,
+                                relationship = it.relationship,
+                            ),
+                        )
                     }
             }
             if (page.events.any { it.eventType == "CONTACT_REQUEST_CREATED" }) {
@@ -1100,11 +1112,20 @@ internal class MessageRepository(
                 synchronize(currentUserId, syncSeq)
                 return
             }
-            syncApi.conversations()
+            val conversation = syncApi.conversations()
                 .syncBodyOrThrow()
                 .firstOrNull { it.conversationId == conversationId }
-                ?.let { applyConversationSummary(it) }
-                ?: withContext(Dispatchers.IO) {
+            if (conversation != null) {
+                applyConversationSummary(conversation)
+                relationshipChanges.tryEmit(
+                    ContactRelationshipChange(
+                        conversationId = conversation.conversationId,
+                        status = conversation.status,
+                        relationship = conversation.relationship,
+                    ),
+                )
+            } else {
+                withContext(Dispatchers.IO) {
                     db.conversationDao().updateRelationship(
                         conversationId = conversationId.toString(),
                         status = "READ_ONLY",
@@ -1112,6 +1133,14 @@ internal class MessageRepository(
                         updatedAt = System.currentTimeMillis(),
                     )
                 }
+                relationshipChanges.tryEmit(
+                    ContactRelationshipChange(
+                        conversationId = conversationId,
+                        status = "READ_ONLY",
+                        relationship = "READ_ONLY",
+                    ),
+                )
+            }
             withContext(Dispatchers.IO) {
                 db.syncStateDao().upsert(
                     SyncStateEntity(
@@ -1121,7 +1150,6 @@ internal class MessageRepository(
                     ),
                 )
             }
-            relationshipChanges.tryEmit(conversationId)
             syncApi.acknowledge(SyncAckRequest(syncSeq)).syncBodyOrThrow()
             return
         }

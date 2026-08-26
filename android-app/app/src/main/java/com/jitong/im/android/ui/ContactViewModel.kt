@@ -4,6 +4,7 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
 import com.jitong.im.android.contact.ContactRepository
+import com.jitong.im.android.contact.ContactRelationshipChange
 import com.jitong.im.android.contact.ContactRequestSummary
 import com.jitong.im.android.contact.ContactSearchResult
 import com.jitong.im.android.contact.ContactSummary
@@ -27,6 +28,28 @@ internal data class ContactUiState(
     val message: String? = null,
 )
 
+internal fun ContactUiState.applyRelationshipChange(
+    change: ContactRelationshipChange,
+): ContactUiState {
+    val changedConversation = conversations
+        .firstOrNull { it.conversationId == change.conversationId }
+        ?: return this
+    val changedPeerUserId = changedConversation.peerUserId
+    return copy(
+        contacts = contacts.filterNot { it.userId == changedPeerUserId },
+        conversations = conversations.map {
+            if (it.conversationId == change.conversationId) {
+                it.copy(
+                    status = change.status,
+                    relationship = change.relationship,
+                )
+            } else {
+                it
+            }
+        },
+    )
+}
+
 internal class ContactViewModel(
     private val repository: ContactRepository,
     private val messageRepository: MessageRepository,
@@ -36,11 +59,15 @@ internal class ContactViewModel(
 
     init {
         viewModelScope.launch {
-            merge(
-                messageRepository.relationshipChanges.map { Unit },
-                messageRepository.contactRequestChanges,
-            ).collect {
-                runCatching { refreshData() }
+            merge<ContactChangeEvent>(
+                messageRepository.relationshipChanges.map { ContactChangeEvent.Relationship(it) },
+                messageRepository.contactRequestChanges.map { ContactChangeEvent.Refresh },
+            ).collect { event ->
+                if (event is ContactChangeEvent.Relationship) {
+                    _state.value = _state.value.applyRelationshipChange(event.change)
+                } else {
+                    runCatching { refreshData() }
+                }
             }
         }
     }
@@ -141,4 +168,10 @@ internal class ContactViewModel(
         override fun <T : ViewModel> create(modelClass: Class<T>): T =
             ContactViewModel(repository, messageRepository) as T
     }
+}
+
+private sealed interface ContactChangeEvent {
+    data class Relationship(val change: ContactRelationshipChange) : ContactChangeEvent
+
+    data object Refresh : ContactChangeEvent
 }
