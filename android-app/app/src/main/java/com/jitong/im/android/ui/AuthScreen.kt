@@ -1,5 +1,6 @@
 package com.jitong.im.android.ui
 
+import android.content.Intent
 import android.graphics.Bitmap
 import android.graphics.Color
 import androidx.activity.compose.BackHandler
@@ -100,8 +101,10 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.style.TextAlign
@@ -1496,6 +1499,7 @@ private fun GroupCreateContent(state: GroupUiState, viewModel: GroupViewModel) {
 internal fun GroupManagementSheet(group: GroupSummary, state: GroupUiState, viewModel: GroupViewModel, onDismiss: () -> Unit) {
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
     var showDirectInviteDialog by rememberSaveable { mutableStateOf(false) }
+    var showInviteLinkDialog by rememberSaveable { mutableStateOf(false) }
     LaunchedEffect(group.conversationId) { viewModel.loadMembers(group) }
     ModalBottomSheet(onDismissRequest = onDismiss, sheetState = sheetState) {
         Column(Modifier.fillMaxWidth().verticalScroll(rememberScrollState()).padding(horizontal = 20.dp).padding(bottom = 28.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
@@ -1528,6 +1532,15 @@ internal fun GroupManagementSheet(group: GroupSummary, state: GroupUiState, view
                 ) { Text("保存群资料") }
             }
             if (GroupGovernancePolicy.canEditProfile(group.role)) {
+                SettingsRow(
+                    Icons.Outlined.QrCode2,
+                    "生成邀请链接",
+                    "生成可复制的链接或二维码",
+                    onClick = {
+                        showInviteLinkDialog = true
+                        viewModel.createInvite(group)
+                    },
+                )
                 SettingsRow(
                     Icons.Outlined.GroupAdd,
                     "邀请成员",
@@ -1567,7 +1580,108 @@ internal fun GroupManagementSheet(group: GroupSummary, state: GroupUiState, view
             },
         )
     }
+    if (showInviteLinkDialog) {
+        GroupInviteLinkDialog(
+            invite = state.createdInvite,
+            loading = state.loading,
+            onDismiss = {
+                if (!state.loading) {
+                    showInviteLinkDialog = false
+                    viewModel.clearCreatedInvite()
+                }
+            },
+        )
+    }
 }
+
+@Composable
+private fun GroupInviteLinkDialog(
+    invite: com.jitong.im.android.group.GroupInviteResponse?,
+    loading: Boolean,
+    onDismiss: () -> Unit,
+) {
+    val context = LocalContext.current
+    val clipboard = LocalClipboardManager.current
+    var copied by rememberSaveable { mutableStateOf(false) }
+    val qrBitmap = remember(invite?.qrPayload) {
+        invite?.qrPayload?.let(::createInviteQrBitmap)
+    }
+    AlertDialog(
+        onDismissRequest = { if (!loading) onDismiss() },
+        title = { Text("群聊邀请链接") },
+        text = {
+            if (loading && invite == null) {
+                Box(Modifier.fillMaxWidth().padding(vertical = 24.dp), contentAlignment = Alignment.Center) {
+                    CircularProgressIndicator()
+                }
+            } else if (invite == null) {
+                Text("邀请链接生成失败，请稍后重试。")
+            } else {
+                Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                    qrBitmap?.let {
+                        Image(
+                            bitmap = it.asImageBitmap(),
+                            contentDescription = "群聊邀请二维码",
+                            modifier = Modifier.fillMaxWidth().height(220.dp),
+                        )
+                    }
+                    Text("对方打开链接后可查看群资料并提交入群申请。", color = JitongColors.secondaryText)
+                    OutlinedTextField(
+                        value = invite.deepLink,
+                        onValueChange = {},
+                        readOnly = true,
+                        label = { Text("邀请链接") },
+                        modifier = Modifier.fillMaxWidth(),
+                    )
+                    Text("有效期至：${invite.expiresAt}", color = JitongColors.tertiaryText, style = MaterialTheme.typography.bodySmall)
+                    OutlinedButton(
+                        onClick = {
+                            context.startActivity(
+                                Intent.createChooser(
+                                    Intent(Intent.ACTION_SEND).apply {
+                                        type = "text/plain"
+                                        putExtra(Intent.EXTRA_TEXT, invite.deepLink)
+                                    },
+                                    "分享群聊邀请链接",
+                                ),
+                            )
+                        },
+                        modifier = Modifier.fillMaxWidth(),
+                    ) {
+                        Text("分享链接")
+                    }
+                    if (copied) {
+                        Text("链接已复制", color = JitongColors.success, style = MaterialTheme.typography.bodySmall)
+                    }
+                }
+            }
+        },
+        confirmButton = {
+            if (invite != null) {
+                Button(onClick = {
+                    clipboard.setText(AnnotatedString(invite.deepLink))
+                    copied = true
+                }) {
+                    Text(if (copied) "已复制" else "复制链接")
+                }
+            }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss, enabled = !loading) { Text("关闭") }
+        },
+    )
+}
+
+private fun createInviteQrBitmap(content: String, size: Int = 640): Bitmap? = runCatching {
+    val matrix = MultiFormatWriter().encode(content, BarcodeFormat.QR_CODE, size, size)
+    Bitmap.createBitmap(size, size, Bitmap.Config.ARGB_8888).apply {
+        for (x in 0 until size) {
+            for (y in 0 until size) {
+                setPixel(x, y, if (matrix[x, y]) Color.BLACK else Color.WHITE)
+            }
+        }
+    }
+}.getOrNull()
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable

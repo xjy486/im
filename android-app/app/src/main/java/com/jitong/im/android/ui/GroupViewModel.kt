@@ -304,11 +304,16 @@ internal class GroupViewModel(
     }
 
     fun createInvite(group: GroupSummary) {
+        _state.value = _state.value.copy(createdInvite = null, message = null)
         launchRequest {
             _state.value = _state.value.copy(
                 createdInvite = repository.createInvite(group.conversationId),
             )
         }
+    }
+
+    fun clearCreatedInvite() {
+        _state.value = _state.value.copy(createdInvite = null)
     }
 
     fun loadJoinRequests(group: GroupSummary) {

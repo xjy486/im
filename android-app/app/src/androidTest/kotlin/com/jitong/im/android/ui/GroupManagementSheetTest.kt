@@ -71,7 +71,7 @@ class GroupManagementSheetTest {
     @Test
     fun inviting_member_opens_account_input_and_submits_account() {
         var invitedAccount: String? = null
-        val viewModel = createViewModel { _, accountNo -> invitedAccount = accountNo }
+        val viewModel = createViewModel(onInviteMember = { _, accountNo -> invitedAccount = accountNo })
 
         composeRule.setContent {
             MaterialTheme {
@@ -88,13 +88,36 @@ class GroupManagementSheetTest {
         assertEquals("12345678901", invitedAccount)
     }
 
+    @Test
+    fun generating_invite_link_opens_copy_and_share_actions() {
+        var generatedFor: UUID? = null
+        val viewModel = createViewModel(onCreateInvite = { conversationId -> generatedFor = conversationId })
+
+        composeRule.setContent {
+            MaterialTheme {
+                val state by viewModel.state.collectAsState()
+                GroupManagementSheet(group(), state, viewModel, onDismiss = {})
+            }
+        }
+
+        composeRule.onNode(hasText("生成邀请链接") and hasClickAction()).performClick()
+        composeRule.waitUntil(5_000) {
+            generatedFor == group().conversationId &&
+                composeRule.onAllNodes(hasText("https://app.jitong.im/groups/invite?token=test-token"))
+                    .fetchSemanticsNodes().isNotEmpty()
+        }
+        composeRule.onNode(hasText("复制链接")).assertExists()
+        composeRule.onNode(hasText("分享链接")).assertExists()
+    }
+
     private fun group(): GroupSummary = Fixtures.group()
 
     private fun createViewModel(
         onInviteMember: suspend (UUID, String) -> Unit = { _, _ -> },
+        onCreateInvite: suspend (UUID) -> Unit = { _ -> },
     ): GroupViewModel = GroupViewModel(
         repository = GroupRepository(
-            api = FakeGroupApi(onInviteMember),
+            api = FakeGroupApi(onInviteMember, onCreateInvite),
             avatarUploader = object : GroupAvatarUploader {
                 override suspend fun replaceGroupAvatar(
                     conversationId: UUID,
@@ -106,13 +129,28 @@ class GroupManagementSheetTest {
 
     private class FakeGroupApi(
         private val onInviteMember: suspend (UUID, String) -> Unit,
+        private val onCreateInvite: suspend (UUID) -> Unit,
     ) : GroupApi {
         override suspend fun create(request: CreateGroupRequest): Response<com.jitong.im.android.group.GroupCreateResponse> = error("not used")
         override suspend fun list(): Response<List<GroupSummary>> = Response.success(listOf(Fixtures.group()))
         override suspend fun leave(conversationId: UUID): Response<Unit> = error("not used")
         override suspend fun dissolve(conversationId: UUID): Response<Unit> = error("not used")
         override suspend fun search(query: String): Response<GroupSearchPage> = error("not used")
-        override suspend fun createInvite(conversationId: UUID, request: GroupInviteCreateRequest?): Response<GroupInviteResponse> = error("not used")
+        override suspend fun createInvite(conversationId: UUID, request: GroupInviteCreateRequest?): Response<GroupInviteResponse> {
+            onCreateInvite(conversationId)
+            return Response.success(
+                GroupInviteResponse(
+                    version = 1,
+                    inviteId = UUID.randomUUID(),
+                    conversationId = conversationId,
+                    maxUses = 100,
+                    useCount = 0,
+                    expiresAt = "2026-08-27T00:00:00Z",
+                    deepLink = "https://app.jitong.im/groups/invite?token=test-token",
+                    qrPayload = "https://app.jitong.im/groups/invite?token=test-token",
+                ),
+            )
+        }
         override suspend fun resolveInvite(token: String): Response<GroupInviteResolveResponse> = error("not used")
         override suspend fun revokeInvite(conversationId: UUID, inviteId: UUID): Response<Unit> = error("not used")
         override suspend fun createJoinRequest(conversationId: UUID, request: GroupJoinRequestCreateRequest?): Response<GroupJoinRequestResponse> = error("not used")
