@@ -124,6 +124,17 @@ internal data class SyncConversationResponse(
     val avatarFallback: String = "?",
     val searchVisible: Boolean = true,
     val searchVisibleAfterSeq: Long = 0,
+    val unreadCount: Long = 0,
+    val latestMessage: SyncConversationLatestMessage? = null,
+)
+
+internal data class SyncConversationLatestMessage(
+    val conversationSeq: Long,
+    val type: String,
+    val state: String,
+    val text: String?,
+    val serverAcceptedAt: String,
+    val systemEventType: String? = null,
 )
 
 internal data class UserProfileResponse(

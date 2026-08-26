@@ -69,6 +69,18 @@ record ConversationSummary(
         long avatarVersion,
         String avatarFallback,
         boolean searchVisible,
-        long searchVisibleAfterSeq
+        long searchVisibleAfterSeq,
+        long unreadCount,
+        ConversationLatestMessage latestMessage
+) {
+}
+
+record ConversationLatestMessage(
+        long conversationSeq,
+        String type,
+        String state,
+        String text,
+        Instant serverAcceptedAt,
+        String systemEventType
 ) {
 }

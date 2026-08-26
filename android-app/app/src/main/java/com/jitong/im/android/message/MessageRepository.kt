@@ -55,6 +55,10 @@ internal class MessageRepository(
         extraBufferCapacity = 8,
         onBufferOverflow = BufferOverflow.DROP_OLDEST,
     )
+    internal val conversationChanges = MutableSharedFlow<Unit>(
+        extraBufferCapacity = 8,
+        onBufferOverflow = BufferOverflow.DROP_OLDEST,
+    )
 
     suspend fun search(
         query: String,
@@ -133,6 +137,7 @@ internal class MessageRepository(
                 dao.upsert(it.toEntity())
             }
         }
+        conversationChanges.tryEmit(Unit)
     }
 
     suspend fun openConversation(conversationId: UUID) {
@@ -141,6 +146,7 @@ internal class MessageRepository(
             db.accountDao().current()?.userId?.let(UUID::fromString)
         } ?: return
         restoreConversation(conversationId, currentUserId, db)
+        conversationChanges.tryEmit(Unit)
     }
 
     suspend fun clearGroupData(conversationId: UUID) {
@@ -169,6 +175,7 @@ internal class MessageRepository(
             ReadStateRequest(requested),
         ).readBodyOrThrow()
         applyReadStates(readStates)
+        conversationChanges.tryEmit(Unit)
     }
 
     suspend fun synchronize(currentUserId: UUID, requestedUntil: Long) {
@@ -299,6 +306,7 @@ internal class MessageRepository(
                         }
                     }
                 }
+                conversationChanges.tryEmit(Unit)
             if (page.events.any {
                     it.eventType == "MESSAGE_RECALLED" ||
                         it.eventType == "MESSAGE_MODERATED"
@@ -325,6 +333,7 @@ internal class MessageRepository(
                     )
                 }
             }
+            conversationChanges.tryEmit(Unit)
         }
         syncApi.acknowledge(SyncAckRequest(requestedUntil)).syncBodyOrThrow()
     }
@@ -391,6 +400,7 @@ internal class MessageRepository(
         }
         syncApi.acknowledge(SyncAckRequest(highWatermark)).syncBodyOrThrow()
         searchInvalidations.tryEmit(Unit)
+        conversationChanges.tryEmit(Unit)
     }
 
     private suspend fun applyConversationSummary(conversation: SyncConversationResponse) {
@@ -640,6 +650,7 @@ internal class MessageRepository(
                 )
             }
         }
+        conversationChanges.tryEmit(Unit)
         pendingSendScheduler?.invoke()
         if (automaticSendingEnabled && webSocket.isConnected()) {
             flushOnlinePending()
@@ -694,6 +705,7 @@ internal class MessageRepository(
                 )
             }
         }
+        conversationChanges.tryEmit(Unit)
         pendingSendScheduler?.invoke()
         if (automaticSendingEnabled && webSocket.isConnected()) {
             flushOnlinePending()
@@ -816,6 +828,7 @@ internal class MessageRepository(
                 }
                 val localMediaPath = upsertAccepted(response)
                 mediaCache()?.delete(localMediaPath)
+                conversationChanges.tryEmit(Unit)
             } catch (exception: MessageSendException) {
                 withContext(Dispatchers.IO) {
                     db.withTransaction {
@@ -1215,6 +1228,7 @@ internal class MessageRepository(
             if (syncSeq != null) {
                 syncApi.acknowledge(SyncAckRequest(syncSeq)).syncBodyOrThrow()
             }
+            conversationChanges.tryEmit(Unit)
             return
         }
         if (event.operation == "message.recalled" || event.operation == "message.moderated") {
@@ -1287,6 +1301,7 @@ internal class MessageRepository(
             if (syncSeq != null) {
                 syncApi.acknowledge(SyncAckRequest(syncSeq)).syncBodyOrThrow()
             }
+            conversationChanges.tryEmit(Unit)
             return
         }
         val messageId = body.messageId ?: return
@@ -1383,6 +1398,7 @@ internal class MessageRepository(
                 )
             }
         }
+        conversationChanges.tryEmit(Unit)
         pendingAcks.complete(
             clientMsgId,
             MessageResponse(

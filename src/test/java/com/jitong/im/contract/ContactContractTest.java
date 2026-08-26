@@ -80,6 +80,39 @@ class ContactContractTest extends ContractTestEnvironment {
         assertThat(conversations.getStatusCode()).isEqualTo(HttpStatus.OK);
         assertThat(conversations.getBody()).hasSize(1);
         assertThat(conversations.getBody().get(0).get("conversationId").asText()).isEqualTo(conversationId);
+        assertThat(conversations.getBody().get(0).get("unreadCount").asLong()).isZero();
+        assertThat(conversations.getBody().get(0).get("latestMessage").get("type").asText())
+                .isEqualTo("SYSTEM");
+
+        JsonNode sent = exchange(
+                HttpMethod.POST,
+                "/api/v1/conversations/" + conversationId + "/messages",
+                aliceToken,
+                Map.of("clientMsgId", UUID.randomUUID(), "text", "最新消息")).getBody();
+        assertThat(sent.get("conversationSeq").asLong()).isEqualTo(2);
+
+        JsonNode updatedConversation = exchange(
+                HttpMethod.GET,
+                "/api/v1/conversations",
+                bobToken,
+                null).getBody().get(0);
+        assertThat(updatedConversation.get("unreadCount").asLong()).isEqualTo(1);
+        assertThat(updatedConversation.get("latestMessage").get("conversationSeq").asLong()).isEqualTo(2);
+        assertThat(updatedConversation.get("latestMessage").get("type").asText()).isEqualTo("TEXT");
+        assertThat(updatedConversation.get("latestMessage").get("text").asText()).isEqualTo("最新消息");
+
+        ResponseEntity<JsonNode> markedRead = exchange(
+                HttpMethod.POST,
+                "/api/v1/conversations/" + conversationId + "/read",
+                bobToken,
+                Map.of("readSeq", 2));
+        assertThat(markedRead.getStatusCode()).isEqualTo(HttpStatus.OK);
+        JsonNode readConversation = exchange(
+                HttpMethod.GET,
+                "/api/v1/conversations",
+                bobToken,
+                null).getBody().get(0);
+        assertThat(readConversation.get("unreadCount").asLong()).isZero();
 
         ResponseEntity<JsonNode> oldRequest = exchange(
                 HttpMethod.POST,

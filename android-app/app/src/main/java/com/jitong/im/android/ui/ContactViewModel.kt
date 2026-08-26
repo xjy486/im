@@ -9,6 +9,7 @@ import com.jitong.im.android.contact.ContactRequestSummary
 import com.jitong.im.android.contact.ContactSearchResult
 import com.jitong.im.android.contact.ContactSummary
 import com.jitong.im.android.contact.ConversationSummary
+import com.jitong.im.android.contact.sortedForMessageList
 import com.jitong.im.android.message.MessageRepository
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -83,9 +84,12 @@ internal class ContactViewModel(
             merge<ContactChangeEvent>(
                 messageRepository.relationshipChanges.map { ContactChangeEvent.Relationship(it) },
                 messageRepository.contactRequestChanges.map { ContactChangeEvent.Refresh },
+                messageRepository.conversationChanges.map { ContactChangeEvent.ConversationPreviewChanged },
             ).collect { event ->
                 if (event is ContactChangeEvent.Relationship) {
-                    _state.value = _state.value.applyRelationshipChange(event.change)
+                    runCatching { refreshLatest() }
+                } else if (event is ContactChangeEvent.ConversationPreviewChanged) {
+                    runCatching { refreshConversationPreviews() }
                 } else {
                     runCatching { refreshLatest() }
                 }
@@ -168,13 +172,18 @@ internal class ContactViewModel(
             val current = _state.value
             val requests = repository.requests()
             val contacts = repository.contacts()
-            val conversations = repository.conversations()
+            val conversations = repository.conversations().sortedForMessageList()
             _state.value = current.copy(
                 contacts = contacts,
                 conversations = conversations,
                 requests = requests,
             )
         }
+    }
+
+    internal suspend fun refreshConversationPreviews() {
+        val conversations = repository.conversations().sortedForMessageList()
+        _state.value = _state.value.copy(conversations = conversations)
     }
 
     internal fun refreshNow() {
@@ -204,6 +213,8 @@ internal class ContactViewModel(
 
 private sealed interface ContactChangeEvent {
     data class Relationship(val change: ContactRelationshipChange) : ContactChangeEvent
+
+    data object ConversationPreviewChanged : ContactChangeEvent
 
     data object Refresh : ContactChangeEvent
 }

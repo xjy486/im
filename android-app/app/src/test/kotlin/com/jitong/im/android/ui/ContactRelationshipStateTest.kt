@@ -4,12 +4,48 @@ import com.jitong.im.android.contact.ContactRelationshipChange
 import com.jitong.im.android.contact.ContactRequestSummary
 import com.jitong.im.android.contact.ContactSummary
 import com.jitong.im.android.contact.ConversationSummary
+import com.jitong.im.android.contact.messageListPreview
+import com.jitong.im.android.contact.sortedForMessageList
 import java.util.UUID
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertTrue
 
 class ContactRelationshipStateTest {
+
+    @Test
+    fun image_latest_message_uses_image_preview_text() {
+        val preview = ConversationSummary(
+            version = 1,
+            conversationId = UUID.randomUUID(),
+            peerUserId = UUID.randomUUID(),
+            peerAccountNo = "12345678901",
+            peerDisplayName = "Alice",
+            status = "ACTIVE",
+            relationship = "ACTIVE",
+            blockedByMe = false,
+            latestMessage = com.jitong.im.android.contact.ConversationPreview(
+                conversationSeq = 1,
+                type = "IMAGE",
+                text = "",
+                state = "ACTIVE",
+                serverAcceptedAt = "2026-08-26T00:00:01Z",
+            ),
+        )
+
+        assertEquals("图片", preview.messageListPreview())
+    }
+
+    @Test
+    fun message_list_orders_conversations_by_latest_message() {
+        val older = conversationWithPreview("Older", 100, "2026-08-26T00:00:01Z")
+        val newer = conversationWithPreview("Newer", 2, "2026-08-26T00:00:02Z")
+
+        assertEquals(
+            listOf("Newer", "Older"),
+            listOf(older, newer).sortedForMessageList().map { it.peerDisplayName },
+        )
+    }
 
     @Test
     fun pending_incoming_request_exposes_recipient_actions() {
@@ -91,4 +127,26 @@ class ContactRelationshipStateTest {
         assertEquals("READ_ONLY", actual.conversations.single().status)
         assertEquals("READ_ONLY", actual.conversations.single().relationship)
     }
+
+    private fun conversationWithPreview(
+        name: String,
+        sequence: Long,
+        acceptedAt: String,
+    ) = ConversationSummary(
+        version = 1,
+        conversationId = UUID.randomUUID(),
+        peerUserId = UUID.randomUUID(),
+        peerAccountNo = "12345678901",
+        peerDisplayName = name,
+        status = "ACTIVE",
+        relationship = "ACTIVE",
+        blockedByMe = false,
+        latestMessage = com.jitong.im.android.contact.ConversationPreview(
+            conversationSeq = sequence,
+            type = "TEXT",
+            text = name,
+            state = "ACTIVE",
+            serverAcceptedAt = acceptedAt,
+        ),
+    )
 }

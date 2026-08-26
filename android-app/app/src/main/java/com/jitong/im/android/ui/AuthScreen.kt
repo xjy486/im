@@ -113,6 +113,7 @@ import com.jitong.im.android.contact.ContactSearchResult
 import com.jitong.im.android.contact.ContactSummary
 import com.jitong.im.android.ui.ContactUiState
 import com.jitong.im.android.contact.ConversationSummary
+import com.jitong.im.android.contact.messageListPreview
 import com.jitong.im.android.group.GroupGovernancePolicy
 import com.jitong.im.android.group.GroupMemberSummary
 import com.jitong.im.android.group.GroupSearchResult
@@ -482,6 +483,14 @@ private fun HomeScreen(
             }
         }
     }
+    LaunchedEffect(state.session.userId, selectedTabName) {
+        if (selectedTabName == JitongTab.Messages.name) {
+            while (true) {
+                runCatching { contactViewModel.refreshLatest() }
+                delay(3_000)
+            }
+        }
+    }
     LaunchedEffect(groupState.autoResolveInvite) {
         if (groupState.autoResolveInvite) selectedTabName = JitongTab.Groups.name
     }
@@ -526,7 +535,7 @@ private fun HomeScreen(
                     openGroupManagementId = null
                     showQuickAdd = false
                 },
-                unreadCount = contactState.requests.count { it.incoming && it.status == "PENDING" },
+                unreadCount = contactState.conversations.sumOf { it.unreadCount },
             )
         },
     ) { padding ->
@@ -768,6 +777,8 @@ private fun MeHome(
 ) {
     var showDeleteDialog by rememberSaveable { mutableStateOf(false) }
     var deletePassword by rememberSaveable { mutableStateOf("") }
+    var showDisplayNameDialog by rememberSaveable { mutableStateOf(false) }
+    var displayNameDraft by rememberSaveable { mutableStateOf("") }
     Column(modifier.fillMaxSize().verticalScroll(rememberScrollState())) {
         JitongHeader(title = "我的", subtitle = "账号与安全")
         Surface(
@@ -782,11 +793,25 @@ private fun MeHome(
                     size = 72.dp,
                 )
                 Column(Modifier.weight(1f)) {
-                    Text("即通用户", style = MaterialTheme.typography.titleLarge, color = androidx.compose.ui.graphics.Color.White)
+                    Text(
+                        avatarState.profile?.displayName ?: "即通用户",
+                        style = MaterialTheme.typography.titleLarge,
+                        color = androidx.compose.ui.graphics.Color.White,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                    )
                     Text(session.accountNo, color = androidx.compose.ui.graphics.Color.White.copy(alpha = .8f))
                     Text("账号已受保护", style = MaterialTheme.typography.bodySmall, color = androidx.compose.ui.graphics.Color.White.copy(alpha = .75f))
                 }
-                Icon(Icons.Outlined.Edit, contentDescription = "编辑头像", tint = androidx.compose.ui.graphics.Color.White)
+                IconButton(
+                    onClick = {
+                        displayNameDraft = avatarState.profile?.displayName.orEmpty()
+                        showDisplayNameDialog = true
+                    },
+                    enabled = !avatarState.loading,
+                ) {
+                    Icon(Icons.Outlined.Edit, contentDescription = "编辑账户名", tint = androidx.compose.ui.graphics.Color.White)
+                }
             }
         }
         SectionLabel("个人资料")
@@ -840,6 +865,39 @@ private fun MeHome(
         }
         Spacer(Modifier.height(24.dp))
     }
+    if (showDisplayNameDialog) {
+        AlertDialog(
+            onDismissRequest = { if (!avatarState.loading) showDisplayNameDialog = false },
+            title = { Text("编辑账户名") },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Text("账户名会显示给联系人。", color = JitongColors.secondaryText)
+                    OutlinedTextField(
+                        value = displayNameDraft,
+                        onValueChange = { displayNameDraft = it.take(128) },
+                        label = { Text("账户名") },
+                        singleLine = true,
+                        enabled = !avatarState.loading,
+                    )
+                }
+            },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        avatarViewModel.updateDisplayName(displayNameDraft)
+                        showDisplayNameDialog = false
+                    },
+                    enabled = displayNameDraft.trim().isNotEmpty() && !avatarState.loading,
+                ) { Text("保存") }
+            },
+            dismissButton = {
+                TextButton(
+                    onClick = { showDisplayNameDialog = false },
+                    enabled = !avatarState.loading,
+                ) { Text("取消") }
+            },
+        )
+    }
     if (showDeleteDialog) {
         AlertDialog(
             onDismissRequest = { showDeleteDialog = false },
@@ -874,18 +932,23 @@ private fun ConversationRow(conversation: ConversationSummary, loadAvatar: suspe
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(12.dp),
     ) {
-        RemoteAvatar(
-            userId = conversation.peerUserId,
-            avatarVersion = conversation.avatarVersion,
-            fallback = conversation.avatarFallback,
-            load = loadAvatar,
-            size = 54.dp,
-        )
+        Box {
+            RemoteAvatar(
+                userId = conversation.peerUserId,
+                avatarVersion = conversation.avatarVersion,
+                fallback = conversation.avatarFallback,
+                load = loadAvatar,
+                size = 54.dp,
+            )
+            UnreadBadge(
+                count = conversation.unreadCount,
+                modifier = Modifier.align(Alignment.TopEnd),
+            )
+        }
         Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
             Text(conversation.peerDisplayName, style = MaterialTheme.typography.titleMedium, maxLines = 1, overflow = TextOverflow.Ellipsis)
             Text(
-                if (conversation.status == "READ_ONLY") "历史消息，只读"
-                else "点击进入聊天",
+                conversation.messageListPreview(),
                 color = JitongColors.secondaryText,
                 style = MaterialTheme.typography.bodyMedium,
                 maxLines = 1,
@@ -1343,7 +1406,10 @@ private fun ConversationScreen(
     }
     LaunchedEffect(state.messages.size) {
         snapshotFlow { listState.layoutInfo.visibleItemsInfo.lastOrNull()?.index }.collect { index ->
-            index?.let { state.messages.getOrNull(it)?.conversationSeq }?.let(viewModel::markRead)
+            val visibleReadSeq = index
+                ?.let { state.messages.getOrNull(it)?.conversationSeq }
+                ?: state.messages.lastOrNull { it.conversationSeq != null }?.conversationSeq
+            visibleReadSeq?.let(viewModel::markRead)
         }
     }
     Scaffold(

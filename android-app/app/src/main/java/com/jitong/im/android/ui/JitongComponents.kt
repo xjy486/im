@@ -70,12 +70,9 @@ internal fun JitongBottomBar(
                     Box {
                         Icon(tab.icon, contentDescription = tab.label)
                         if (tab == JitongTab.Messages && unreadCount > 0) {
-                            Box(
-                                Modifier
-                                    .size(8.dp)
-                                    .clip(CircleShape)
-                                    .background(JitongColors.danger)
-                                    .align(Alignment.TopEnd),
+                            UnreadBadge(
+                                count = unreadCount,
+                                modifier = Modifier.align(Alignment.TopEnd),
                             )
                         }
                     }

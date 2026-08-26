@@ -474,6 +474,13 @@ class ContactRepository {
                                u.avatar_version, c.status,
                                COALESCE(my_read.read_seq, 0) AS read_seq,
                                COALESCE(peer_read.read_seq, 0) AS peer_read_seq,
+                               COALESCE(unread.unread_count, 0) AS unread_count,
+                               latest.conversation_seq AS latest_conversation_seq,
+                               latest.type AS latest_type,
+                               latest.state AS latest_state,
+                               latest.text_content AS latest_text,
+                               latest.server_accepted_at AS latest_server_accepted_at,
+                               latest.system_event_type AS latest_system_event_type,
                                TRUE AS search_visible,
                                0 AS search_visible_after_seq,
                                CASE WHEN c.status = 'ACTIVE' THEN 'ACTIVE' ELSE 'READ_ONLY' END AS relationship,
@@ -498,6 +505,27 @@ class ContactRepository {
                              WHEN cc.user_low_id = :userId THEN cc.user_high_id
                              ELSE cc.user_low_id
                          END
+                        LEFT JOIN LATERAL (
+                            SELECT m.conversation_seq,
+                                   m.type,
+                                   m.state,
+                                   m.text_content,
+                                   m.server_accepted_at,
+                                   m.system_event_type
+                            FROM messages m
+                            WHERE m.conversation_id = cc.conversation_id
+                            ORDER BY m.conversation_seq DESC
+                            LIMIT 1
+                        ) latest ON TRUE
+                        LEFT JOIN LATERAL (
+                            SELECT COUNT(*) AS unread_count
+                            FROM messages m
+                            WHERE m.conversation_id = cc.conversation_id
+                              AND m.sender_id <> :userId
+                              AND m.type <> 'SYSTEM'
+                              AND m.state = 'ACTIVE'
+                              AND m.conversation_seq > COALESCE(my_read.read_seq, 0)
+                        ) unread ON TRUE
                         WHERE cc.user_low_id = :userId OR cc.user_high_id = :userId
                         ORDER BY c.created_at DESC
                         """)
@@ -528,7 +556,17 @@ class ContactRepository {
                                         row.getString("avatar_fallback"),
                                         fallback(row.getString("display_name"))),
                         row.getBoolean("search_visible"),
-                        row.getLong("search_visible_after_seq")))
+                        row.getLong("search_visible_after_seq"),
+                        row.getLong("unread_count"),
+                        row.getObject("latest_conversation_seq") == null
+                                ? null
+                                : new ConversationLatestMessage(
+                                        row.getLong("latest_conversation_seq"),
+                                        row.getString("latest_type"),
+                                        row.getString("latest_state"),
+                                        row.getString("latest_text"),
+                                        instant(row.getObject("latest_server_accepted_at", OffsetDateTime.class)),
+                                        row.getString("latest_system_event_type"))))
                 .list();
     }
 
