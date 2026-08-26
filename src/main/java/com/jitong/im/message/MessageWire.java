@@ -179,6 +179,14 @@ final class MessageWire {
                 new ContactRequestBody(requestId, syncSeq));
     }
 
+    static WireEnvelope conversationAiPolicyChanged(UUID conversationId, long syncSeq) {
+        return new WireEnvelope(
+                1,
+                "conversation.ai.policy.changed",
+                null,
+                new RelationshipBody(conversationId, syncSeq));
+    }
+
     static WireEnvelope aiJob(AiDelivery delivery, long syncSeq) {
         return new WireEnvelope(
                 1,

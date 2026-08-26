@@ -8,6 +8,7 @@ import com.jitong.im.android.ai.AiDraft
 import com.jitong.im.android.ai.AiRepository
 import com.jitong.im.android.local.LocalAiActionItemEntity
 import com.jitong.im.android.local.LocalAiArtifactEntity
+import com.jitong.im.android.message.MessageRepository
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -36,22 +37,29 @@ internal data class AiUiState(
     val message: String? = null,
 )
 
-internal class AiViewModel(private val repository: AiRepository) : ViewModel() {
+internal class AiViewModel(
+    private val repository: AiRepository,
+    private val messageRepository: MessageRepository,
+) : ViewModel() {
     private val _state = MutableStateFlow(AiUiState())
     val state: StateFlow<AiUiState> = _state.asStateFlow()
+
+    init {
+        viewModelScope.launch {
+            messageRepository.aiPolicyChanges.collect { conversationId ->
+                if (_state.value.conversationId == conversationId) {
+                    refreshConsent(conversationId)
+                }
+            }
+        }
+    }
 
     fun open(conversationId: UUID) {
         if (_state.value.conversationId != conversationId) {
             _state.value = AiUiState(conversationId = conversationId)
         }
         viewModelScope.launch {
-            runCatching { repository.consent(conversationId) }
-                .onSuccess { consent ->
-                    _state.value = _state.value.copy(
-                        consentEnabled = consent.enabled,
-                        enabledForBoth = consent.enabledForBoth,
-                    )
-                }
+            refreshConsent(conversationId)
             refreshLocal()
         }
     }
@@ -142,6 +150,18 @@ internal class AiViewModel(private val repository: AiRepository) : ViewModel() {
         )
     }
 
+    private suspend fun refreshConsent(conversationId: UUID) {
+        runCatching { repository.consent(conversationId) }
+            .onSuccess { consent ->
+                if (_state.value.conversationId == conversationId) {
+                    _state.value = _state.value.copy(
+                        consentEnabled = consent.enabled,
+                        enabledForBoth = consent.enabledForBoth,
+                    )
+                }
+            }
+    }
+
     private fun parseDrafts(artifact: LocalAiArtifactEntity): List<AiDraftUi> = runCatching {
         JsonParser.parseString(artifact.contentJson).asJsonObject
             .getAsJsonArray("replies")
@@ -168,8 +188,12 @@ internal class AiViewModel(private val repository: AiRepository) : ViewModel() {
 
     private fun AiDraft.toUi() = AiDraftUi(text, tone)
 
-    class Factory(private val repository: AiRepository) : ViewModelProvider.Factory {
+    class Factory(
+        private val repository: AiRepository,
+        private val messageRepository: MessageRepository,
+    ) : ViewModelProvider.Factory {
         @Suppress("UNCHECKED_CAST")
-        override fun <T : ViewModel> create(modelClass: Class<T>): T = AiViewModel(repository) as T
+        override fun <T : ViewModel> create(modelClass: Class<T>): T =
+            AiViewModel(repository, messageRepository) as T
     }
 }

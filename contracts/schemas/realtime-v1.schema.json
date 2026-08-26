@@ -31,6 +31,9 @@
       "$ref": "#/$defs/contactRequestEnvelope"
     },
     {
+      "$ref": "#/$defs/conversationAiPolicyEnvelope"
+    },
+    {
       "$ref": "#/$defs/aiJobEnvelope"
     },
     {
@@ -236,6 +239,24 @@
             },
             "body": {
               "$ref": "#/$defs/contactRequestBody"
+            }
+          }
+        }
+      ]
+    },
+    "conversationAiPolicyEnvelope": {
+      "allOf": [
+        {
+          "$ref": "#/$defs/baseEnvelope"
+        },
+        {
+          "type": "object",
+          "properties": {
+            "operation": {
+              "const": "conversation.ai.policy.changed"
+            },
+            "body": {
+              "$ref": "#/$defs/relationshipBody"
             }
           }
         }

@@ -131,6 +131,11 @@ public class AiService {
             throw new AiException(ApiErrorDefinition.NOT_CONTACT);
         }
         AiConsentResponse response = repository.updateConsent(conversationId, userId, enabled);
+        syncService.recordEventForUsers(
+                List.of(userId, conversation.peerUserId()),
+                "CONVERSATION_AI_POLICY_CHANGED",
+                conversationId,
+                conversationId);
         auditSink.record(new SecurityAuditEvent(
                 UuidV7.random(),
                 SecurityAuditEventType.C2C_AI_POLICY_CHANGE,

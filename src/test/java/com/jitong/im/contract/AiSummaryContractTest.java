@@ -75,6 +75,72 @@ class AiSummaryContractTest extends ContractTestEnvironment {
     private AiProvider provider;
 
     @Test
+    void propagates_c2c_ai_consent_changes_to_both_users_on_close_and_reopen() {
+        TestUser alice = createUser("Consent Alice");
+        TestUser bob = createUser("Consent Bob");
+        String aliceToken = login(alice.accountNo(), "consent-alice", "PC");
+        String bobToken = login(bob.accountNo(), "consent-bob", "MOBILE");
+        UUID conversationId = acceptContact(aliceToken, bob, bobToken);
+        enableAi(aliceToken, bobToken, conversationId);
+
+        long bobBeforeClose = syncHighWatermark(bobToken);
+        JsonNode closed = exchange(
+                "/api/v1/conversations/" + conversationId + "/ai/consent",
+                HttpMethod.PATCH,
+                aliceToken,
+                Map.of("enabled", false)).getBody();
+        assertThat(closed.get("enabledForBoth").asBoolean()).isFalse();
+        assertThat(exchange(
+                "/api/v1/conversations/" + conversationId + "/ai/consent",
+                HttpMethod.GET,
+                bobToken,
+                null).getBody().get("enabledForBoth").asBoolean()).isFalse();
+
+        JsonNode closeSync = exchange(
+                "/api/v1/sync?after=" + bobBeforeClose + "&limit=200",
+                HttpMethod.GET,
+                bobToken,
+                null).getBody();
+        assertThat(syncEvents(closeSync))
+                .anySatisfy(event -> {
+                    assertThat(event.get("eventType").asText())
+                            .isEqualTo("CONVERSATION_AI_POLICY_CHANGED");
+                    assertThat(event.get("entityId").asText())
+                            .isEqualTo(conversationId.toString());
+                    assertThat(event.get("conversationId").asText())
+                            .isEqualTo(conversationId.toString());
+                });
+
+        long bobBeforeReopen = syncHighWatermark(bobToken);
+        JsonNode reopened = exchange(
+                "/api/v1/conversations/" + conversationId + "/ai/consent",
+                HttpMethod.PATCH,
+                aliceToken,
+                Map.of("enabled", true)).getBody();
+        assertThat(reopened.get("enabledForBoth").asBoolean()).isTrue();
+        assertThat(exchange(
+                "/api/v1/conversations/" + conversationId + "/ai/consent",
+                HttpMethod.GET,
+                bobToken,
+                null).getBody().get("enabledForBoth").asBoolean()).isTrue();
+
+        JsonNode reopenSync = exchange(
+                "/api/v1/sync?after=" + bobBeforeReopen + "&limit=200",
+                HttpMethod.GET,
+                bobToken,
+                null).getBody();
+        assertThat(syncEvents(reopenSync))
+                .anySatisfy(event -> {
+                    assertThat(event.get("eventType").asText())
+                            .isEqualTo("CONVERSATION_AI_POLICY_CHANGED");
+                    assertThat(event.get("entityId").asText())
+                            .isEqualTo(conversationId.toString());
+                    assertThat(event.get("conversationId").asText())
+                            .isEqualTo(conversationId.toString());
+                });
+    }
+
+    @Test
     void requires_bilateral_consent_queues_a_private_summary_and_delivers_a_structured_result() {
         TestUser alice = createUser("AI Alice");
         TestUser bob = createUser("AI Bob");
@@ -1522,6 +1588,20 @@ class AiSummaryContractTest extends ContractTestEnvironment {
                 JsonNode.class);
         assertThat(response.getStatusCode()).isEqualTo(HttpStatus.OK);
         return response.getBody().get("accessToken").asText();
+    }
+
+    private long syncHighWatermark(String token) {
+        return exchange(
+                "/api/v1/sync?after=0&until=0",
+                HttpMethod.GET,
+                token,
+                null).getBody().get("highWatermark").asLong();
+    }
+
+    private List<JsonNode> syncEvents(JsonNode page) {
+        List<JsonNode> events = new ArrayList<>();
+        page.get("events").forEach(events::add);
+        return events;
     }
 
     private UUID acceptContact(String aliceToken, TestUser bob, String bobToken) {

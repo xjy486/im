@@ -55,6 +55,11 @@ internal class MessageRepository(
         extraBufferCapacity = 8,
         onBufferOverflow = BufferOverflow.DROP_OLDEST,
     )
+    internal val aiPolicyChanges = MutableSharedFlow<UUID>(
+        replay = 1,
+        extraBufferCapacity = 8,
+        onBufferOverflow = BufferOverflow.DROP_OLDEST,
+    )
     internal val conversationChanges = MutableSharedFlow<Unit>(
         extraBufferCapacity = 8,
         onBufferOverflow = BufferOverflow.DROP_OLDEST,
@@ -246,6 +251,14 @@ internal class MessageRepository(
             if (page.events.any { it.eventType == "CONTACT_REQUEST_CREATED" }) {
                 contactRequestChanges.tryEmit(Unit)
             }
+            page.events
+                .filter {
+                    it.eventType == "CONVERSATION_AI_POLICY_CHANGED"
+                        && it.conversationId != null
+                }
+                .mapNotNull { it.conversationId }
+                .distinct()
+                .forEach(aiPolicyChanges::tryEmit)
             if (page.events.any { it.eventType.startsWith("AI_") }) {
                 refreshAiData()
             }
@@ -1190,6 +1203,30 @@ internal class MessageRepository(
                 )
             }
             contactRequestChanges.tryEmit(Unit)
+            syncApi.acknowledge(SyncAckRequest(syncSeq)).syncBodyOrThrow()
+            return
+        }
+        if (event.operation == "conversation.ai.policy.changed") {
+            val conversationId = body.conversationId ?: return
+            val syncSeq = body.syncSeq ?: return
+            val lastSyncSeq = withContext(Dispatchers.IO) {
+                db.syncStateDao().current()?.lastSyncSeq ?: 0L
+            }
+            if (syncSeq <= lastSyncSeq) return
+            if (syncSeq != lastSyncSeq + 1) {
+                synchronize(currentUserId, syncSeq)
+                return
+            }
+            withContext(Dispatchers.IO) {
+                db.syncStateDao().upsert(
+                    SyncStateEntity(
+                        deviceId = deviceId()?.toString().orEmpty(),
+                        lastSyncSeq = syncSeq,
+                        lastFullRestoreAt = db.syncStateDao().current()?.lastFullRestoreAt,
+                    ),
+                )
+            }
+            aiPolicyChanges.tryEmit(conversationId)
             syncApi.acknowledge(SyncAckRequest(syncSeq)).syncBodyOrThrow()
             return
         }

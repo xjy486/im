@@ -399,6 +399,7 @@ FCM 提示后补拉同步流。客户端收到事件后重新读取权威会话�
 - RATE_LIMITED。
 - CONTACT_RELATIONSHIP_CHANGED（用户同步事件，不是客户端可提交的命令）。
 - CONTACT_REQUEST_CREATED（用户同步事件，不是客户端可提交的命令）。
+- CONVERSATION_AI_POLICY_CHANGED（用户同步事件，不是客户端可提交的命令）。
 
 REST 用 OpenAPI 描述，WSS 和 AI 输出用版本化 JSON Schema 描述。
 
@@ -415,6 +416,11 @@ REST 用 OpenAPI 描述，WSS 和 AI 输出用版本化 JSON Schema 描述。
     }
 
 该通知只负责低延迟唤醒和快速更新，完整会话状态以 `/sync` 后的权威摘要为准。
+
+C2C 任一方更新私人 AI 同意状态时，服务端在同一事务中为双方写入
+`CONVERSATION_AI_POLICY_CHANGED`，`entityId` 和 `conversationId` 均指向 C2C 会话。
+前台 WSS 使用 `conversation.ai.policy.changed` 作为低延迟唤醒，客户端随后重新读取
+当前用户的 AI consent；离线 MOBILE 设备通过 `PROFILE_CHANGED` 提示补拉 `/sync`。
 
 ## 12. 可靠消息事务
 

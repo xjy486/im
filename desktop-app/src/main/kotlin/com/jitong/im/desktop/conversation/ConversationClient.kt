@@ -1583,6 +1583,10 @@ class ConversationClient(
             syncSeq?.let(local::saveLastSyncSeq)
             return
         }
+        if (envelope.operation == "conversation.ai.policy.changed") {
+            syncSeq?.let(local::saveLastSyncSeq)
+            return
+        }
         if (envelope.operation.startsWith("ai.")) {
             syncSeq?.let(local::saveLastSyncSeq)
             return
@@ -1611,11 +1615,19 @@ class ConversationClient(
         local: LocalDatabase,
         envelope: DesktopRealtimeEnvelope,
         currentUserId: String,
-    ) {
+    ): DesktopAiConsent? {
         if (envelope.operation.startsWith("ai.")) {
             refreshAiData(accessToken, local)
         }
+        val aiConsent = if (envelope.operation == "conversation.ai.policy.changed") {
+            envelope.body?.conversationId?.let { conversationId ->
+                aiConsent(accessToken, conversationId)
+            }
+        } else {
+            null
+        }
         applyRealtime(local, envelope, currentUserId, accessToken)
+        return aiConsent
     }
 
     private fun DesktopRealtimeBody.toMessage(): DesktopMessage? {

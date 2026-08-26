@@ -144,7 +144,8 @@ internal class AppContainer(context: Context) {
                                 "message.created", "message.ack", "message.recalled", "message.moderated", "conversation.read",
                                 "user.profile.updated", "group.profile.updated",
                                 "membership.revoked", "membership.granted", "group.dissolved",
-                                "contact.relationship.changed", "contact.request.created", "error" ->
+                                "contact.relationship.changed", "contact.request.created",
+                                "conversation.ai.policy.changed", "error" ->
                                     runCatching {
                                         syncMutex.withLock {
                                             messageRepository.apply(event, userId)

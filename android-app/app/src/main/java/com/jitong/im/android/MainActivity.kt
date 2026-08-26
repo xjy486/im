@@ -48,7 +48,10 @@ class MainActivity : ComponentActivity() {
     }
     private val aiViewModel: AiViewModel by viewModels {
         val container = (application as JitongApplication).container
-        AiViewModel.Factory(container.aiRepository)
+        AiViewModel.Factory(
+            container.aiRepository,
+            container.messageRepository,
+        )
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {

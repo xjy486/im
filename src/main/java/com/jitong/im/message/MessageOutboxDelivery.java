@@ -222,6 +222,10 @@ class MessageOutboxDelivery implements OutboxDelivery {
                     MessageWire.contactRelationshipChanged(record.conversationId(), record.syncSeq());
             case "CONTACT_REQUEST_CREATED" ->
                     MessageWire.contactRequestCreated(record.entityId(), record.syncSeq());
+            case "CONVERSATION_AI_POLICY_CHANGED" ->
+                    MessageWire.conversationAiPolicyChanged(
+                            record.conversationId(),
+                            record.syncSeq());
             case "AI_JOB_QUEUED", "AI_JOB_STARTED", "AI_JOB_COMPLETED", "AI_JOB_FAILED" -> {
                 if (aiService == null) {
                     yield null;
@@ -314,6 +318,8 @@ class MessageOutboxDelivery implements OutboxDelivery {
             case "GROUP_DISSOLVED" ->
                     fcmSender.sendProfileChanged(token);
             case "CONTACT_RELATIONSHIP_CHANGED" ->
+                    fcmSender.sendProfileChanged(token);
+            case "CONVERSATION_AI_POLICY_CHANGED" ->
                     fcmSender.sendProfileChanged(token);
             case "CONTACT_REQUEST_CREATED" ->
                     fcmSender.sendContactRequest(token);

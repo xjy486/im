@@ -240,6 +240,25 @@ private fun DesktopApp(
             .toSet()
         mediaBytes = mediaBytes.filterKeys { it in activeMediaKeys }
         val token = authStore.session?.accessToken ?: session?.accessToken
+        val selectedAiConversation = selectedConversationId
+            ?.let { conversationId ->
+                conversations.firstOrNull { it.conversationId == conversationId }
+            }
+        if (token != null && selectedAiConversation?.kind == "C2C") {
+            val conversationId = selectedAiConversation.conversationId
+            uiScope.launch(Dispatchers.IO) {
+                val policy = runCatching {
+                    conversationClient.aiConsent(token, conversationId)
+                }.getOrNull()
+                if (policy != null) {
+                    withContext(Dispatchers.Main.immediate) {
+                        if (selectedConversationId == conversationId) {
+                            aiConsent = policy
+                        }
+                    }
+                }
+            }
+        }
         val activeAvatarKeys = conversations
             .filter { it.kind == "C2C" && it.peerAvatarVersion > 0 && it.peerUserId.isNotBlank() }
             .map { "${it.peerUserId}-v${it.peerAvatarVersion}" }
@@ -553,11 +572,15 @@ private fun DesktopApp(
                                         }
                                     }
                                 } else {
-                                    conversationClient.applyRealtimeAuthoritatively(
+                                    val aiPolicy = conversationClient.applyRealtimeAuthoritatively(
                                         (authStore.session ?: current).accessToken,
                                         local,
                                         envelope,
                                         (authStore.session ?: current).userId)
+                                    if (aiPolicy != null
+                                        && selectedConversationId == aiPolicy.conversationId) {
+                                        aiConsent = aiPolicy
+                                    }
                                 }
                                 if (envelope.operation != "sync.ready"
                                     && envelope.body?.syncSeq != null) {
