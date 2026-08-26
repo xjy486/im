@@ -568,6 +568,9 @@ private fun DesktopApp(
                             }
                         }
                         refreshLocal()
+                        if (shouldRefreshContactRequests(envelope.operation)) {
+                            refreshRequests()
+                        }
                         if (envelope.operation == "membership.granted"
                             || (envelope.operation == "message.created"
                                 && envelope.body?.type == "SYSTEM")) {

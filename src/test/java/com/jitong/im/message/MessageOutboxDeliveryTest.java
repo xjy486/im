@@ -107,6 +107,27 @@ class MessageOutboxDeliveryTest {
     }
 
     @Test
+    void keeps_the_outbox_row_pending_when_fcm_is_not_configured() {
+        OutboxRecord record = record("CONTACT_REQUEST_CREATED");
+        when(messageRepository.findUserIdForDevice(record.targetDeviceId())).thenReturn(UUID.randomUUID());
+        when(pushTokenService.isMobile(record.targetDeviceId())).thenReturn(true);
+        when(fcmSender.sendContactRequest(null)).thenReturn(FcmDeliveryResult.NOT_CONFIGURED);
+
+        assertThat(delivery.deliver(record)).isFalse();
+    }
+
+    @Test
+    void keeps_the_outbox_row_pending_when_mobile_has_no_push_token() {
+        OutboxRecord record = record("CONTACT_REQUEST_CREATED");
+        when(messageRepository.findUserIdForDevice(record.targetDeviceId())).thenReturn(UUID.randomUUID());
+        when(pushTokenService.isMobile(record.targetDeviceId())).thenReturn(true);
+        when(pushTokenService.find(record.targetDeviceId())).thenReturn(null);
+        when(fcmSender.sendContactRequest(null)).thenReturn(FcmDeliveryResult.NO_TOKEN);
+
+        assertThat(delivery.deliver(record)).isFalse();
+    }
+
+    @Test
     void sends_a_profile_changed_fcm_fallback_for_offline_avatar_updates() {
         OutboxRecord record = record("USER_PROFILE_UPDATED");
         when(messageRepository.findUserIdForDevice(record.targetDeviceId())).thenReturn(UUID.randomUUID());

@@ -1,13 +1,54 @@
 package com.jitong.im.android.ui
 
 import com.jitong.im.android.contact.ContactRelationshipChange
+import com.jitong.im.android.contact.ContactRequestSummary
 import com.jitong.im.android.contact.ContactSummary
 import com.jitong.im.android.contact.ConversationSummary
 import java.util.UUID
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertTrue
 
 class ContactRelationshipStateTest {
+
+    @Test
+    fun pending_incoming_request_exposes_recipient_actions() {
+        val request = ContactRequestSummary(
+            version = 1,
+            requestId = UUID.randomUUID(),
+            requesterId = UUID.randomUUID(),
+            recipientId = UUID.randomUUID(),
+            status = "PENDING",
+            verification = "",
+            expiresAt = "2026-08-27T00:00:00Z",
+            incoming = true,
+            peerAccountNo = "12345678901",
+            peerDisplayName = "Alice",
+        )
+
+        assertEquals(
+            listOf(ContactRequestAction.ACCEPT, ContactRequestAction.REJECT),
+            contactRequestActions(request),
+        )
+    }
+
+    @Test
+    fun resolved_incoming_request_does_not_expose_recipient_actions() {
+        val request = ContactRequestSummary(
+            version = 1,
+            requestId = UUID.randomUUID(),
+            requesterId = UUID.randomUUID(),
+            recipientId = UUID.randomUUID(),
+            status = "ACCEPTED",
+            verification = "",
+            expiresAt = "2026-08-27T00:00:00Z",
+            incoming = true,
+            peerAccountNo = "12345678901",
+            peerDisplayName = "Alice",
+        )
+
+        assertTrue(contactRequestActions(request).isEmpty())
+    }
 
     @Test
     fun removing_a_contact_immediately_hides_the_contact_and_disables_the_c2c_conversation() {

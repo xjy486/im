@@ -50,7 +50,11 @@ internal class MessageRepository(
         extraBufferCapacity = 8,
         onBufferOverflow = BufferOverflow.DROP_OLDEST,
     )
-    internal val contactRequestChanges = MutableSharedFlow<Unit>(extraBufferCapacity = 8)
+    internal val contactRequestChanges = MutableSharedFlow<Unit>(
+        replay = 1,
+        extraBufferCapacity = 8,
+        onBufferOverflow = BufferOverflow.DROP_OLDEST,
+    )
 
     suspend fun search(
         query: String,

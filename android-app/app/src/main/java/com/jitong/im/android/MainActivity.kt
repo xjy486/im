@@ -73,6 +73,16 @@ class MainActivity : ComponentActivity() {
         handleInviteIntent(intent)
     }
 
+    override fun onStart() {
+        super.onStart()
+        (application as JitongApplication).container.startForegroundSync()
+    }
+
+    override fun onStop() {
+        (application as JitongApplication).container.stopForegroundSync()
+        super.onStop()
+    }
+
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
         setIntent(intent)

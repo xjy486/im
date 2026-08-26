@@ -31,9 +31,14 @@ import com.jitong.im.android.security.SecureSessionStore
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.collectLatest
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.tasks.await
 import okhttp3.OkHttpClient
 import retrofit2.Retrofit
@@ -103,6 +108,8 @@ internal class AppContainer(context: Context) {
     private var notificationSyncPending = false
 
     private val messageScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+    private val syncMutex = Mutex()
+    private var foregroundSyncJob: Job? = null
     private val syncReadyHandler = SyncReadyHandler(
         synchronize = messageRepository::synchronize,
         onFailure = { PendingMessageScheduler.enqueue(appContext) },
@@ -125,21 +132,27 @@ internal class AppContainer(context: Context) {
                         syncAfterNotification()
                     }
                     scheduleCurrentPushTokenRegistration()
-                    messageWebSocket.events.collect { event ->
-                        val userId = sessionManager.snapshot()?.userId?.let(UUID::fromString) ?: return@collect
-                        when (event.operation) {
-                            "sync.ready" -> {
-                                val watermark = event.body?.highWatermark ?: return@collect
-                                syncReadyHandler.handle(userId, watermark)
-                            }
-                            "message.created", "message.ack", "message.recalled", "message.moderated", "conversation.read",
-                            "user.profile.updated", "group.profile.updated",
-                            "membership.revoked", "membership.granted", "group.dissolved",
-                            "contact.relationship.changed", "contact.request.created", "error" ->
-                                runCatching { messageRepository.apply(event, userId) }
-                                    .onFailure { exception ->
-                                        if (exception is CancellationException) throw exception
-                                        PendingMessageScheduler.enqueue(appContext)
+                        messageWebSocket.events.collect { event ->
+                            val userId = sessionManager.snapshot()?.userId?.let(UUID::fromString) ?: return@collect
+                            when (event.operation) {
+                                "sync.ready" -> {
+                                    val watermark = event.body?.highWatermark ?: return@collect
+                                    syncMutex.withLock {
+                                        syncReadyHandler.handle(userId, watermark)
+                                    }
+                                }
+                                "message.created", "message.ack", "message.recalled", "message.moderated", "conversation.read",
+                                "user.profile.updated", "group.profile.updated",
+                                "membership.revoked", "membership.granted", "group.dissolved",
+                                "contact.relationship.changed", "contact.request.created", "error" ->
+                                    runCatching {
+                                        syncMutex.withLock {
+                                            messageRepository.apply(event, userId)
+                                        }
+                                    }
+                                        .onFailure { exception ->
+                                            if (exception is CancellationException) throw exception
+                                            PendingMessageScheduler.enqueue(appContext)
                                     }
                             "ai.job.updated", "ai.artifact.deleted", "ai.job.deleted",
                             "ai.action-item.updated", "ai.action-item.deleted" ->
@@ -169,7 +182,37 @@ internal class AppContainer(context: Context) {
 
     suspend fun syncLatestForWorker() {
         val userId = sessionManager.snapshot()?.userId?.let(UUID::fromString) ?: return
-        messageRepository.syncLatest(userId)
+        syncMutex.withLock {
+            messageRepository.syncLatest(userId)
+        }
+    }
+
+    internal fun startForegroundSync() {
+        if (foregroundSyncJob?.isActive == true) {
+            return
+        }
+        foregroundSyncJob = messageScope.launch {
+            while (isActive) {
+                val snapshot = sessionManager.snapshot()
+                if (snapshot != null
+                    && sessionManager.state.value is com.jitong.im.android.auth.SessionState.SignedIn
+                ) {
+                    runCatching {
+                        syncMutex.withLock {
+                            messageRepository.syncLatest(UUID.fromString(snapshot.userId))
+                        }
+                    }.onFailure {
+                        PendingMessageScheduler.enqueue(appContext)
+                    }
+                }
+                delay(3_000)
+            }
+        }
+    }
+
+    internal fun stopForegroundSync() {
+        foregroundSyncJob?.cancel()
+        foregroundSyncJob = null
     }
 
     fun handleNotification(type: String) {
@@ -183,7 +226,11 @@ internal class AppContainer(context: Context) {
     private fun syncAfterNotification() {
         val userId = sessionManager.snapshot()?.userId?.let(UUID::fromString) ?: return
         messageScope.launch {
-            runCatching { messageRepository.syncLatest(userId) }
+            runCatching {
+                syncMutex.withLock {
+                    messageRepository.syncLatest(userId)
+                }
+            }
                 .onSuccess { notificationSyncPending = false }
                 .onFailure { PendingMessageScheduler.enqueue(appContext) }
         }

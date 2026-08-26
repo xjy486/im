@@ -319,11 +319,17 @@ class MessageOutboxDelivery implements OutboxDelivery {
                     fcmSender.sendContactRequest(token);
             default -> FcmDeliveryResult.SENT;
         };
+        if (result == null) {
+            return false;
+        }
         if (result == FcmDeliveryResult.PERMANENT_TOKEN_FAILURE) {
             if (token != null) {
                 pushTokenService.clearIfCurrent(record.targetDeviceId(), token);
             }
         }
-        return result != FcmDeliveryResult.RETRYABLE_FAILURE;
+        return switch (result) {
+            case SENT, PERMANENT_TOKEN_FAILURE -> true;
+            case NOT_CONFIGURED, NO_TOKEN, RETRYABLE_FAILURE -> false;
+        };
     }
 }

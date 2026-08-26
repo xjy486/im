@@ -1579,6 +1579,10 @@ class ConversationClient(
             syncSeq?.let(local::saveLastSyncSeq)
             return
         }
+        if (envelope.operation == "contact.request.created") {
+            syncSeq?.let(local::saveLastSyncSeq)
+            return
+        }
         if (envelope.operation.startsWith("ai.")) {
             syncSeq?.let(local::saveLastSyncSeq)
             return

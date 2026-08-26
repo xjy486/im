@@ -44,6 +44,7 @@ class FcmFallbackContractTest extends ContractTestEnvironment {
     @Test
     void sends_content_free_fcm_prompt_when_a_mobile_device_has_no_websocket() throws Exception {
         when(fcmSender.sendNewMessage(anyString())).thenReturn(FcmDeliveryResult.SENT);
+        when(fcmSender.sendContactRequest(anyString())).thenReturn(FcmDeliveryResult.SENT);
 
         TestUser alice = createUser("FCM sender");
         TestUser bob = createUser("FCM receiver");

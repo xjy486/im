@@ -16,7 +16,27 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.merge
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import java.util.UUID
+
+internal enum class ContactRequestAction {
+    ACCEPT,
+    REJECT,
+    CANCEL,
+}
+
+internal fun contactRequestActions(
+    request: ContactRequestSummary,
+): List<ContactRequestAction> =
+    when {
+        request.status != "PENDING" -> emptyList()
+        request.incoming -> listOf(
+            ContactRequestAction.ACCEPT,
+            ContactRequestAction.REJECT,
+        )
+        else -> listOf(ContactRequestAction.CANCEL)
+    }
 
 internal data class ContactUiState(
     val loading: Boolean = false,
@@ -56,6 +76,7 @@ internal class ContactViewModel(
 ) : ViewModel() {
     private val _state = MutableStateFlow(ContactUiState())
     val state: StateFlow<ContactUiState> = _state.asStateFlow()
+    private val refreshMutex = Mutex()
 
     init {
         viewModelScope.launch {
@@ -66,7 +87,7 @@ internal class ContactViewModel(
                 if (event is ContactChangeEvent.Relationship) {
                     _state.value = _state.value.applyRelationshipChange(event.change)
                 } else {
-                    runCatching { refreshData() }
+                    runCatching { refreshLatest() }
                 }
             }
         }
@@ -90,65 +111,76 @@ internal class ContactViewModel(
     fun addContact(accountNo: String) {
         launchRequest {
             repository.createRequest(accountNo, "")
-            refreshData()
+            refreshLatest()
         }
     }
 
     fun accept(requestId: UUID) {
         launchRequest {
             repository.accept(requestId)
-            refreshData()
+            refreshLatest()
         }
     }
 
     fun reject(requestId: UUID) {
         launchRequest {
             repository.reject(requestId)
-            refreshData()
+            refreshLatest()
         }
     }
 
     fun cancel(requestId: UUID) {
         launchRequest {
             repository.cancel(requestId)
-            refreshData()
+            refreshLatest()
         }
     }
 
     fun remove(userId: UUID) {
         launchRequest {
             repository.remove(userId)
-            refreshData()
+            refreshLatest()
         }
     }
 
     fun block(userId: UUID) {
         launchRequest {
             repository.block(userId)
-            refreshData()
+            refreshLatest()
         }
     }
 
     fun unblock(userId: UUID) {
         launchRequest {
             repository.unblock(userId)
-            refreshData()
+            refreshLatest()
         }
     }
 
     fun refresh() {
         launchRequest {
-            refreshData()
+            refreshLatest()
         }
     }
 
-    private suspend fun refreshData() {
-        val contacts = repository.contacts()
-        _state.value = _state.value.copy(
-            contacts = contacts,
-            conversations = repository.conversations(),
-            requests = repository.requests(),
-        )
+    internal suspend fun refreshLatest() {
+        refreshMutex.withLock {
+            val current = _state.value
+            val requests = repository.requests()
+            val contacts = repository.contacts()
+            val conversations = repository.conversations()
+            _state.value = current.copy(
+                contacts = contacts,
+                conversations = conversations,
+                requests = requests,
+            )
+        }
+    }
+
+    internal fun refreshNow() {
+        launchRequest {
+            refreshLatest()
+        }
     }
 
     private fun launchRequest(block: suspend () -> Unit) {

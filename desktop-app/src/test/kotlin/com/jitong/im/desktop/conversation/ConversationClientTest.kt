@@ -98,6 +98,38 @@ class ConversationClientTest {
     }
 
     @Test
+    fun contact_request_realtime_event_advances_cursor_without_materializing_message_data() {
+        val server = MockWebServer()
+        server.start()
+        val manager = LocalDatabaseManager(
+            createTempDirectory("jitong-contact-request-realtime"),
+            InMemoryKeychain())
+        try {
+            val client = ConversationClient(
+                baseUrl = server.url("/").toString(),
+                httpClient = OkHttpClient())
+            val local = manager.open("12345678903")
+
+            client.applyRealtimeAuthoritatively(
+                accessToken = "access",
+                local = local,
+                envelope = DesktopRealtimeEnvelope(
+                    version = 1,
+                    operation = "contact.request.created",
+                    requestId = null,
+                    body = DesktopRealtimeBody(
+                        syncSeq = 1)),
+                currentUserId = "user-1")
+
+            assertEquals(1, local.lastSyncSeq())
+            assertEquals(0, server.requestCount)
+            local.close()
+        } finally {
+            server.shutdown()
+        }
+    }
+
+    @Test
     fun private_ai_summary_and_group_policy_use_the_shared_v1_contract() {
         val server = MockWebServer()
         server.enqueue(

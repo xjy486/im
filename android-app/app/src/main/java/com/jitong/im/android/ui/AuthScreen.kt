@@ -119,6 +119,7 @@ import com.jitong.im.android.group.GroupSearchResult
 import com.jitong.im.android.group.GroupSummary
 import com.jitong.im.android.local.LocalAiActionItemEntity
 import com.jitong.im.android.local.LocalMessageEntity
+import kotlinx.coroutines.delay
 import java.io.ByteArrayOutputStream
 import java.util.UUID
 
@@ -467,6 +468,19 @@ private fun HomeScreen(
         contactViewModel.refresh()
         avatarViewModel.refresh()
         groupViewModel.refresh()
+    }
+    LaunchedEffect(selectedTabName, contactSection) {
+        if (selectedTabName == JitongTab.Contacts.name && contactSection == "requests") {
+            contactViewModel.refreshNow()
+        }
+    }
+    LaunchedEffect(state.session.userId, selectedTabName) {
+        if (selectedTabName == JitongTab.Contacts.name) {
+            while (true) {
+                runCatching { contactViewModel.refreshLatest() }
+                delay(3_000)
+            }
+        }
     }
     LaunchedEffect(groupState.autoResolveInvite) {
         if (groupState.autoResolveInvite) selectedTabName = JitongTab.Groups.name
@@ -954,20 +968,44 @@ private fun ContactRequestsContent(state: ContactUiState, viewModel: ContactView
 
 @Composable
 private fun RequestRow(request: ContactRequestSummary, viewModel: ContactViewModel) {
+    val actions = contactRequestActions(request)
     Row(Modifier.fillMaxWidth().padding(horizontal = 18.dp, vertical = 14.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
         AvatarPlaceholder(request.peerDisplayName, size = 50.dp)
         Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
             Text(request.peerDisplayName, style = MaterialTheme.typography.titleMedium)
-            Text(if (request.incoming) "请求添加你为联系人" else "等待对方处理申请", color = JitongColors.secondaryText)
+            Text(
+                when (request.status) {
+                    "PENDING" -> if (request.incoming) "请求添加你为联系人" else "等待对方处理申请"
+                    "ACCEPTED" -> "已同意联系人申请"
+                    "REJECTED" -> "已拒绝联系人申请"
+                    "CANCELLED" -> "已取消联系人申请"
+                    "EXPIRED" -> "联系人申请已过期"
+                    else -> request.status
+                },
+                color = JitongColors.secondaryText,
+            )
             request.verification.takeIf { it.isNotBlank() }?.let { Text(it, style = MaterialTheme.typography.bodySmall, color = JitongColors.tertiaryText) }
         }
-        if (request.status == "PENDING") {
-            if (request.incoming) {
-                IconButton(onClick = { viewModel.accept(request.requestId) }) { Icon(Icons.Outlined.Check, contentDescription = "接受", tint = JitongColors.success) }
-                IconButton(onClick = { viewModel.reject(request.requestId) }) { Icon(Icons.Outlined.Close, contentDescription = "拒绝", tint = JitongColors.danger) }
-            } else {
-                TextButton(onClick = { viewModel.cancel(request.requestId) }) { Text("取消") }
+        if (ContactRequestAction.ACCEPT in actions) {
+            Column(
+                verticalArrangement = Arrangement.spacedBy(2.dp),
+                horizontalAlignment = Alignment.End,
+            ) {
+                TextButton(
+                    onClick = { viewModel.accept(request.requestId) },
+                    contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 8.dp, vertical = 0.dp),
+                ) {
+                    Text("同意", color = JitongColors.success)
+                }
+                TextButton(
+                    onClick = { viewModel.reject(request.requestId) },
+                    contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 8.dp, vertical = 0.dp),
+                ) {
+                    Text("拒绝", color = JitongColors.danger)
+                }
             }
+        } else if (ContactRequestAction.CANCEL in actions) {
+            TextButton(onClick = { viewModel.cancel(request.requestId) }) { Text("取消") }
         }
     }
     Divider(color = JitongColors.divider, modifier = Modifier.padding(start = 80.dp))
