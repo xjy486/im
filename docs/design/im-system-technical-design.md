@@ -282,7 +282,7 @@ FCM 提示后补拉同步流。客户端收到事件后重新读取权威会话�
 | UNLISTED | 否 | 是 | 是 | 是 |
 | PRIVATE | 否 | 否 | 否 | 是 |
 
-所有用户主动加入均需审批；管理员邀请可以直接入群。
+所有用户主动加入均需审批；管理员按账号发出的成员邀请也必须由被邀请人确认后才能入群。
 
 ### 9.4 邀请与审批
 
@@ -292,6 +292,14 @@ FCM 提示后补拉同步流。客户端收到事件后重新读取权威会话�
 
 - `PENDING`；
 - `APPROVED`；
+- `REJECTED`；
+- `CANCELLED`；
+- `EXPIRED`。
+
+账号成员邀请状态：
+
+- `PENDING`；
+- `ACCEPTED`；
 - `REJECTED`；
 - `CANCELLED`；
 - `EXPIRED`。
@@ -636,6 +644,7 @@ PC 还保存 `local_ai_jobs`、`local_ai_artifacts` 和 `local_ai_action_items`�
 | group_membership_audit | 角色与成员生命周期审计 |
 | group_invites | token_hash、expires_at、max_uses、use_count、status |
 | group_join_requests | group_id、user_id、status、created_at |
+| group_member_invitations | conversation_id、inviter_user_id、invitee_user_id、status、created_at、resolved_at |
 | group_bans | group_id、user_id、actor_id、reason |
 
 公开群名称和简介使用 `pg_trgm` GIN 索引。待处理入群申请、联系人申请使用部分唯一索引防止重复。
@@ -987,10 +996,15 @@ PostgreSQL 与 MinIO 使用独立持久卷、分别备份、加密存储，并�
 
 - `POST /groups`
 - `GET /groups/search`
+- `POST /groups/join-requests/by-group-no`
+- `GET /groups/join-requests/mine`
 - `POST /groups/{id}/join-requests`
 - `POST /groups/{id}/join-requests/{requestId}/approve`
 - `POST /groups/{id}/invites`
-- `POST /groups/{id}/members`
+- `GET /groups/member-invitations/mine`
+- `POST /groups/{id}/member-invitations`
+- `POST /groups/{id}/member-invitations/{invitationId}/accept`
+- `POST /groups/{id}/member-invitations/{invitationId}/reject`
 - `DELETE /groups/{id}/members/{userId}`
 - `PUT /groups/{id}/members/{userId}/role`
 - `GET /groups/{id}/ai-policy`

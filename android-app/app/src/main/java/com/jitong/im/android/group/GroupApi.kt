@@ -46,6 +46,11 @@ internal interface GroupApi {
         @Body request: GroupJoinRequestCreateRequest?,
     ): Response<GroupJoinRequestResponse>
 
+    @POST("api/v1/groups/join-requests/by-group-no")
+    suspend fun createJoinRequestByGroupNo(
+        @Body request: GroupJoinRequestByGroupNoRequest,
+    ): Response<GroupJoinRequestResponse>
+
     @GET("api/v1/groups/{conversationId}/join-requests")
     suspend fun listJoinRequests(
         @Path("conversationId") conversationId: UUID,
@@ -80,11 +85,26 @@ internal interface GroupApi {
         @Path("userId") userId: UUID,
     ): Response<Unit>
 
-    @POST("api/v1/groups/{conversationId}/members")
-    suspend fun addMember(
+    @POST("api/v1/groups/{conversationId}/member-invitations")
+    suspend fun inviteMember(
         @Path("conversationId") conversationId: UUID,
-        @Body request: GroupMemberAddRequest,
-    ): Response<GroupMemberAddResponse>
+        @Body request: GroupMemberInvitationRequest,
+    ): Response<GroupMemberInvitationResponse>
+
+    @GET("api/v1/groups/member-invitations/mine")
+    suspend fun memberInvitations(): Response<List<GroupMemberInvitationSummary>>
+
+    @POST("api/v1/groups/{conversationId}/member-invitations/{invitationId}/accept")
+    suspend fun acceptMemberInvitation(
+        @Path("conversationId") conversationId: UUID,
+        @Path("invitationId") invitationId: UUID,
+    ): Response<GroupMemberInvitationResponse>
+
+    @POST("api/v1/groups/{conversationId}/member-invitations/{invitationId}/reject")
+    suspend fun rejectMemberInvitation(
+        @Path("conversationId") conversationId: UUID,
+        @Path("invitationId") invitationId: UUID,
+    ): Response<GroupMemberInvitationResponse>
 
     @retrofit2.http.PUT("api/v1/groups/{conversationId}/members/{userId}/role")
     suspend fun changeRole(

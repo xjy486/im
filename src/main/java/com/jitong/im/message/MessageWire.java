@@ -179,6 +179,14 @@ final class MessageWire {
                 new ContactRequestBody(requestId, syncSeq));
     }
 
+    static WireEnvelope groupInviteCreated(UUID invitationId, UUID conversationId, long syncSeq) {
+        return new WireEnvelope(
+                1,
+                "group.invite.created",
+                null,
+                new GroupInviteBody(invitationId, conversationId, syncSeq));
+    }
+
     static WireEnvelope conversationAiPolicyChanged(UUID conversationId, long syncSeq) {
         return new WireEnvelope(
                 1,
@@ -323,6 +331,13 @@ final class MessageWire {
 
     record ContactRequestBody(
             UUID requestId,
+            long syncSeq
+    ) {
+    }
+
+    record GroupInviteBody(
+            UUID invitationId,
+            UUID conversationId,
             long syncSeq
     ) {
     }

@@ -40,6 +40,11 @@ class ConfiguredFcmSender implements FcmSender {
     }
 
     @Override
+    public FcmDeliveryResult sendGroupInvite(String token) {
+        return send(token, FcmPayload.groupInviteData());
+    }
+
+    @Override
     public FcmDeliveryResult sendProfileChanged(String token) {
         return send(token, FcmPayload.profileChangedData());
     }

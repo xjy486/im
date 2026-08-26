@@ -60,7 +60,8 @@ class SyncRepository {
                                    WHEN event_type IN (
                                        'MEMBERSHIP_REVOKED',
                                        'MEMBERSHIP_GRANTED',
-                                       'GROUP_DISSOLVED')
+                                       'GROUP_DISSOLVED',
+                                       'GROUP_INVITE')
                                        THEN event_type
                                    WHEN conversation_id IS NOT NULL
                                        AND EXISTS (
@@ -83,7 +84,8 @@ class SyncRepository {
                                    WHEN event_type IN (
                                        'MEMBERSHIP_REVOKED',
                                        'MEMBERSHIP_GRANTED',
-                                       'GROUP_DISSOLVED')
+                                       'GROUP_DISSOLVED',
+                                       'GROUP_INVITE')
                                        THEN entity_id
                                    WHEN conversation_id IS NOT NULL
                                        AND EXISTS (
@@ -106,7 +108,8 @@ class SyncRepository {
                                    WHEN event_type IN (
                                        'MEMBERSHIP_REVOKED',
                                        'MEMBERSHIP_GRANTED',
-                                       'GROUP_DISSOLVED')
+                                       'GROUP_DISSOLVED',
+                                       'GROUP_INVITE')
                                        THEN conversation_id
                                    WHEN conversation_id IS NOT NULL
                                        AND EXISTS (

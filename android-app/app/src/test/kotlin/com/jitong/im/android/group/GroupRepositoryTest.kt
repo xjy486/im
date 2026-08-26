@@ -76,6 +76,10 @@ class GroupRepositoryTest {
                     request: GroupJoinRequestCreateRequest?,
                 ) = error("not used")
 
+                override suspend fun createJoinRequestByGroupNo(
+                    request: GroupJoinRequestByGroupNoRequest,
+                ) = error("not used")
+
                 override suspend fun listJoinRequests(conversationId: UUID) = error("not used")
 
                 override suspend fun listMembers(conversationId: UUID) = error("not used")
@@ -92,9 +96,21 @@ class GroupRepositoryTest {
                 override suspend fun removeMember(conversationId: UUID, userId: UUID) =
                     error("not used")
 
-                override suspend fun addMember(
+                override suspend fun inviteMember(
                     conversationId: UUID,
-                    request: GroupMemberAddRequest,
+                    request: GroupMemberInvitationRequest,
+                ) = error("not used")
+
+                override suspend fun memberInvitations() = error("not used")
+
+                override suspend fun acceptMemberInvitation(
+                    conversationId: UUID,
+                    invitationId: UUID,
+                ) = error("not used")
+
+                override suspend fun rejectMemberInvitation(
+                    conversationId: UUID,
+                    invitationId: UUID,
                 ) = error("not used")
 
                 override suspend fun changeRole(

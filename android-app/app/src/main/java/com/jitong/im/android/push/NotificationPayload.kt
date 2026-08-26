@@ -14,6 +14,7 @@ internal data class NotificationPayload(
             if (data["version"] != "1") return null
             if (type != "NEW_MESSAGE" &&
                 type != "CONTACT_REQUEST" &&
+                type != "GROUP_INVITE" &&
                 type != "PROFILE_CHANGED"
             ) return null
             if (data.keys != allowedKeys) return null

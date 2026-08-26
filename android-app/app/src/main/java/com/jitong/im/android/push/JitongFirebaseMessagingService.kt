@@ -20,6 +20,9 @@ internal class JitongFirebaseMessagingService : FirebaseMessagingService() {
         if (payload.type == "CONTACT_REQUEST") {
             application?.containerOrNull()?.handleNotification(payload.type)
         }
+        if (payload.type == "GROUP_INVITE") {
+            application?.containerOrNull()?.handleNotification(payload.type)
+        }
         NotificationChannels.ensure(this)
         val notificationId = (System.currentTimeMillis() and 0x7fffffff).toInt()
         val intent = Intent(this, NotificationClickActivity::class.java).apply {
@@ -38,10 +41,10 @@ internal class JitongFirebaseMessagingService : FirebaseMessagingService() {
                 .setSmallIcon(R.drawable.ic_launcher_foreground)
                 .setContentTitle("即通")
                 .setContentText(
-                    if (payload.type == "CONTACT_REQUEST") {
-                        "你收到一条好友申请，点击查看"
-                    } else {
-                        "你有一条新消息，点击查看"
+                    when (payload.type) {
+                        "CONTACT_REQUEST" -> "你收到一条好友申请，点击查看"
+                        "GROUP_INVITE" -> "你收到一条群聊邀请，点击查看"
+                        else -> "你有一条新消息，点击查看"
                     },
                 )
                 .setAutoCancel(true)

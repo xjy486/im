@@ -19,6 +19,12 @@ final class FcmPayload {
                 "type", "CONTACT_REQUEST");
     }
 
+    static Map<String, String> groupInviteData() {
+        return Map.of(
+                "version", "1",
+                "type", "GROUP_INVITE");
+    }
+
     static Map<String, String> profileChangedData() {
         return Map.of(
                 "version", "1",

@@ -66,6 +66,7 @@ internal fun GroupPreview.displayText(): String = when {
 
 internal data class GroupSearchResult(
     val name: String,
+    val groupNo: String,
     val description: String,
     val avatarUrl: String?,
     val memberCount: Int,
@@ -109,6 +110,11 @@ internal data class GroupJoinRequestCreateRequest(
     val inviteToken: String? = null,
 )
 
+internal data class GroupJoinRequestByGroupNoRequest(
+    val groupNo: String,
+    val inviteToken: String? = null,
+)
+
 internal data class GroupJoinRequestResponse(
     val version: Int,
     val requestId: UUID,
@@ -148,16 +154,33 @@ internal data class GroupBanRequest(
     val reason: String? = null,
 )
 
-internal data class GroupMemberAddRequest(
+internal data class GroupMemberInvitationRequest(
     val accountNo: String,
 )
 
-internal data class GroupMemberAddResponse(
+internal data class GroupMemberInvitationResponse(
     val version: Int,
+    val invitationId: UUID,
     val conversationId: UUID,
-    val userId: UUID,
-    val role: String,
-    val memberCount: Int,
+    val inviterUserId: UUID,
+    val inviteeUserId: UUID,
+    val status: String,
+    val createdAt: String,
+    val resolvedAt: String?,
+)
+
+internal data class GroupMemberInvitationSummary(
+    val version: Int,
+    val invitationId: UUID,
+    val conversationId: UUID,
+    val groupNo: String,
+    val groupName: String,
+    val inviterUserId: UUID,
+    val inviterAccountNo: String,
+    val inviterDisplayName: String,
+    val status: String,
+    val createdAt: String,
+    val resolvedAt: String?,
 )
 
 internal data class GroupRoleChangeRequest(

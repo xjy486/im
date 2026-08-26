@@ -475,6 +475,12 @@ class GroupRepository {
                 .param("conversationId", conversationId)
                 .update();
         jdbc.sql("""
+                        DELETE FROM group_member_invitations
+                        WHERE conversation_id = :conversationId
+                        """)
+                .param("conversationId", conversationId)
+                .update();
+        jdbc.sql("""
                         DELETE FROM group_invites
                         WHERE conversation_id = :conversationId
                         """)
@@ -657,6 +663,130 @@ class GroupRepository {
                 .param("conversationId", conversationId)
                 .param("userId", userId)
                 .update();
+    }
+
+    GroupMemberInvitationRecord insertMemberInvitation(
+            UUID invitationId,
+            UUID conversationId,
+            UUID inviterUserId,
+            UUID inviteeUserId,
+            Instant createdAt
+    ) {
+        int inserted = jdbc.sql("""
+                        INSERT INTO group_member_invitations (
+                            id, conversation_id, inviter_user_id, invitee_user_id, created_at
+                        ) VALUES (
+                            :id, :conversationId, :inviterUserId, :inviteeUserId, :createdAt
+                        )
+                        ON CONFLICT (conversation_id, invitee_user_id)
+                        WHERE status = 'PENDING'
+                        DO NOTHING
+                        """)
+                .param("id", invitationId)
+                .param("conversationId", conversationId)
+                .param("inviterUserId", inviterUserId)
+                .param("inviteeUserId", inviteeUserId)
+                .param("createdAt", utc(createdAt), Types.TIMESTAMP_WITH_TIMEZONE)
+                .update();
+        return inserted == 0 ? null : findMemberInvitation(invitationId);
+    }
+
+    GroupMemberInvitationRecord findPendingMemberInvitation(
+            UUID conversationId,
+            UUID inviteeUserId
+    ) {
+        return jdbc.sql("""
+                        SELECT id, conversation_id, inviter_user_id, invitee_user_id,
+                               status, created_at, resolved_at, resolved_by_user_id
+                        FROM group_member_invitations
+                        WHERE conversation_id = :conversationId
+                          AND invitee_user_id = :inviteeUserId
+                          AND status = 'PENDING'
+                        """)
+                .param("conversationId", conversationId)
+                .param("inviteeUserId", inviteeUserId)
+                .query(this::mapMemberInvitation)
+                .optional()
+                .orElse(null);
+    }
+
+    GroupMemberInvitationRecord findMemberInvitation(UUID invitationId) {
+        return jdbc.sql("""
+                        SELECT id, conversation_id, inviter_user_id, invitee_user_id,
+                               status, created_at, resolved_at, resolved_by_user_id
+                        FROM group_member_invitations
+                        WHERE id = :invitationId
+                        """)
+                .param("invitationId", invitationId)
+                .query(this::mapMemberInvitation)
+                .optional()
+                .orElse(null);
+    }
+
+    GroupMemberInvitationRecord lockMemberInvitation(UUID invitationId) {
+        return jdbc.sql("""
+                        SELECT id, conversation_id, inviter_user_id, invitee_user_id,
+                               status, created_at, resolved_at, resolved_by_user_id
+                        FROM group_member_invitations
+                        WHERE id = :invitationId
+                        FOR UPDATE
+                        """)
+                .param("invitationId", invitationId)
+                .query(this::mapMemberInvitation)
+                .optional()
+                .orElse(null);
+    }
+
+    void updateMemberInvitationStatus(
+            UUID invitationId,
+            String status,
+            UUID resolvedByUserId,
+            Instant resolvedAt
+    ) {
+        jdbc.sql("""
+                        UPDATE group_member_invitations
+                        SET status = :status,
+                            resolved_at = :resolvedAt,
+                            resolved_by_user_id = :resolvedByUserId
+                        WHERE id = :invitationId
+                        """)
+                .param("invitationId", invitationId)
+                .param("status", status)
+                .param("resolvedAt", utc(resolvedAt), Types.TIMESTAMP_WITH_TIMEZONE)
+                .param("resolvedByUserId", resolvedByUserId)
+                .update();
+    }
+
+    List<MemberInvitationSummaryRecord> listMemberInvitations(UUID inviteeUserId) {
+        return jdbc.sql("""
+                        SELECT invitation.id, invitation.conversation_id,
+                               group_chat.group_no, group_chat.name,
+                               invitation.inviter_user_id,
+                               inviter.account_no, inviter.display_name,
+                               invitation.status, invitation.created_at,
+                               invitation.resolved_at
+                        FROM group_member_invitations invitation
+                        JOIN groups group_chat
+                          ON group_chat.conversation_id = invitation.conversation_id
+                        JOIN users inviter
+                          ON inviter.id = invitation.inviter_user_id
+                        WHERE invitation.invitee_user_id = :inviteeUserId
+                          AND group_chat.status = 'ACTIVE'
+                        ORDER BY invitation.created_at DESC
+                        """)
+                .param("inviteeUserId", inviteeUserId)
+                .query((row, rowNum) -> new MemberInvitationSummaryRecord(
+                        row.getObject("id", UUID.class),
+                        row.getObject("conversation_id", UUID.class),
+                        row.getString("group_no").trim(),
+                        row.getString("name"),
+                        row.getObject("inviter_user_id", UUID.class),
+                        row.getString("account_no").trim(),
+                        row.getString("display_name"),
+                        row.getString("status"),
+                        row.getObject("created_at", OffsetDateTime.class).toInstant(),
+                        nullableInstant(row, "resolved_at")))
+                .list();
     }
 
     GroupInviteRecord insertInvite(
@@ -1050,6 +1180,21 @@ class GroupRepository {
                 nullableInstant(row, "resolved_at"));
     }
 
+    private GroupMemberInvitationRecord mapMemberInvitation(
+            java.sql.ResultSet row,
+            int rowNum
+    ) throws java.sql.SQLException {
+        return new GroupMemberInvitationRecord(
+                row.getObject("id", UUID.class),
+                row.getObject("conversation_id", UUID.class),
+                row.getObject("inviter_user_id", UUID.class),
+                row.getObject("invitee_user_id", UUID.class),
+                row.getString("status"),
+                row.getObject("created_at", OffsetDateTime.class).toInstant(),
+                nullableInstant(row, "resolved_at"),
+                row.getObject("resolved_by_user_id", UUID.class));
+    }
+
     private static OffsetDateTime utc(Instant value) {
         return OffsetDateTime.ofInstant(value, java.time.ZoneOffset.UTC);
     }
@@ -1062,7 +1207,7 @@ class GroupRepository {
 
     SearchGroupRecord findSearchableByGroupNo(String groupNo) {
         return jdbc.sql("""
-                        SELECT g.conversation_id, g.name, g.description,
+                        SELECT g.conversation_id, g.group_no, g.name, g.description,
                                g.avatar_media_id, g.avatar_version,
                                COUNT(member.user_id) AS member_count
                         FROM groups g
@@ -1073,7 +1218,7 @@ class GroupRepository {
                           AND g.status = 'ACTIVE'
                           AND g.platform_suspended_at IS NULL
                           AND g.visibility IN ('PUBLIC', 'UNLISTED')
-                        GROUP BY g.conversation_id, g.name, g.description,
+                        GROUP BY g.conversation_id, g.group_no, g.name, g.description,
                                  g.avatar_media_id, g.avatar_version
                         """)
                 .param("groupNo", groupNo)
@@ -1084,7 +1229,7 @@ class GroupRepository {
 
     List<SearchGroupRecord> searchPublicGroups(String normalizedQuery) {
         return jdbc.sql("""
-                        SELECT g.conversation_id, g.name, g.description,
+                        SELECT g.conversation_id, g.group_no, g.name, g.description,
                                g.avatar_media_id, g.avatar_version,
                                COUNT(member.user_id) AS member_count,
                                similarity(g.name_normalized, :query) AS search_similarity
@@ -1099,7 +1244,7 @@ class GroupRepository {
                               g.name_normalized ILIKE '%' || :query || '%'
                               OR g.name_normalized % :query
                           )
-                        GROUP BY g.conversation_id, g.name, g.description,
+                        GROUP BY g.conversation_id, g.group_no, g.name, g.description,
                                  g.avatar_media_id, g.avatar_version, g.name_normalized
                         ORDER BY search_similarity DESC, g.name_normalized ASC,
                                  g.conversation_id ASC
@@ -1132,6 +1277,7 @@ class GroupRepository {
     ) throws java.sql.SQLException {
         return new SearchGroupRecord(
                 row.getObject("conversation_id", UUID.class),
+                row.getString("group_no").trim(),
                 row.getString("name"),
                 row.getString("description"),
                 row.getObject("avatar_media_id", UUID.class),
@@ -1157,6 +1303,7 @@ class GroupRepository {
 
     record SearchGroupRecord(
             UUID conversationId,
+            String groupNo,
             String name,
             String description,
             UUID avatarMediaId,
@@ -1190,6 +1337,32 @@ class GroupRepository {
             int useCount,
             String status,
             Instant createdAt
+    ) {
+    }
+
+    record GroupMemberInvitationRecord(
+            UUID invitationId,
+            UUID conversationId,
+            UUID inviterUserId,
+            UUID inviteeUserId,
+            String status,
+            Instant createdAt,
+            Instant resolvedAt,
+            UUID resolvedByUserId
+    ) {
+    }
+
+    record MemberInvitationSummaryRecord(
+            UUID invitationId,
+            UUID conversationId,
+            String groupNo,
+            String groupName,
+            UUID inviterUserId,
+            String inviterAccountNo,
+            String inviterDisplayName,
+            String status,
+            Instant createdAt,
+            Instant resolvedAt
     ) {
     }
 

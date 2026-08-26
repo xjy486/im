@@ -30,4 +30,12 @@ class FcmPayloadTest {
                         "type", "CONTACT_REQUEST"));
     }
 
+    @Test
+    void group_invite_payload_contains_only_version_and_event_type() {
+        assertThat(FcmPayload.groupInviteData())
+                .containsExactlyInAnyOrderEntriesOf(java.util.Map.of(
+                        "version", "1",
+                        "type", "GROUP_INVITE"));
+    }
+
 }

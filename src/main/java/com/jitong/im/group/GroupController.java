@@ -58,13 +58,38 @@ class GroupController {
         return service.updateAiPolicy(authorization, conversationId, request);
     }
 
-    @PostMapping("/{conversationId}/members")
-    GroupMemberAddResponse addMember(
+    @PostMapping("/{conversationId}/member-invitations")
+    GroupMemberInvitationResponse inviteMember(
             @RequestHeader(value = "Authorization", required = false) String authorization,
             @PathVariable java.util.UUID conversationId,
-            @Valid @RequestBody GroupMemberAddRequest request
+            @Valid @RequestBody GroupMemberInvitationRequest request
     ) {
-        return service.addMember(authorization, conversationId, request);
+        return service.inviteMember(authorization, conversationId, request);
+    }
+
+    @GetMapping("/member-invitations/mine")
+    List<GroupMemberInvitationSummary> listMemberInvitations(
+            @RequestHeader(value = "Authorization", required = false) String authorization
+    ) {
+        return service.listMemberInvitations(authorization);
+    }
+
+    @PostMapping("/{conversationId}/member-invitations/{invitationId}/accept")
+    GroupMemberInvitationResponse acceptMemberInvitation(
+            @RequestHeader(value = "Authorization", required = false) String authorization,
+            @PathVariable java.util.UUID conversationId,
+            @PathVariable java.util.UUID invitationId
+    ) {
+        return service.acceptMemberInvitation(authorization, conversationId, invitationId);
+    }
+
+    @PostMapping("/{conversationId}/member-invitations/{invitationId}/reject")
+    GroupMemberInvitationResponse rejectMemberInvitation(
+            @RequestHeader(value = "Authorization", required = false) String authorization,
+            @PathVariable java.util.UUID conversationId,
+            @PathVariable java.util.UUID invitationId
+    ) {
+        return service.rejectMemberInvitation(authorization, conversationId, invitationId);
     }
 
     @DeleteMapping("/{conversationId}/members/{userId}")

@@ -282,18 +282,29 @@ class MessageContractTest extends ContractTestEnvironment {
                 Map.of("name", "Moderation Lounge", "description", "", "visibility", "PRIVATE"))
                 .getBody();
         UUID conversationId = UUID.fromString(group.get("conversationId").asText());
+        JsonNode administratorInvitation = exchange(
+                HttpMethod.POST,
+                "/api/v1/groups/" + conversationId + "/member-invitations",
+                ownerToken,
+                Map.of("accountNo", administrator.accountNo())).getBody();
         assertThat(exchange(
                 HttpMethod.POST,
-                "/api/v1/groups/" + conversationId + "/members",
-                ownerToken,
-                Map.of("accountNo", administrator.accountNo())).getStatusCode())
+                "/api/v1/groups/" + conversationId + "/member-invitations/"
+                        + administratorInvitation.get("invitationId").asText() + "/accept",
+                administratorToken,
+                null).getStatusCode())
                 .isEqualTo(HttpStatus.OK);
+        JsonNode memberInvitation = exchange(
+                HttpMethod.POST,
+                "/api/v1/groups/" + conversationId + "/member-invitations",
+                ownerToken,
+                Map.of("accountNo", member.accountNo())).getBody();
         assertThat(exchange(
                 HttpMethod.POST,
-                "/api/v1/groups/" + conversationId + "/members",
-                ownerToken,
-                Map.of("accountNo", member.accountNo())).getStatusCode())
-                .isEqualTo(HttpStatus.OK);
+                "/api/v1/groups/" + conversationId + "/member-invitations/"
+                        + memberInvitation.get("invitationId").asText() + "/accept",
+                memberToken,
+                null).getStatusCode()).isEqualTo(HttpStatus.OK);
         assertThat(exchange(
                 HttpMethod.PUT,
                 "/api/v1/groups/" + conversationId + "/members/" + administrator.userId() + "/role",

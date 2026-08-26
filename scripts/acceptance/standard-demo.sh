@@ -549,15 +549,25 @@ assert_json 'group member approval' "$approve_file" '.status == "APPROVED"'
 member_body="$WORK_DIR/group-member.request.json"
 jq -n --arg accountNo "$BOB_ACCOUNT" '{accountNo: $accountNo}' >"$member_body"
 member_file="$WORK_DIR/group-member.response.json"
-request_json 'direct group member invite' POST \
-    "/api/v1/groups/$GROUP_CONVERSATION_ID/members" "$carol_mobile_token" \
+request_json 'account group member invitation' POST \
+    "/api/v1/groups/$GROUP_CONVERSATION_ID/member-invitations" "$carol_mobile_token" \
     "$member_body" 200 "$member_file"
+BOB_INVITATION_ID=$(jq -r '.invitationId' "$member_file")
+request_json 'group member invitation acceptance' POST \
+    "/api/v1/groups/$GROUP_CONVERSATION_ID/member-invitations/$BOB_INVITATION_ID/accept" \
+    "$bob_mobile_token" '' 200 "$WORK_DIR/group-member-accepted.response.json"
+assert_json 'group member invitation accepted' "$WORK_DIR/group-member-accepted.response.json" \
+    '.status == "ACCEPTED"'
 
 alice_member_body="$WORK_DIR/group-alice-member.request.json"
 jq -n --arg accountNo "$ALICE_ACCOUNT" '{accountNo: $accountNo}' >"$alice_member_body"
 request_json 'second ordinary group member invite' POST \
-    "/api/v1/groups/$GROUP_CONVERSATION_ID/members" "$carol_mobile_token" \
+    "/api/v1/groups/$GROUP_CONVERSATION_ID/member-invitations" "$carol_mobile_token" \
     "$alice_member_body" 200 "$WORK_DIR/group-alice-member.response.json"
+ALICE_INVITATION_ID=$(jq -r '.invitationId' "$WORK_DIR/group-alice-member.response.json")
+request_json 'second group member invitation acceptance' POST \
+    "/api/v1/groups/$GROUP_CONVERSATION_ID/member-invitations/$ALICE_INVITATION_ID/accept" \
+    "$alice_mobile_token" '' 200 "$WORK_DIR/group-alice-member-accepted.response.json"
 
 role_body="$WORK_DIR/group-role.request.json"
 jq -n '{role: "ADMIN"}' >"$role_body"

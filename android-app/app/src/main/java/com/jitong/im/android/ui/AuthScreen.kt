@@ -1367,19 +1367,44 @@ private fun GroupSearchContent(state: GroupUiState, viewModel: GroupViewModel, l
             modifier = Modifier.fillMaxWidth(),
         )
         Button(onClick = viewModel::search, enabled = state.searchQuery.isNotBlank() && !state.loading, modifier = Modifier.fillMaxWidth()) { Text("搜索群聊") }
-        state.searchResults.forEach { group -> GroupSearchResultRow(group, load) }
+        state.searchResults.forEach { group ->
+            GroupSearchResultRow(
+                group = group,
+                status = state.joinRequestStatuses[group.groupNo],
+                loading = state.loading,
+                load = load,
+                onRequestToJoin = { viewModel.requestToJoin(group) },
+            )
+        }
+        state.message?.let { Text(it, color = MaterialTheme.colorScheme.error) }
     }
 }
 
 @Composable
-private fun GroupSearchResultRow(group: GroupSearchResult, load: suspend (String) -> ByteArray?) {
-    SoftCard(Modifier.fillMaxWidth()) {
-        Row(Modifier.padding(14.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+private fun GroupSearchResultRow(
+    group: GroupSearchResult,
+    status: String?,
+    loading: Boolean,
+    load: suspend (String) -> ByteArray?,
+    onRequestToJoin: () -> Unit,
+) {
+    SoftCard(Modifier.fillMaxWidth().clickable(enabled = status != "PENDING" && !loading, onClick = onRequestToJoin)) {
+        Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
             if (group.avatarUrl != null) RemoteSearchGroupAvatar(group.avatarUrl, group.name, load, size = 52.dp) else AvatarPlaceholder(group.name, size = 52.dp)
             Column(Modifier.weight(1f)) {
                 Text(group.name, style = MaterialTheme.typography.titleMedium)
+                Text("群号：${group.groupNo}", color = JitongColors.secondaryText)
                 Text(group.description.ifBlank { "暂无简介" }, color = JitongColors.secondaryText, maxLines = 2, overflow = TextOverflow.Ellipsis)
                 Text("${group.memberCount} 人", color = JitongColors.tertiaryText, style = MaterialTheme.typography.bodySmall)
+            }
+            }
+            Button(
+                onClick = onRequestToJoin,
+                enabled = status != "PENDING" && !loading,
+                modifier = Modifier.fillMaxWidth(),
+            ) {
+                Text(if (status == "PENDING") "已提交申请" else "申请加入")
             }
         }
     }
@@ -1387,7 +1412,15 @@ private fun GroupSearchResultRow(group: GroupSearchResult, load: suspend (String
 
 @Composable
 private fun GroupInviteContent(state: GroupUiState, viewModel: GroupViewModel) {
-    Column(Modifier.fillMaxSize().padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+    Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+        if (state.memberInvitations.any { it.status == "PENDING" }) {
+            Text("待处理的群聊邀请", style = MaterialTheme.typography.titleLarge)
+            state.memberInvitations
+                .filter { it.status == "PENDING" }
+                .forEach { invitation ->
+                    MemberInvitationCard(invitation, state.loading, viewModel)
+                }
+        }
         Text("加入群聊", style = MaterialTheme.typography.titleLarge)
         Text("粘贴邀请链接中的令牌，查看群资料并提交申请。", color = JitongColors.secondaryText)
         OutlinedTextField(value = state.inviteToken, onValueChange = viewModel::setInviteToken, label = { Text("邀请令牌") }, modifier = Modifier.fillMaxWidth())
@@ -1402,11 +1435,40 @@ private fun GroupInviteContent(state: GroupUiState, viewModel: GroupViewModel) {
                 }
             }
         }
+        state.message?.let { Text(it, color = MaterialTheme.colorScheme.error) }
+    }
+}
+
+@Composable
+private fun MemberInvitationCard(
+    invitation: com.jitong.im.android.group.GroupMemberInvitationSummary,
+    loading: Boolean,
+    viewModel: GroupViewModel,
+) {
+    SoftCard(Modifier.fillMaxWidth()) {
+        Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+            Text(invitation.groupName, style = MaterialTheme.typography.titleMedium)
+            Text("群号：${invitation.groupNo}", color = JitongColors.secondaryText)
+            Text("${invitation.inviterDisplayName} 邀请你加入群聊", color = JitongColors.secondaryText)
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                Button(
+                    onClick = { viewModel.acceptMemberInvitation(invitation) },
+                    enabled = !loading,
+                    modifier = Modifier.weight(1f),
+                ) { Text("同意") }
+                OutlinedButton(
+                    onClick = { viewModel.rejectMemberInvitation(invitation) },
+                    enabled = !loading,
+                    modifier = Modifier.weight(1f),
+                ) { Text("拒绝") }
+            }
+        }
     }
 }
 
 @Composable
 private fun GroupCreateContent(state: GroupUiState, viewModel: GroupViewModel) {
+    LaunchedEffect(Unit) { viewModel.resetCreateForm() }
     val context = LocalContext.current
     val picker = rememberLauncherForActivityResult(ActivityResultContracts.GetContent()) { uri ->
         if (uri == null) return@rememberLauncherForActivityResult
@@ -1441,6 +1503,7 @@ internal fun GroupManagementSheet(group: GroupSummary, state: GroupUiState, view
                 Column(Modifier.weight(1f)) {
                     Text("群聊设置", style = MaterialTheme.typography.headlineSmall)
                     Text(group.name, color = JitongColors.secondaryText)
+                    Text("群号：${group.groupNo}", color = JitongColors.tertiaryText)
                 }
                 IconButton(onClick = onDismiss) { Icon(Icons.Outlined.Close, contentDescription = "关闭") }
             }
@@ -1468,7 +1531,7 @@ internal fun GroupManagementSheet(group: GroupSummary, state: GroupUiState, view
                 SettingsRow(
                     Icons.Outlined.GroupAdd,
                     "邀请成员",
-                    "直接邀请账号加入群聊",
+                    "输入账号发送邀请，对方同意后加入",
                     onClick = { showDirectInviteDialog = true },
                 )
             }
@@ -1521,7 +1584,7 @@ private fun DirectInviteDialog(
         title = { Text("邀请成员") },
         text = {
             Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                Text("输入对方的 11 位账号，直接加入群聊。", color = JitongColors.secondaryText)
+                Text("输入对方的 11 位账号，发送入群邀请。对方同意后才会加入群聊。", color = JitongColors.secondaryText)
                 OutlinedTextField(
                     value = accountNo,
                     onValueChange = onAccountNoChange,

@@ -56,6 +56,7 @@ record GroupAiPolicyResponse(
 
 record GroupSearchResult(
         String name,
+        String groupNo,
         String avatarUrl,
         String description,
         int memberCount
@@ -68,18 +69,36 @@ record GroupSearchPage(
 ) {
 }
 
-record GroupMemberAddRequest(
+record GroupMemberInvitationRequest(
         @Pattern(regexp = "[1-9][0-9]{10}")
         String accountNo
 ) {
 }
 
-record GroupMemberAddResponse(
+record GroupMemberInvitationResponse(
         int version,
+        UUID invitationId,
         UUID conversationId,
-        UUID userId,
-        String role,
-        int memberCount
+        UUID inviterUserId,
+        UUID inviteeUserId,
+        String status,
+        Instant createdAt,
+        Instant resolvedAt
+) {
+}
+
+record GroupMemberInvitationSummary(
+        int version,
+        UUID invitationId,
+        UUID conversationId,
+        String groupNo,
+        String groupName,
+        UUID inviterUserId,
+        String inviterAccountNo,
+        String inviterDisplayName,
+        String status,
+        Instant createdAt,
+        Instant resolvedAt
 ) {
 }
 

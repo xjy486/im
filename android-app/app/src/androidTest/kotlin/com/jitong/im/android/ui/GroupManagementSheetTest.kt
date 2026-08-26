@@ -18,11 +18,13 @@ import com.jitong.im.android.group.GroupAvatarUploader
 import com.jitong.im.android.group.GroupInviteCreateRequest
 import com.jitong.im.android.group.GroupInviteResponse
 import com.jitong.im.android.group.GroupInviteResolveResponse
+import com.jitong.im.android.group.GroupJoinRequestByGroupNoRequest
 import com.jitong.im.android.group.GroupJoinRequestCreateRequest
 import com.jitong.im.android.group.GroupJoinRequestResponse
 import com.jitong.im.android.group.GroupJoinRequestSummary
-import com.jitong.im.android.group.GroupMemberAddRequest
-import com.jitong.im.android.group.GroupMemberAddResponse
+import com.jitong.im.android.group.GroupMemberInvitationRequest
+import com.jitong.im.android.group.GroupMemberInvitationResponse
+import com.jitong.im.android.group.GroupMemberInvitationSummary
 import com.jitong.im.android.group.GroupMemberSummary
 import com.jitong.im.android.group.GroupRepository
 import com.jitong.im.android.group.GroupRoleChangeRequest
@@ -89,10 +91,10 @@ class GroupManagementSheetTest {
     private fun group(): GroupSummary = Fixtures.group()
 
     private fun createViewModel(
-        onAddMember: suspend (UUID, String) -> Unit = { _, _ -> },
+        onInviteMember: suspend (UUID, String) -> Unit = { _, _ -> },
     ): GroupViewModel = GroupViewModel(
         repository = GroupRepository(
-            api = FakeGroupApi(onAddMember),
+            api = FakeGroupApi(onInviteMember),
             avatarUploader = object : GroupAvatarUploader {
                 override suspend fun replaceGroupAvatar(
                     conversationId: UUID,
@@ -103,7 +105,7 @@ class GroupManagementSheetTest {
     )
 
     private class FakeGroupApi(
-        private val onAddMember: suspend (UUID, String) -> Unit,
+        private val onInviteMember: suspend (UUID, String) -> Unit,
     ) : GroupApi {
         override suspend fun create(request: CreateGroupRequest): Response<com.jitong.im.android.group.GroupCreateResponse> = error("not used")
         override suspend fun list(): Response<List<GroupSummary>> = Response.success(listOf(Fixtures.group()))
@@ -114,24 +116,31 @@ class GroupManagementSheetTest {
         override suspend fun resolveInvite(token: String): Response<GroupInviteResolveResponse> = error("not used")
         override suspend fun revokeInvite(conversationId: UUID, inviteId: UUID): Response<Unit> = error("not used")
         override suspend fun createJoinRequest(conversationId: UUID, request: GroupJoinRequestCreateRequest?): Response<GroupJoinRequestResponse> = error("not used")
+        override suspend fun createJoinRequestByGroupNo(request: GroupJoinRequestByGroupNoRequest): Response<GroupJoinRequestResponse> = error("not used")
         override suspend fun listJoinRequests(conversationId: UUID): Response<List<GroupJoinRequestSummary>> = error("not used")
         override suspend fun listMembers(conversationId: UUID): Response<List<GroupMemberSummary>> = Response.success(emptyList())
         override suspend fun approveJoinRequest(conversationId: UUID, requestId: UUID): Response<GroupJoinRequestResponse> = error("not used")
         override suspend fun rejectJoinRequest(conversationId: UUID, requestId: UUID): Response<GroupJoinRequestResponse> = error("not used")
         override suspend fun cancelJoinRequest(conversationId: UUID, requestId: UUID): Response<GroupJoinRequestResponse> = error("not used")
         override suspend fun removeMember(conversationId: UUID, userId: UUID): Response<Unit> = error("not used")
-        override suspend fun addMember(conversationId: UUID, request: GroupMemberAddRequest): Response<GroupMemberAddResponse> {
-            onAddMember(conversationId, request.accountNo)
+        override suspend fun inviteMember(conversationId: UUID, request: GroupMemberInvitationRequest): Response<GroupMemberInvitationResponse> {
+            onInviteMember(conversationId, request.accountNo)
             return Response.success(
-                GroupMemberAddResponse(
+                GroupMemberInvitationResponse(
                     version = 1,
+                    invitationId = UUID.randomUUID(),
                     conversationId = conversationId,
-                    userId = UUID.randomUUID(),
-                    role = "MEMBER",
-                    memberCount = 2,
+                    inviterUserId = UUID.randomUUID(),
+                    inviteeUserId = UUID.randomUUID(),
+                    status = "PENDING",
+                    createdAt = "2026-08-26T00:00:00Z",
+                    resolvedAt = null,
                 ),
             )
         }
+        override suspend fun memberInvitations(): Response<List<GroupMemberInvitationSummary>> = Response.success(emptyList())
+        override suspend fun acceptMemberInvitation(conversationId: UUID, invitationId: UUID): Response<GroupMemberInvitationResponse> = error("not used")
+        override suspend fun rejectMemberInvitation(conversationId: UUID, invitationId: UUID): Response<GroupMemberInvitationResponse> = error("not used")
         override suspend fun changeRole(conversationId: UUID, userId: UUID, request: GroupRoleChangeRequest): Response<GroupRoleChangeResponse> = error("not used")
         override suspend fun transferOwner(conversationId: UUID, request: GroupOwnerTransferRequest): Response<GroupOwnerTransferResponse> = error("not used")
         override suspend fun updateProfile(conversationId: UUID, request: GroupProfileUpdateRequest): Response<GroupSummary> = error("not used")

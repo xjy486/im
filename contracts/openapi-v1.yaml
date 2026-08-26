@@ -648,10 +648,10 @@ paths:
           $ref: '#/components/responses/ApiError'
         '404':
           $ref: '#/components/responses/ApiError'
-  /api/v1/groups/{conversationId}/members:
+  /api/v1/groups/{conversationId}/member-invitations:
     post:
-      operationId: addGroupMember
-      summary: Directly invite an active user as a MEMBER
+      operationId: inviteGroupMember
+      summary: Send an account-based group invitation that requires recipient acceptance
       security: [{ bearerAuth: [] }]
       parameters:
         - { $ref: '#/components/parameters/ConversationId' }
@@ -667,10 +667,10 @@ paths:
                 accountNo: { type: string, pattern: '^[1-9][0-9]{10}$' }
       responses:
         '200':
-          description: Member added
+          description: Pending member invitation
           content:
             application/json:
-              schema: { $ref: '#/components/schemas/GroupMemberAddResponse' }
+              schema: { $ref: '#/components/schemas/GroupMemberInvitationResponse' }
         '400':
           $ref: '#/components/responses/ApiError'
         '401':
@@ -680,6 +680,69 @@ paths:
         '404':
           $ref: '#/components/responses/ApiError'
         '409':
+          $ref: '#/components/responses/ApiError'
+  /api/v1/groups/member-invitations/mine:
+    get:
+      operationId: listMyGroupMemberInvitations
+      summary: List group invitations sent to the authenticated user
+      security: [{ bearerAuth: [] }]
+      responses:
+        '200':
+          description: Group member invitation history
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: '#/components/schemas/GroupMemberInvitationSummary' }
+        '401':
+          $ref: '#/components/responses/ApiError'
+  /api/v1/groups/{conversationId}/member-invitations/{invitationId}/accept:
+    post:
+      operationId: acceptGroupMemberInvitation
+      summary: Accept a pending group member invitation
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { $ref: '#/components/parameters/ConversationId' }
+        - name: invitationId
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        '200':
+          description: Accepted group member invitation
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/GroupMemberInvitationResponse' }
+        '401':
+          $ref: '#/components/responses/ApiError'
+        '403':
+          $ref: '#/components/responses/ApiError'
+        '404':
+          $ref: '#/components/responses/ApiError'
+        '409':
+          $ref: '#/components/responses/ApiError'
+  /api/v1/groups/{conversationId}/member-invitations/{invitationId}/reject:
+    post:
+      operationId: rejectGroupMemberInvitation
+      summary: Reject a pending group member invitation
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { $ref: '#/components/parameters/ConversationId' }
+        - name: invitationId
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        '200':
+          description: Rejected group member invitation
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/GroupMemberInvitationResponse' }
+        '401':
+          $ref: '#/components/responses/ApiError'
+        '403':
+          $ref: '#/components/responses/ApiError'
+        '404':
           $ref: '#/components/responses/ApiError'
   /api/v1/groups/{conversationId}/members/{userId}:
     delete:
@@ -2146,9 +2209,10 @@ components:
     GroupSearchResult:
       type: object
       additionalProperties: false
-      required: [name, avatarUrl, description, memberCount]
+      required: [name, groupNo, avatarUrl, description, memberCount]
       properties:
         name: { type: string }
+        groupNo: { type: string, pattern: '^[1-9][0-9]{10}$' }
         avatarUrl: { type: [string, 'null'] }
         description: { type: string }
         memberCount: { type: integer, minimum: 1, maximum: 100 }
@@ -2161,16 +2225,38 @@ components:
         groups:
           type: array
           items: { $ref: '#/components/schemas/GroupSearchResult' }
-    GroupMemberAddResponse:
+    GroupMemberInvitationResponse:
       type: object
       additionalProperties: false
-      required: [version, conversationId, userId, role, memberCount]
+      required: [version, invitationId, conversationId, inviterUserId, inviteeUserId,
+                 status, createdAt, resolvedAt]
       properties:
         version: { const: 1 }
+        invitationId: { type: string, format: uuid }
         conversationId: { type: string, format: uuid }
-        userId: { type: string, format: uuid }
-        role: { const: MEMBER }
-        memberCount: { type: integer, minimum: 1, maximum: 100 }
+        inviterUserId: { type: string, format: uuid }
+        inviteeUserId: { type: string, format: uuid }
+        status: { type: string, enum: [PENDING, ACCEPTED, REJECTED, CANCELLED, EXPIRED] }
+        createdAt: { type: string, format: date-time }
+        resolvedAt: { type: [string, 'null'], format: date-time }
+    GroupMemberInvitationSummary:
+      type: object
+      additionalProperties: false
+      required:
+        [version, invitationId, conversationId, groupNo, groupName, inviterUserId,
+         inviterAccountNo, inviterDisplayName, status, createdAt, resolvedAt]
+      properties:
+        version: { const: 1 }
+        invitationId: { type: string, format: uuid }
+        conversationId: { type: string, format: uuid }
+        groupNo: { type: string, pattern: '^[1-9][0-9]{10}$' }
+        groupName: { type: string }
+        inviterUserId: { type: string, format: uuid }
+        inviterAccountNo: { type: string, pattern: '^[1-9][0-9]{10}$' }
+        inviterDisplayName: { type: string }
+        status: { type: string, enum: [PENDING, ACCEPTED, REJECTED, CANCELLED, EXPIRED] }
+        createdAt: { type: string, format: date-time }
+        resolvedAt: { type: [string, 'null'], format: date-time }
     GroupRoleChangeResponse:
       type: object
       additionalProperties: false

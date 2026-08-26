@@ -6,6 +6,7 @@ import androidx.lifecycle.viewModelScope
 import com.jitong.im.android.group.GroupRepository
 import com.jitong.im.android.group.GroupInviteResolveResponse
 import com.jitong.im.android.group.GroupInviteResponse
+import com.jitong.im.android.group.GroupMemberInvitationSummary
 import com.jitong.im.android.group.GroupJoinRequestSummary
 import com.jitong.im.android.group.GroupMemberSummary
 import com.jitong.im.android.group.GroupGovernancePolicy
@@ -32,6 +33,8 @@ internal data class GroupUiState(
     val autoResolveInvite: Boolean = false,
     val invite: GroupInviteResolveResponse? = null,
     val createdInvite: GroupInviteResponse? = null,
+    val memberInvitations: List<GroupMemberInvitationSummary> = emptyList(),
+    val joinRequestStatuses: Map<String, String> = emptyMap(),
     val joinRequests: List<GroupJoinRequestSummary> = emptyList(),
     val joinRequestGroupId: UUID? = null,
     val members: List<GroupMemberSummary> = emptyList(),
@@ -52,6 +55,11 @@ internal class GroupViewModel(
         messageRepository?.let { messages ->
             viewModelScope.launch {
                 messages.conversationChanges.collect {
+                    runCatching { refreshData() }
+                }
+            }
+            viewModelScope.launch {
+                messages.groupInvitationChanges.collect {
                     runCatching { refreshData() }
                 }
             }
@@ -102,13 +110,11 @@ internal class GroupViewModel(
             return
         }
         launchRequest {
-            repository.addMember(group.conversationId, accountNo)
+            repository.inviteMember(group.conversationId, accountNo)
             _state.value = _state.value.copy(
                 directInviteAccountNo = "",
-                message = "已邀请成员加入群聊",
+                message = "邀请已发送，等待对方同意",
             )
-            refreshMembersIfLoaded(group.conversationId)
-            refreshData()
         }
     }
 
@@ -167,10 +173,20 @@ internal class GroupViewModel(
     }
 
     fun leave(group: GroupSummary) {
+        _state.value = _state.value.copy(
+            groups = _state.value.groups.filterNot { it.conversationId == group.conversationId },
+            messageListGroups = _state.value.messageListGroups
+                .filterNot { it.conversationId == group.conversationId },
+        )
         launchRequest {
-            repository.leave(group.conversationId)
-            clearGroupData(group.conversationId)
-            refreshData()
+            try {
+                repository.leave(group.conversationId)
+                clearGroupData(group.conversationId)
+                refreshData()
+            } catch (exception: Throwable) {
+                refreshData()
+                throw exception
+            }
         }
     }
 
@@ -250,6 +266,40 @@ internal class GroupViewModel(
         launchRequest {
             repository.createJoinRequest(invite.conversationId, _state.value.inviteToken)
             _state.value = _state.value.copy(message = "申请已提交，等待群主或管理员审批")
+        }
+    }
+
+    fun requestToJoin(group: GroupSearchResult) {
+        if (_state.value.joinRequestStatuses[group.groupNo] == "PENDING") {
+            return
+        }
+        launchRequest {
+            val response = repository.createJoinRequestByGroupNo(group.groupNo)
+            _state.value = _state.value.copy(
+                joinRequestStatuses = _state.value.joinRequestStatuses +
+                    (group.groupNo to response.status),
+                message = if (response.status == "PENDING") {
+                    "入群申请已提交，等待群主或管理员审批"
+                } else {
+                    "当前申请状态：${response.status}"
+                },
+            )
+        }
+    }
+
+    fun acceptMemberInvitation(invitation: GroupMemberInvitationSummary) {
+        launchRequest {
+            repository.acceptMemberInvitation(invitation.conversationId, invitation.invitationId)
+            refreshData()
+            _state.value = _state.value.copy(message = "已加入群聊")
+        }
+    }
+
+    fun rejectMemberInvitation(invitation: GroupMemberInvitationSummary) {
+        launchRequest {
+            repository.rejectMemberInvitation(invitation.conversationId, invitation.invitationId)
+            refreshData()
+            _state.value = _state.value.copy(message = "已拒绝群聊邀请")
         }
     }
 
@@ -344,6 +394,16 @@ internal class GroupViewModel(
         }
     }
 
+    fun resetCreateForm() {
+        _state.value = _state.value.copy(
+            name = "",
+            description = "",
+            avatar = null,
+            visibility = "PUBLIC",
+            message = null,
+        )
+    }
+
     fun search() {
         val query = _state.value.searchQuery.trim()
         if (query.isEmpty()) {
@@ -356,14 +416,20 @@ internal class GroupViewModel(
     }
 
     fun refresh() {
-        launchRequest { refreshData() }
+        launchRequest { refreshLatest() }
+    }
+
+    internal suspend fun refreshLatest() {
+        refreshData()
     }
 
     private suspend fun refreshData() {
         val groups = repository.list()
+        val memberInvitations = repository.memberInvitations()
         _state.value = _state.value.copy(
             groups = groups,
             messageListGroups = messageRepository?.filterGroupsForMessageList(groups) ?: groups,
+            memberInvitations = memberInvitations,
         )
     }
 

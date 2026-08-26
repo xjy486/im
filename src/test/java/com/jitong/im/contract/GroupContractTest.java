@@ -94,14 +94,16 @@ class GroupContractTest extends ContractTestEnvironment {
                 .getBody().get("groups").get(0);
         assertThat(result.fieldNames()).toIterable().containsExactlyInAnyOrder(
                 "name",
+                "groupNo",
                 "avatarUrl",
                 "description",
                 "memberCount");
         assertThat(result.get("name").asText()).isEqualTo("Public Lounge");
+        assertThat(result.get("groupNo").asText())
+                .isEqualTo(publicGroup.get("groupNo").asText());
         assertThat(result.get("description").asText()).isEqualTo("Minimal result");
         assertThat(result.get("memberCount").asInt()).isEqualTo(1);
         assertThat(result.get("conversationId")).isNull();
-        assertThat(result.get("groupNo")).isNull();
         assertThat(result.get("ownerUserId")).isNull();
         assertThat(result.get("visibility")).isNull();
 
@@ -268,6 +270,65 @@ class GroupContractTest extends ContractTestEnvironment {
                 HttpMethod.GET,
                 "/api/v1/groups/" + conversationId + "/members",
                 applicantToken,
+                null).getBody()).hasSize(2);
+    }
+
+    @Test
+    void member_account_invitations_require_acceptance_before_membership() throws Exception {
+        TestUser owner = createUser("Account invite owner");
+        TestUser invitee = createUser("Account invite invitee");
+        String ownerToken = login(owner.accountNo(), "account-invite-owner");
+        String inviteeToken = login(invitee.accountNo(), "account-invite-invitee");
+
+        JsonNode group = createGroup(ownerToken, "Account Invite Lounge", "", "PRIVATE");
+        UUID conversationId = UUID.fromString(group.get("conversationId").asText());
+
+        ResponseEntity<JsonNode> invitation = exchange(
+                HttpMethod.POST,
+                "/api/v1/groups/" + conversationId + "/member-invitations",
+                ownerToken,
+                Map.of("accountNo", invitee.accountNo()));
+        assertThat(invitation.getStatusCode()).isEqualTo(HttpStatus.OK);
+        assertThat(invitation.getBody().get("status").asText()).isEqualTo("PENDING");
+        UUID invitationId = UUID.fromString(invitation.getBody().get("invitationId").asText());
+
+        assertThat(exchange(HttpMethod.GET, "/api/v1/groups", inviteeToken, null)
+                .getBody()).isEmpty();
+        JsonNode pending = exchange(
+                HttpMethod.GET,
+                "/api/v1/groups/member-invitations/mine",
+                inviteeToken,
+                null).getBody();
+        assertThat(pending).hasSize(1);
+        assertThat(pending.get(0).get("invitationId").asText())
+                .isEqualTo(invitationId.toString());
+        JsonNode inviteSync = exchange(
+                HttpMethod.GET,
+                "/api/v1/sync?after=0&until=1",
+                inviteeToken,
+                null).getBody();
+        assertThat(inviteSync.get("events").get(0).get("eventType").asText())
+                .isEqualTo("GROUP_INVITE");
+        assertThat(exchange(
+                HttpMethod.GET,
+                "/api/v1/groups/" + conversationId + "/members",
+                ownerToken,
+                null).getBody()).hasSize(1);
+
+        ResponseEntity<JsonNode> accepted = exchange(
+                HttpMethod.POST,
+                "/api/v1/groups/" + conversationId + "/member-invitations/"
+                        + invitationId + "/accept",
+                inviteeToken,
+                null);
+        assertThat(accepted.getStatusCode()).isEqualTo(HttpStatus.OK);
+        assertThat(accepted.getBody().get("status").asText()).isEqualTo("ACCEPTED");
+        assertThat(exchange(HttpMethod.GET, "/api/v1/groups", inviteeToken, null)
+                .getBody()).hasSize(1);
+        assertThat(exchange(
+                HttpMethod.GET,
+                "/api/v1/groups/" + conversationId + "/members",
+                inviteeToken,
                 null).getBody()).hasSize(2);
     }
 
@@ -829,11 +890,31 @@ class GroupContractTest extends ContractTestEnvironment {
             UUID conversationId,
             String accountNo
     ) {
-        return exchange(
+        ResponseEntity<JsonNode> invitation = exchange(
                 HttpMethod.POST,
-                "/api/v1/groups/" + conversationId + "/members",
+                "/api/v1/groups/" + conversationId + "/member-invitations",
                 token,
                 Map.of("accountNo", accountNo));
+        if (!invitation.getStatusCode().is2xxSuccessful()) {
+            return invitation;
+        }
+        String inviteeToken;
+        try {
+            inviteeToken = login(
+                    accountNo,
+                    "member-invite-" + accountNo,
+                    "MOBILE");
+        } catch (Exception exception) {
+            throw new IllegalStateException(exception);
+        }
+        return exchange(
+                HttpMethod.POST,
+                "/api/v1/groups/" + conversationId
+                        + "/member-invitations/"
+                        + invitation.getBody().get("invitationId").asText()
+                        + "/accept",
+                inviteeToken,
+                null);
     }
 
     private ResponseEntity<JsonNode> changeRole(
@@ -934,6 +1015,11 @@ class GroupContractTest extends ContractTestEnvironment {
     }
 
     private String login(String accountNo, String installationId) throws Exception {
+        return login(accountNo, installationId, "PC");
+    }
+
+    private String login(String accountNo, String installationId, String deviceClass)
+            throws Exception {
         HttpHeaders headers = new HttpHeaders();
         headers.setContentType(MediaType.APPLICATION_JSON);
         ResponseEntity<String> response = http.postForEntity(
@@ -941,6 +1027,7 @@ class GroupContractTest extends ContractTestEnvironment {
                 new HttpEntity<>(objectMapper.writeValueAsString(Map.of(
                         "accountNo", accountNo,
                         "password", "correct horse battery staple",
+                        "deviceClass", deviceClass,
                         "installationId", installationId)), headers),
                 String.class);
         return objectMapper.readTree(response.getBody()).get("accessToken").asText();

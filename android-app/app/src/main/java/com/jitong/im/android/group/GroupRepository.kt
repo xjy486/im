@@ -55,6 +55,36 @@ internal class GroupRepository(
             GroupJoinRequestCreateRequest(inviteToken),
         ).bodyOrThrow("Group join request")
 
+    suspend fun createJoinRequestByGroupNo(groupNo: String): GroupJoinRequestResponse =
+        api.createJoinRequestByGroupNo(GroupJoinRequestByGroupNoRequest(groupNo))
+            .bodyOrThrow("Group join request")
+
+    suspend fun inviteMember(
+        conversationId: UUID,
+        accountNo: String,
+    ): GroupMemberInvitationResponse =
+        api.inviteMember(
+            conversationId,
+            GroupMemberInvitationRequest(accountNo),
+        ).bodyOrThrow("Group member invitation")
+
+    suspend fun memberInvitations(): List<GroupMemberInvitationSummary> =
+        api.memberInvitations().bodyOrThrow("Group member invitation list")
+
+    suspend fun acceptMemberInvitation(
+        conversationId: UUID,
+        invitationId: UUID,
+    ): GroupMemberInvitationResponse =
+        api.acceptMemberInvitation(conversationId, invitationId)
+            .bodyOrThrow("Group member invitation acceptance")
+
+    suspend fun rejectMemberInvitation(
+        conversationId: UUID,
+        invitationId: UUID,
+    ): GroupMemberInvitationResponse =
+        api.rejectMemberInvitation(conversationId, invitationId)
+            .bodyOrThrow("Group member invitation rejection")
+
     suspend fun listJoinRequests(conversationId: UUID): List<GroupJoinRequestSummary> =
         api.listJoinRequests(conversationId).bodyOrThrow("Group join request list")
 
@@ -73,10 +103,6 @@ internal class GroupRepository(
     suspend fun removeMember(conversationId: UUID, userId: UUID) {
         api.removeMember(conversationId, userId).ensureSuccessful("Group member removal")
     }
-
-    suspend fun addMember(conversationId: UUID, accountNo: String): GroupMemberAddResponse =
-        api.addMember(conversationId, GroupMemberAddRequest(accountNo))
-            .bodyOrThrow("Direct group invitation")
 
     suspend fun changeRole(
         conversationId: UUID,

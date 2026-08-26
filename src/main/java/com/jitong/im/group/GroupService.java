@@ -11,6 +11,7 @@ import com.jitong.im.audit.SecurityAuditSink;
 import com.jitong.im.auth.UuidV7;
 import com.jitong.im.message.GroupMessageService;
 import com.jitong.im.platform.error.ApiErrorDefinition;
+import com.jitong.im.sync.SyncService;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -35,6 +36,7 @@ public class GroupService {
     private final GroupInviteProperties inviteProperties;
     private final SecurityAuditSink auditSink;
     private final GroupMessageService groupMessageService;
+    private final SyncService syncService;
     private final AiService aiService;
     private final Clock clock;
 
@@ -47,6 +49,7 @@ public class GroupService {
             GroupInviteProperties inviteProperties,
             SecurityAuditSink auditSink,
             GroupMessageService groupMessageService,
+            SyncService syncService,
             AiService aiService
     ) {
         this(
@@ -57,6 +60,7 @@ public class GroupService {
                 inviteProperties,
                 auditSink,
                 groupMessageService,
+                syncService,
                 aiService,
                 Clock.systemUTC());
     }
@@ -69,6 +73,7 @@ public class GroupService {
             GroupInviteProperties inviteProperties,
             SecurityAuditSink auditSink,
             GroupMessageService groupMessageService,
+            SyncService syncService,
             AiService aiService,
             Clock clock
     ) {
@@ -79,6 +84,7 @@ public class GroupService {
         this.inviteProperties = inviteProperties;
         this.auditSink = auditSink;
         this.groupMessageService = groupMessageService;
+        this.syncService = syncService;
         this.aiService = aiService;
         this.clock = clock;
     }
@@ -176,59 +182,162 @@ public class GroupService {
     }
 
     @Transactional
-    public GroupMemberAddResponse addMember(
+    public GroupMemberInvitationResponse inviteMember(
             String authorization,
             UUID conversationId,
-            GroupMemberAddRequest request
+            GroupMemberInvitationRequest request
     ) {
-        UUID actorId = authService.requireUserId(authorization);
+        UUID inviterUserId = authService.requireUserId(authorization);
         if (request == null || request.accountNo() == null
                 || !request.accountNo().trim().matches("[1-9][0-9]{10}")) {
             throw new GroupException(ApiErrorDefinition.INVALID_REQUEST);
         }
-        GroupRepository.GroupActor actor = repository.lockActor(conversationId, actorId);
+        GroupRepository.GroupActor actor = repository.lockActor(conversationId, inviterUserId);
         if (actor == null) {
             throw new GroupException(ApiErrorDefinition.FORBIDDEN);
         }
-        UUID memberId = repository.findActiveUserByAccountNoForUpdate(request.accountNo().trim());
-        if (memberId == null) {
+        UUID inviteeUserId = repository.findActiveUserByAccountNoForUpdate(
+                request.accountNo().trim());
+        if (inviteeUserId == null) {
             throw new GroupException(ApiErrorDefinition.USER_NOT_FOUND);
         }
-        if (repository.isBanned(conversationId, memberId)) {
+        if (inviterUserId.equals(inviteeUserId)
+                || repository.isBanned(conversationId, inviteeUserId)) {
             throw new GroupException(ApiErrorDefinition.FORBIDDEN);
         }
-        if (repository.isActiveMember(conversationId, memberId)) {
+        if (repository.isActiveMember(conversationId, inviteeUserId)) {
             throw new GroupException(ApiErrorDefinition.CONFLICT);
         }
+        GroupRepository.GroupMemberInvitationRecord existing =
+                repository.findPendingMemberInvitation(conversationId, inviteeUserId);
+        if (existing != null) {
+            return toMemberInvitationResponse(existing);
+        }
+        GroupRepository.GroupMemberInvitationRecord created;
         try {
-            repository.addMember(conversationId, memberId);
+            created = repository.insertMemberInvitation(
+                    UuidV7.random(),
+                    conversationId,
+                    inviterUserId,
+                    inviteeUserId,
+                    clock.instant());
         } catch (DataIntegrityViolationException exception) {
+            created = repository.findPendingMemberInvitation(conversationId, inviteeUserId);
+        }
+        if (created == null) {
             throw new GroupException(ApiErrorDefinition.CONFLICT);
         }
-        GroupRepository.JoinRequestRecord pending =
-                repository.findPendingJoinRequest(conversationId, memberId);
-        if (pending != null) {
-            repository.updateJoinRequestStatus(
-                    pending.requestId(),
-                    "APPROVED",
-                    actorId,
-                    clock.instant());
+        syncService.recordEventForUsers(
+                List.of(inviteeUserId),
+                "GROUP_INVITE",
+                created.invitationId(),
+                conversationId);
+        return toMemberInvitationResponse(created);
+    }
+
+    @Transactional(readOnly = true)
+    public List<GroupMemberInvitationSummary> listMemberInvitations(String authorization) {
+        UUID inviteeUserId = authService.requireUserId(authorization);
+        return repository.listMemberInvitations(inviteeUserId).stream()
+                .map(invitation -> new GroupMemberInvitationSummary(
+                        1,
+                        invitation.invitationId(),
+                        invitation.conversationId(),
+                        invitation.groupNo(),
+                        invitation.groupName(),
+                        invitation.inviterUserId(),
+                        invitation.inviterAccountNo(),
+                        invitation.inviterDisplayName(),
+                        invitation.status(),
+                        invitation.createdAt(),
+                        invitation.resolvedAt()))
+                .toList();
+    }
+
+    @Transactional
+    public GroupMemberInvitationResponse acceptMemberInvitation(
+            String authorization,
+            UUID conversationId,
+            UUID invitationId
+    ) {
+        return acceptPendingMemberInvitation(authorization, conversationId, invitationId);
+    }
+
+    @Transactional
+    public GroupMemberInvitationResponse rejectMemberInvitation(
+            String authorization,
+            UUID conversationId,
+            UUID invitationId
+    ) {
+        UUID inviteeUserId = authService.requireUserId(authorization);
+        GroupRepository.GroupMemberInvitationRecord invitation =
+                repository.lockMemberInvitation(invitationId);
+        if (invitation == null
+                || !conversationId.equals(invitation.conversationId())
+                || !inviteeUserId.equals(invitation.inviteeUserId())) {
+            throw new GroupException(ApiErrorDefinition.FORBIDDEN);
         }
-        groupMessageService.recordMemberJoinedAfterMembershipChange(
-                conversationId,
-                actorId,
-                memberId);
+        if ("PENDING".equals(invitation.status())) {
+            repository.updateMemberInvitationStatus(
+                    invitationId,
+                    "REJECTED",
+                    inviteeUserId,
+                    clock.instant());
+            invitation = repository.findMemberInvitation(invitationId);
+        }
+        return toMemberInvitationResponse(invitation);
+    }
+
+    private GroupMemberInvitationResponse acceptPendingMemberInvitation(
+            String authorization,
+            UUID conversationId,
+            UUID invitationId
+    ) {
+        UUID inviteeUserId = authService.requireUserId(authorization);
+        GroupRepository.GroupMemberInvitationRecord invitation =
+                repository.lockMemberInvitation(invitationId);
+        if (invitation == null
+                || !conversationId.equals(invitation.conversationId())
+                || !inviteeUserId.equals(invitation.inviteeUserId())) {
+            throw new GroupException(ApiErrorDefinition.FORBIDDEN);
+        }
+        if (!"PENDING".equals(invitation.status())) {
+            return toMemberInvitationResponse(invitation);
+        }
+        GroupRepository.GroupRecord group = repository.lockGroup(conversationId);
+        if (group == null) {
+            throw new GroupException(ApiErrorDefinition.RESOURCE_NOT_FOUND);
+        }
+        if (repository.isBanned(conversationId, inviteeUserId)) {
+            repository.updateMemberInvitationStatus(
+                    invitationId,
+                    "REJECTED",
+                    inviteeUserId,
+                    clock.instant());
+            return toMemberInvitationResponse(repository.findMemberInvitation(invitationId));
+        }
+        if (!repository.isActiveMember(conversationId, inviteeUserId)) {
+            try {
+                repository.addMember(conversationId, inviteeUserId);
+            } catch (DataIntegrityViolationException exception) {
+                throw new GroupException(ApiErrorDefinition.CONFLICT);
+            }
+            groupMessageService.recordMemberJoinedAfterMembershipChange(
+                    conversationId,
+                    inviteeUserId,
+                    inviteeUserId);
+        }
+        repository.updateMemberInvitationStatus(
+                invitationId,
+                "ACCEPTED",
+                inviteeUserId,
+                clock.instant());
         recordAudit(
                 SecurityAuditEventType.GROUP_MEMBERSHIP_CHANGE,
-                actorId,
+                inviteeUserId,
                 conversationId,
                 AuditOutcome.SUCCEEDED);
-        return new GroupMemberAddResponse(
-                1,
-                conversationId,
-                memberId,
-                "MEMBER",
-                actor.memberCount() + 1);
+        return toMemberInvitationResponse(repository.findMemberInvitation(invitationId));
     }
 
     @Transactional
@@ -904,9 +1013,24 @@ public class GroupService {
     private GroupSearchResult toSearchResult(GroupRepository.SearchGroupRecord group) {
         return new GroupSearchResult(
                 group.name(),
+                group.groupNo(),
                 avatarUrl(group.conversationId(), group.avatarMediaId(), group.avatarVersion()),
                 group.description(),
                 group.memberCount());
+    }
+
+    private GroupMemberInvitationResponse toMemberInvitationResponse(
+            GroupRepository.GroupMemberInvitationRecord invitation
+    ) {
+        return new GroupMemberInvitationResponse(
+                1,
+                invitation.invitationId(),
+                invitation.conversationId(),
+                invitation.inviterUserId(),
+                invitation.inviteeUserId(),
+                invitation.status(),
+                invitation.createdAt(),
+                invitation.resolvedAt());
     }
 
     private String avatarUrl(UUID conversationId, UUID avatarMediaId, long avatarVersion) {
@@ -971,7 +1095,7 @@ public class GroupService {
             if (!invite.conversationId().equals(group.conversationId())) {
                 throw new GroupException(ApiErrorDefinition.RESOURCE_NOT_FOUND);
             }
-        } else if (!"PUBLIC".equals(group.visibility())) {
+        } else if ("PRIVATE".equals(group.visibility())) {
             throw new GroupException(ApiErrorDefinition.RESOURCE_NOT_FOUND);
         }
         GroupRepository.JoinRequestRecord created = repository.insertJoinRequest(

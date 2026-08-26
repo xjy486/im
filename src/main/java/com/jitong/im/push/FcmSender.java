@@ -6,5 +6,7 @@ public interface FcmSender {
 
     FcmDeliveryResult sendContactRequest(String token);
 
+    FcmDeliveryResult sendGroupInvite(String token);
+
     FcmDeliveryResult sendProfileChanged(String token);
 }

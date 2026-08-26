@@ -220,7 +220,7 @@ class GroupAiPolicyContractTest extends ContractTestEnvironment {
         GroupFixture group = createGroupWithMember("Membership invalidation");
         TestUser removed = createUser("Removed AI member");
         String removedToken = login(removed.accountNo(), "removed-ai-member");
-        addMember(group.ownerToken(), group.conversationId(), removed.accountNo());
+        addMember(group.ownerToken(), removedToken, group.conversationId(), removed.accountNo());
         updatePolicy(group.ownerToken(), group.conversationId(), true);
         sendText(group.ownerToken(), group.conversationId(), "Invalidate jobs when membership ends.");
 
@@ -272,7 +272,7 @@ class GroupAiPolicyContractTest extends ContractTestEnvironment {
                 .getBody().get("conversationId").asText());
         updatePolicy(ownerToken, conversationId, true);
         sendText(ownerToken, conversationId, "This message predates the new member.");
-        addMember(ownerToken, conversationId, member.accountNo());
+        addMember(ownerToken, memberToken, conversationId, member.accountNo());
 
         ResponseEntity<JsonNode> response = requestSummary(memberToken, conversationId);
 
@@ -294,16 +294,29 @@ class GroupAiPolicyContractTest extends ContractTestEnvironment {
         assertThat(created.get("aiEnabled").asBoolean()).isFalse();
         assertThat(created.get("aiPolicyVersion").asLong()).isEqualTo(1);
         UUID conversationId = UUID.fromString(created.get("conversationId").asText());
-        addMember(ownerToken, conversationId, member.accountNo());
+        addMember(ownerToken, memberToken, conversationId, member.accountNo());
         return new GroupFixture(owner, member, ownerToken, memberToken, conversationId);
     }
 
-    private void addMember(String ownerToken, UUID conversationId, String accountNo) {
-        assertThat(exchange(
-                "/api/v1/groups/" + conversationId + "/members",
+    private void addMember(
+            String ownerToken,
+            String memberToken,
+            UUID conversationId,
+            String accountNo
+    ) {
+        JsonNode invitation = exchange(
+                "/api/v1/groups/" + conversationId + "/member-invitations",
                 HttpMethod.POST,
                 ownerToken,
-                Map.of("accountNo", accountNo)).getStatusCode()).isEqualTo(HttpStatus.OK);
+                Map.of("accountNo", accountNo)).getBody();
+        assertThat(exchange(
+                "/api/v1/groups/" + conversationId
+                        + "/member-invitations/"
+                        + invitation.get("invitationId").asText()
+                        + "/accept",
+                HttpMethod.POST,
+                memberToken,
+                null).getStatusCode()).isEqualTo(HttpStatus.OK);
     }
 
     private JsonNode updatePolicy(String ownerToken, UUID conversationId, boolean enabled) {

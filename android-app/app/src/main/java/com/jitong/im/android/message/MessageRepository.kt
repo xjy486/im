@@ -58,6 +58,11 @@ internal class MessageRepository(
         extraBufferCapacity = 8,
         onBufferOverflow = BufferOverflow.DROP_OLDEST,
     )
+    internal val groupInvitationChanges = MutableSharedFlow<Unit>(
+        replay = 1,
+        extraBufferCapacity = 8,
+        onBufferOverflow = BufferOverflow.DROP_OLDEST,
+    )
     internal val aiPolicyChanges = MutableSharedFlow<UUID>(
         replay = 1,
         extraBufferCapacity = 8,
@@ -346,6 +351,9 @@ internal class MessageRepository(
             }
             if (page.events.any { it.eventType == "CONTACT_REQUEST_CREATED" }) {
                 contactRequestChanges.tryEmit(Unit)
+            }
+            if (page.events.any { it.eventType == "GROUP_INVITE" }) {
+                groupInvitationChanges.tryEmit(Unit)
             }
             page.events
                 .filter {
@@ -1299,6 +1307,29 @@ internal class MessageRepository(
                 )
             }
             contactRequestChanges.tryEmit(Unit)
+            syncApi.acknowledge(SyncAckRequest(syncSeq)).syncBodyOrThrow()
+            return
+        }
+        if (event.operation == "group.invite.created") {
+            val syncSeq = body.syncSeq ?: return
+            val lastSyncSeq = withContext(Dispatchers.IO) {
+                db.syncStateDao().current()?.lastSyncSeq ?: 0L
+            }
+            if (syncSeq <= lastSyncSeq) return
+            if (syncSeq != lastSyncSeq + 1) {
+                synchronize(currentUserId, syncSeq)
+                return
+            }
+            withContext(Dispatchers.IO) {
+                db.syncStateDao().upsert(
+                    SyncStateEntity(
+                        deviceId = deviceId()?.toString().orEmpty(),
+                        lastSyncSeq = syncSeq,
+                        lastFullRestoreAt = db.syncStateDao().current()?.lastFullRestoreAt,
+                    ),
+                )
+            }
+            groupInvitationChanges.tryEmit(Unit)
             syncApi.acknowledge(SyncAckRequest(syncSeq)).syncBodyOrThrow()
             return
         }

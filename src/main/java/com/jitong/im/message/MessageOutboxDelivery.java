@@ -146,6 +146,7 @@ class MessageOutboxDelivery implements OutboxDelivery {
                 && !"GROUP_DISSOLVED".equals(record.eventType())
                 && !"MEMBERSHIP_REVOKED".equals(record.eventType())
                 && !"MEMBERSHIP_GRANTED".equals(record.eventType())
+                && !"GROUP_INVITE".equals(record.eventType())
                 && !messageRepository.canDeviceReceiveGroupEvent(
                         record.targetDeviceId(),
                         record.conversationId(),
@@ -222,6 +223,10 @@ class MessageOutboxDelivery implements OutboxDelivery {
                     MessageWire.contactRelationshipChanged(record.conversationId(), record.syncSeq());
             case "CONTACT_REQUEST_CREATED" ->
                     MessageWire.contactRequestCreated(record.entityId(), record.syncSeq());
+            case "GROUP_INVITE" -> MessageWire.groupInviteCreated(
+                    record.entityId(),
+                    record.conversationId(),
+                    record.syncSeq());
             case "CONVERSATION_AI_POLICY_CHANGED" ->
                     MessageWire.conversationAiPolicyChanged(
                             record.conversationId(),
@@ -323,6 +328,7 @@ class MessageOutboxDelivery implements OutboxDelivery {
                     fcmSender.sendProfileChanged(token);
             case "CONTACT_REQUEST_CREATED" ->
                     fcmSender.sendContactRequest(token);
+            case "GROUP_INVITE" -> fcmSender.sendGroupInvite(token);
             default -> FcmDeliveryResult.SENT;
         };
         if (result == null) {

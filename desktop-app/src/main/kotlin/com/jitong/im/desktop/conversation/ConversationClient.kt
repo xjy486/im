@@ -180,6 +180,7 @@ data class DesktopGroupAiPolicyUpdate(val enabled: Boolean)
 @Serializable
 data class DesktopGroupSearchResult(
     val name: String,
+    val groupNo: String = "",
     val avatarUrl: String? = null,
     val description: String,
     val memberCount: Int,
@@ -248,7 +249,7 @@ data class DesktopGroupMember(
 )
 
 @Serializable
-data class DesktopGroupMemberAddRequest(val accountNo: String)
+data class DesktopGroupMemberInvitationRequest(val accountNo: String)
 
 @Serializable
 data class DesktopGroupRoleChangeRequest(val role: String)
@@ -573,9 +574,9 @@ class ConversationClient(
     ) {
         execute(
             post(
-                "/api/v1/groups/$conversationId/members",
+                "/api/v1/groups/$conversationId/member-invitations",
                 accessToken,
-                DesktopGroupMemberAddRequest(accountNo)))
+                DesktopGroupMemberInvitationRequest(accountNo)))
     }
 
     fun removeGroupMember(
