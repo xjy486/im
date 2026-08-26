@@ -10,6 +10,7 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.ExperimentalFoundationApi
+import androidx.compose.foundation.gestures.detectHorizontalDragGestures
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -22,6 +23,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.ime
 import androidx.compose.foundation.layout.navigationBars
+import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -79,15 +81,12 @@ import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Surface
-import androidx.compose.material3.SwipeToDismissBox
-import androidx.compose.material3.SwipeToDismissBoxValue
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TextField
 import androidx.compose.material3.TextFieldDefaults
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.material3.rememberModalBottomSheetState
-import androidx.compose.material3.rememberSwipeToDismissBoxState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -102,10 +101,12 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.google.zxing.BarcodeFormat
@@ -126,6 +127,7 @@ import com.jitong.im.android.local.LocalMessageEntity
 import kotlinx.coroutines.delay
 import java.io.ByteArrayOutputStream
 import java.util.UUID
+import kotlin.math.roundToInt
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -730,7 +732,6 @@ private fun MessagesHome(
     }
 }
 
-@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun MessageListRow(
     entry: MessageListEntry,
@@ -739,97 +740,123 @@ private fun MessageListRow(
     onOpen: () -> Unit,
     onHide: () -> Unit,
 ) {
-    val dismissState = rememberSwipeToDismissBoxState(
-        confirmValueChange = { value ->
-            if (value == SwipeToDismissBoxValue.EndToStart) {
+    var offsetDp by rememberSaveable(entry.conversationId) { mutableStateOf(0f) }
+    var dragging by rememberSaveable(entry.conversationId) { mutableStateOf(false) }
+    val density = androidx.compose.ui.platform.LocalDensity.current
+    val actionWidth = MESSAGE_LIST_DELETE_ACTION_WIDTH_DP.dp
+    Box(
+        Modifier
+            .fillMaxWidth()
+            .background(JitongColors.danger),
+        contentAlignment = Alignment.CenterEnd,
+    ) {
+        TextButton(
+            onClick = {
+                offsetDp = 0f
                 onHide()
-                true
-            } else {
-                false
-            }
-        },
-    )
-    SwipeToDismissBox(
-        state = dismissState,
-        enableDismissFromStartToEnd = false,
-        backgroundContent = {
-            Box(
-                Modifier.fillMaxSize().background(JitongColors.danger),
-                contentAlignment = Alignment.CenterEnd,
-            ) {
-                Icon(
-                    Icons.Outlined.DeleteOutline,
-                    contentDescription = "删除会话",
-                    tint = androidx.compose.ui.graphics.Color.White,
-                    modifier = Modifier.padding(horizontal = 24.dp),
-                )
-            }
-        },
-        content = {
-            Row(
-                Modifier
-                    .fillMaxWidth()
-                    .clickable(onClick = onOpen)
-                    .background(JitongColors.page)
-                    .padding(horizontal = 18.dp, vertical = 12.dp),
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(12.dp),
-            ) {
-                Box {
-                    when (val conversation = entry.conversation) {
-                        null -> {
-                            val group = requireNotNull(entry.group)
-                            RemoteGroupAvatar(
-                                conversationId = group.conversationId,
-                                avatarVersion = group.avatarVersion,
-                                fallback = group.name,
-                                load = loadGroupAvatar,
-                                size = 54.dp,
+            },
+            modifier = Modifier.width(actionWidth).fillMaxSize(),
+        ) {
+            Icon(
+                Icons.Outlined.DeleteOutline,
+                contentDescription = "删除会话",
+                tint = androidx.compose.ui.graphics.Color.White,
+            )
+        }
+        Row(
+            Modifier
+                .fillMaxWidth()
+                .offset {
+                    IntOffset(
+                        with(density) { offsetDp.dp.toPx().roundToInt() },
+                        0,
+                    )
+                }
+                .pointerInput(entry.conversationId) {
+                    detectHorizontalDragGestures(
+                        onDragStart = { dragging = true },
+                        onHorizontalDrag = { _, dragAmount ->
+                            offsetDp = messageListSwipeOffset(
+                                currentOffset = offsetDp,
+                                dragAmount = with(density) { dragAmount.toDp().value },
                             )
-                        }
-                        else -> RemoteAvatar(
-                            userId = conversation.peerUserId,
-                            avatarVersion = conversation.avatarVersion,
-                            fallback = conversation.avatarFallback,
-                            load = loadAvatar,
+                        },
+                        onDragEnd = {
+                            dragging = false
+                            offsetDp = settleMessageListSwipe(offsetDp)
+                        },
+                        onDragCancel = {
+                            dragging = false
+                            offsetDp = settleMessageListSwipe(offsetDp)
+                        },
+                    )
+                }
+                .clickable(enabled = !dragging) {
+                    if (offsetDp != 0f) {
+                        offsetDp = 0f
+                    } else {
+                        onOpen()
+                    }
+                }
+                .background(JitongColors.page)
+                .padding(horizontal = 18.dp, vertical = 12.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(12.dp),
+        ) {
+            Box {
+                when (val conversation = entry.conversation) {
+                    null -> {
+                        val group = requireNotNull(entry.group)
+                        RemoteGroupAvatar(
+                            conversationId = group.conversationId,
+                            avatarVersion = group.avatarVersion,
+                            fallback = group.name,
+                            load = loadGroupAvatar,
                             size = 54.dp,
                         )
                     }
-                    UnreadBadge(
-                        count = entry.unreadCount,
-                        modifier = Modifier.align(Alignment.TopEnd),
+                    else -> RemoteAvatar(
+                        userId = conversation.peerUserId,
+                        avatarVersion = conversation.avatarVersion,
+                        fallback = conversation.avatarFallback,
+                        load = loadAvatar,
+                        size = 54.dp,
                     )
                 }
-                Column(
-                    Modifier.weight(1f),
-                    verticalArrangement = Arrangement.spacedBy(4.dp),
-                ) {
-                    Text(
-                        entry.title,
-                        style = MaterialTheme.typography.titleMedium,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis,
-                    )
-                    Text(
-                        entry.preview,
-                        color = JitongColors.secondaryText,
-                        style = MaterialTheme.typography.bodyMedium,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis,
-                    )
-                }
-                if (entry.conversation?.blockedByMe == true) {
-                    Icon(
-                        Icons.Outlined.Block,
-                        contentDescription = "已拉黑",
-                        tint = JitongColors.tertiaryText,
-                        modifier = Modifier.size(18.dp),
-                    )
-                }
+                UnreadBadge(
+                    count = entry.unreadCount,
+                    modifier = Modifier.align(Alignment.TopEnd),
+                )
             }
-            Divider(color = JitongColors.divider, modifier = Modifier.padding(start = 84.dp))
-        },
-    )
+            Column(
+                Modifier.weight(1f),
+                verticalArrangement = Arrangement.spacedBy(4.dp),
+            ) {
+                Text(
+                    entry.title,
+                    style = MaterialTheme.typography.titleMedium,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+                Text(
+                    entry.preview,
+                    color = JitongColors.secondaryText,
+                    style = MaterialTheme.typography.bodyMedium,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+            }
+            if (entry.conversation?.blockedByMe == true) {
+                Icon(
+                    Icons.Outlined.Block,
+                    contentDescription = "已拉黑",
+                    tint = JitongColors.tertiaryText,
+                    modifier = Modifier.size(18.dp),
+                )
+            }
+        }
+        Divider(color = JitongColors.divider, modifier = Modifier.padding(start = 84.dp))
+    }
 }
 
 @Composable
