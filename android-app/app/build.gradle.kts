@@ -38,7 +38,13 @@ android {
             "INVITE_HOST",
             "\"${project.findProperty("jitongInviteHost") ?: "app.jitong.im"}\""
         )
+        buildConfigField(
+            "String",
+            "INVITE_SCHEME",
+            "\"${project.findProperty("jitongInviteScheme") ?: "https"}\""
+        )
         manifestPlaceholders["inviteHost"] = project.findProperty("jitongInviteHost") ?: "app.jitong.im"
+        manifestPlaceholders["inviteScheme"] = project.findProperty("jitongInviteScheme") ?: "https"
     }
 
     buildTypes {
@@ -46,6 +52,18 @@ android {
             applicationIdSuffix = ".debug"
             versionNameSuffix = "-debug"
             manifestPlaceholders["allowCleartext"] = "true"
+            buildConfigField(
+                "String",
+                "INVITE_HOST",
+                "\"${project.findProperty("jitongInviteHost") ?: "10.0.2.2"}\""
+            )
+            buildConfigField(
+                "String",
+                "INVITE_SCHEME",
+                "\"${project.findProperty("jitongInviteScheme") ?: "http"}\""
+            )
+            manifestPlaceholders["inviteHost"] = project.findProperty("jitongInviteHost") ?: "10.0.2.2"
+            manifestPlaceholders["inviteScheme"] = project.findProperty("jitongInviteScheme") ?: "http"
         }
         release {
             isMinifyEnabled = false

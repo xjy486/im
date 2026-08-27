@@ -25,7 +25,7 @@
                 <category android:name="android.intent.category.DEFAULT" />
                 <category android:name="android.intent.category.BROWSABLE" />
                 <data
-                    android:scheme="https"
+                    android:scheme="${inviteScheme}"
                     android:host="${inviteHost}"
                     android:pathPrefix="/groups/invite" />
             </intent-filter>

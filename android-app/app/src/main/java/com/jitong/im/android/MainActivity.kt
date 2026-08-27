@@ -95,7 +95,7 @@ class MainActivity : ComponentActivity() {
 
     private fun handleInviteIntent(intent: Intent?) {
         val data = intent?.data ?: return
-        if (data.scheme != "https"
+        if (data.scheme != BuildConfig.INVITE_SCHEME
             || data.host != BuildConfig.INVITE_HOST
             || data.path != "/groups/invite"
         ) return

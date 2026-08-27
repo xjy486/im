@@ -4,7 +4,7 @@ T07 的 Android 登录与设备替换最小可运行客户端。工程使用 Kot
 
 ## 本地配置
 
-- 默认服务端地址为 Android Emulator 可访问的 `http://10.0.2.2:8080/`。
+- 默认服务端地址为 Android Emulator 可访问的 `http://10.0.2.2:8080/`，本地生成的群邀请链接也使用该地址。
 - 真机或其他服务端地址通过 Gradle 属性覆盖：
 
 ```sh
@@ -20,6 +20,7 @@ T07 的 Android 登录与设备替换最小可运行客户端。工程使用 Kot
 [Android Emulator 复用说明](../docs/android-emulator.md)。
 
 - debug 构建允许明文 HTTP 连接，release 构建只允许 HTTPS。
+- 生产环境构建需要通过 `-PjitongBaseUrl`、`-PjitongInviteHost` 和 `-PjitongInviteScheme=https` 指向公网服务端；本地 Debug 默认使用 `http://10.0.2.2:8080`。
 
 如需启用 FCM，需要向 Gradle 传入 Firebase Android App 配置。配置值只作为
 构建时资源进入 APK，不要把真实配置文件或服务端凭证提交到 Git：

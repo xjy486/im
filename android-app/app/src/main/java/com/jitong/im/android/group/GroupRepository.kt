@@ -39,7 +39,7 @@ internal class GroupRepository(
     suspend fun createInvite(conversationId: UUID, maxUses: Int? = null): GroupInviteResponse =
         api.createInvite(
             conversationId,
-            if (maxUses == null) null else GroupInviteCreateRequest(maxUses = maxUses),
+            GroupInviteCreateRequest(maxUses = maxUses),
         ).bodyOrThrow("Group invite creation")
 
     suspend fun resolveInvite(token: String): GroupInviteResolveResponse =

@@ -43,7 +43,9 @@ services:
       MINIO_SECRET_KEY: ${MINIO_ROOT_PASSWORD:?run scripts/dev-up.sh first}
       MINIO_BUCKET: ${MINIO_BUCKET:-jitong-media}
       ADMIN_API_KEY: ${ADMIN_API_KEY:?run scripts/dev-up.sh first}
-      GROUP_INVITE_DEEP_LINK_BASE: ${GROUP_INVITE_DEEP_LINK_BASE:-https://app.jitong.im/groups/invite}
+      # The local stack is reached from the Android Emulator through the
+      # host alias below. Production overrides this in compose.production.yaml.
+      GROUP_INVITE_DEEP_LINK_BASE: ${GROUP_INVITE_DEEP_LINK_BASE:-http://10.0.2.2:8080/groups/invite}
       FCM_ENABLED: ${FCM_ENABLED:-false}
       FCM_PROJECT_ID: ${FCM_PROJECT_ID:-}
       FCM_SERVICE_ACCOUNT_JSON: ${FCM_SERVICE_ACCOUNT_JSON:-}
