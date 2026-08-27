@@ -27,6 +27,7 @@ for required in \
     "$PROJECT_ROOT/config/firebase.properties.example" \
     "$PROJECT_ROOT/compose.yaml" \
     "$PROJECT_ROOT/compose.production.yaml" \
+    "$PROJECT_ROOT/docs/deployment.md" \
     "$PROJECT_ROOT/infra/caddy/Caddyfile" \
     "$PROJECT_ROOT/infra/caddy/Caddyfile.production"
 do

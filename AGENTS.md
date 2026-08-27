@@ -20,6 +20,8 @@ The accepted IM architecture, data model, protocols, security boundaries, delive
 
 Use JDK 21 through `scripts/dev-env.sh`, the checked-in Maven Wrapper (`./mvnw`), and the Docker Compose plugin. Do not rely on the system Java or a global Maven installation. See `docs/development-environment.md`.
 
+Single-node production deployment, operations, backup, upgrade, and rollback are documented in `docs/deployment.md`.
+
 ### Docker / Testcontainers
 
 On macOS, Colima is the required Docker runtime for local development and

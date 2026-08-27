@@ -7,8 +7,8 @@
 - `macos/jitong-<version>.dmg`
 - `server/jitong-server-<version>.jar`
 - 可选的 `server/jitong-im-server-<version>.tar` 容器镜像
-- `compose.yaml`、`compose.production.yaml` 和 `infra/caddy/`
-- `.env.example`、Firebase 配置模板、备份脚本和本说明
+- `compose.yaml`、`compose.production.yaml`、`infra/caddy/`、`CONTEXT.md`、`adr/`、`TECHNICAL-DESIGN.md`、`DEPLOYMENT.md`、`BACKUP-RESTORE.md` 和 `ANDROID.md`
+- `.env.example`、Firebase 配置模板、备份脚本、验收文档和本说明
 - `manifest.env` 与 `checksums.sha256`
 
 `release-dist/` 只保存本机构建产物，不提交到 Git。发布包不包含 Firebase
@@ -91,12 +91,14 @@ JITONG_SERVER_URL=https://im.example.com \
 
 ### Docker Compose 与 Caddy
 
-复制模板并生成本地凭证：
+本地发布验收可以使用自动生成的本地凭证：
 
 ```sh
-cp .env.example .env
 ./scripts/dev-up.sh
 ```
+
+如果先执行 `cp .env.example .env`，必须手动替换模板中的密码和管理员 key。
+`dev-up.sh` 只会在 `.env` 不存在时生成凭证。
 
 本机资源上限由 Compose 明确声明为总计不超过 2 CPU 和 2 GiB 内存，PostgreSQL
 与 MinIO 没有宿主机端口暴露。发布前可以运行完整启动、四演示账号初始化和重启
@@ -108,9 +110,11 @@ cp .env.example .env
 
 公网单节点部署使用生产覆盖：
 
+公网部署前置条件、环境文件、DNS、防火墙、首次上线和日常运维见
+[单节点生产部署](deployment.md)。生产环境应把 `JITONG_DOMAIN` 和 `CADDY_EMAIL`
+写入受保护的 `.env`，后续命令继续使用同一份环境文件。
+
 ```sh
-JITONG_DOMAIN=im.example.com \
-CADDY_EMAIL=ops@example.com \
 ./scripts/docker-runtime.sh docker compose \
   -f compose.yaml -f compose.production.yaml \
   --env-file .env up --detach --wait
@@ -176,8 +180,10 @@ JITONG_SERVER_IMAGE=jitong-im-server:1.0.0 \
   --env-file .env up --detach --no-build --wait
 ```
 
-Flyway migration 在服务启动时执行。升级后运行健康检查和
-`./scripts/dev-smoke.sh`，确认迁移和服务重启都成功。
+Flyway migration 在服务启动时执行。升级后执行生产 Compose 配置下的健康检查和
+server 重启检查。不要在生产环境执行 `./scripts/dev-smoke.sh`，它使用基础
+Compose 配置，可能将 Caddy 切回本地 loopback 配置。完整命令见
+[单节点生产部署](deployment.md)。
 
 Android 使用稳定的产品签名执行覆盖安装；macOS 用新 DMG 替换旧 `.app`。两端
 的服务端权威历史和加密本地副本不会因为普通升级而清除。
@@ -195,7 +201,7 @@ JITONG_SERVER_IMAGE=jitong-im-server:<previous-version> \
 ```
 
 如果新版本已经执行了不可逆数据库 migration，先不要强行回退应用。使用
-`scripts/backup/verify.sh` 验证最近备份，必要时按
+`scripts/backup/verify.sh` 验证所选备份，必要时按
 `docs/backup-restore.md` 的隔离恢复流程恢复 PostgreSQL、MinIO 和对应版本的
 应用镜像。恢复后再运行 Compose smoke、健康检查和客户端登录验收。
 

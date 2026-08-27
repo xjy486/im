@@ -22,6 +22,18 @@ T07 的 Android 登录与设备替换最小可运行客户端。工程使用 Kot
 - debug 构建允许明文 HTTP 连接，release 构建只允许 HTTPS。
 - 生产环境构建需要通过 `-PjitongBaseUrl`、`-PjitongInviteHost` 和 `-PjitongInviteScheme=https` 指向公网服务端；本地 Debug 默认使用 `http://10.0.2.2:8080`。
 
+`scripts/release/build.sh` 当前只提供 `--android-base-url` 参数。使用非默认公网域名时，
+请直接执行 Gradle 并同时传入 API 地址和邀请链接参数：
+
+```sh
+./gradlew assembleRelease \
+  -PjitongBaseUrl=https://im.example.com/ \
+  -PjitongInviteHost=im.example.com \
+  -PjitongInviteScheme=https
+```
+
+如果只修改 API base URL 而没有修改邀请链接 host，服务端生成的群邀请链接可能无法被 APK 接收。
+
 如需启用 FCM，需要向 Gradle 传入 Firebase Android App 配置。配置值只作为
 构建时资源进入 APK，不要把真实配置文件或服务端凭证提交到 Git：
 

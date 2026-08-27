@@ -239,9 +239,37 @@ fi
 cp "$PROJECT_ROOT/compose.yaml" "$OUTPUT_DIR/compose.yaml"
 cp "$PROJECT_ROOT/compose.production.yaml" "$OUTPUT_DIR/compose.production.yaml"
 cp "$PROJECT_ROOT/.env.example" "$OUTPUT_DIR/.env.example"
-cp "$PROJECT_ROOT/docs/release.md" "$OUTPUT_DIR/RELEASE.md"
+cp "$PROJECT_ROOT/CONTEXT.md" "$OUTPUT_DIR/CONTEXT.md"
 cp "$PROJECT_ROOT/config/firebase.properties.example" "$OUTPUT_DIR/config/firebase.properties.example"
 cp -R "$PROJECT_ROOT/infra/caddy/." "$OUTPUT_DIR/infra/caddy/"
+mkdir -p "$OUTPUT_DIR/adr"
+cp "$PROJECT_ROOT/docs/adr/"*.md "$OUTPUT_DIR/adr/"
+
+bundle_doc() {
+    input=$1
+    output=$2
+    output_dir=$(dirname "$OUTPUT_DIR/$output")
+    mkdir -p "$output_dir"
+    sed \
+        -e 's|(deployment\.md)|(DEPLOYMENT.md)|g' \
+        -e 's|(docs/backup-restore\.md)|(BACKUP-RESTORE.md)|g' \
+        -e 's|(backup-restore\.md)|(BACKUP-RESTORE.md)|g' \
+        -e 's|(\.\./android-app/README\.md)|(ANDROID.md)|g' \
+        -e 's|(design/im-system-technical-design\.md)|(TECHNICAL-DESIGN.md)|g' \
+        -e 's|(adr/0018-deploy-a-single-node-docker-compose-stack\.md)|(ADR-0018.md)|g' \
+        -e 's|(\.\./adr/)|(adr/)|g' \
+        -e 's|(\.\./\.\./CONTEXT\.md)|(CONTEXT.md)|g' \
+        -e 's|(\.\./docs/android-emulator\.md)|(docs/android-emulator.md)|g' \
+        "$input" > "$OUTPUT_DIR/$output"
+}
+
+bundle_doc "$PROJECT_ROOT/docs/release.md" RELEASE.md
+bundle_doc "$PROJECT_ROOT/docs/deployment.md" DEPLOYMENT.md
+bundle_doc "$PROJECT_ROOT/docs/backup-restore.md" BACKUP-RESTORE.md
+bundle_doc "$PROJECT_ROOT/android-app/README.md" ANDROID.md
+bundle_doc "$PROJECT_ROOT/docs/android-emulator.md" docs/android-emulator.md
+bundle_doc "$PROJECT_ROOT/docs/design/im-system-technical-design.md" TECHNICAL-DESIGN.md
+bundle_doc "$PROJECT_ROOT/docs/adr/0018-deploy-a-single-node-docker-compose-stack.md" ADR-0018.md
 mkdir -p "$OUTPUT_DIR/scripts/release"
 cp "$PROJECT_ROOT/scripts/release/"*.sh "$OUTPUT_DIR/scripts/release/"
 mkdir -p "$OUTPUT_DIR/scripts/acceptance"

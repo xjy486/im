@@ -1,6 +1,7 @@
 # PostgreSQL 与 MinIO 备份恢复演练
 
-本仓库的部署形态是单机 Docker Compose。备份流程把 PostgreSQL 写模型和
+本仓库的部署形态是单机 Docker Compose。首次部署和日常运维见
+[单节点生产部署](deployment.md)。备份流程把 PostgreSQL 写模型和
 MinIO 私有对象分别导出，再用同一份本机密钥独立加密。备份目录不包含
 PostgreSQL 密码、MinIO 凭证、管理员 API key 或加密密钥。
 

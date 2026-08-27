@@ -8,6 +8,10 @@
 ./scripts/dev-env.sh --check
 ```
 
+生产部署入口是 [单节点生产部署](docs/deployment.md)。发布构建、升级和回滚见
+[发布说明](docs/release.md)，备份与恢复见
+[PostgreSQL 与 MinIO 备份恢复演练](docs/backup-restore.md)。
+
 ## 本地启动
 
 需要 Colima、OpenSSL 和 curl。macOS 本地脚本会在 Colima 未运行时自动启动它，
@@ -29,7 +33,8 @@ curl http://127.0.0.1:8080/api/v1/system/health
 ./scripts/dev-smoke.sh
 ```
 
-本地 Caddy 使用 loopback HTTP，便于干净环境直接启动。公网部署使用自动 HTTPS 配置：
+本地 Caddy 使用 loopback HTTP，便于干净环境直接启动。公网部署使用自动 HTTPS 配置，
+完整前置条件和运维步骤见 [单节点生产部署](docs/deployment.md)。
 
 ```sh
 JITONG_DOMAIN=im.example.com \
