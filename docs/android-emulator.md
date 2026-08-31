@@ -24,20 +24,20 @@
 ~/.android/avd/jitong_api35.ini
 ```
 
-当前联调环境的 SDK 目录：
+SDK 目录使用 macOS 上 Android Studio 的标准位置：
 
 ```text
-/tmp/jitong-android-sdk
+~/Library/Android/sdk
 ```
 
-`/tmp` 目录可能会被系统清理。如果 SDK 被清理，按照本文第 4 节重新安装即可。
+早期版本的本文把 SDK 装在 `/tmp/jitong-android-sdk`。`/tmp` 会被系统定期清理，那份 SDK 已经不存在，不要再使用该路径。如果本机还没有 SDK，按照本文第 4 节安装到上面的标准位置。
 
 ## 2. 检查是否已经存在
 
 ```sh
-export ANDROID_SDK_ROOT=/tmp/jitong-android-sdk
+export ANDROID_SDK_ROOT="$HOME/Library/Android/sdk"
 export ANDROID_HOME="$ANDROID_SDK_ROOT"
-export PATH="$ANDROID_SDK_ROOT/platform-tools:$ANDROID_SDK_ROOT/emulator:$ANDROID_SDK_ROOT/cmdline-tools/latest/cmdline-tools/bin:$PATH"
+export PATH="$ANDROID_SDK_ROOT/platform-tools:$ANDROID_SDK_ROOT/emulator:$ANDROID_SDK_ROOT/cmdline-tools/latest/bin:$PATH"
 
 emulator -list-avds
 adb devices -l
@@ -62,9 +62,9 @@ emulator-5554    device
 启动当前 AVD：
 
 ```sh
-export ANDROID_SDK_ROOT=/tmp/jitong-android-sdk
+export ANDROID_SDK_ROOT="$HOME/Library/Android/sdk"
 export ANDROID_HOME="$ANDROID_SDK_ROOT"
-export PATH="$ANDROID_SDK_ROOT/platform-tools:$ANDROID_SDK_ROOT/emulator:$ANDROID_SDK_ROOT/cmdline-tools/latest/cmdline-tools/bin:$PATH"
+export PATH="$ANDROID_SDK_ROOT/platform-tools:$ANDROID_SDK_ROOT/emulator:$ANDROID_SDK_ROOT/cmdline-tools/latest/bin:$PATH"
 
 emulator \
   -avd jitong_api35 \
@@ -76,7 +76,7 @@ emulator \
 建议在单独的终端窗口运行启动命令。另开一个终端等待系统启动完成：
 
 ```sh
-export ANDROID_SDK_ROOT=/tmp/jitong-android-sdk
+export ANDROID_SDK_ROOT="$HOME/Library/Android/sdk"
 export PATH="$ANDROID_SDK_ROOT/platform-tools:$PATH"
 
 until [ "$(adb shell getprop sys.boot_completed 2>/dev/null | tr -d '\r')" = "1" ]; do
@@ -103,7 +103,7 @@ adb -s emulator-5554 shell getprop ro.build.version.sdk
 以下命令适用于当前 macOS arm64 环境。Android Command-line Tools 的下载地址可能随 Google 发布版本变化；如果当前下载地址失效，到 Android Studio 官方下载页获取最新 macOS command-line tools zip，并替换下载 URL。
 
 ```sh
-export ANDROID_SDK_ROOT=/tmp/jitong-android-sdk
+export ANDROID_SDK_ROOT="$HOME/Library/Android/sdk"
 export ANDROID_HOME="$ANDROID_SDK_ROOT"
 mkdir -p "$ANDROID_SDK_ROOT/cmdline-tools/latest"
 
@@ -113,8 +113,8 @@ curl -fL \
 
 unzip -q /tmp/commandlinetools.zip -d "$ANDROID_SDK_ROOT/cmdline-tools/latest"
 
-SDKMANAGER="$ANDROID_SDK_ROOT/cmdline-tools/latest/cmdline-tools/bin/sdkmanager"
-AVDMANAGER="$ANDROID_SDK_ROOT/cmdline-tools/latest/cmdline-tools/bin/avdmanager"
+SDKMANAGER="$ANDROID_SDK_ROOT/cmdline-tools/latest/bin/sdkmanager"
+AVDMANAGER="$ANDROID_SDK_ROOT/cmdline-tools/latest/bin/avdmanager"
 
 yes | "$SDKMANAGER" --sdk_root="$ANDROID_SDK_ROOT" --licenses
 
@@ -163,7 +163,7 @@ tag.id=google_apis
 在仓库根目录执行：
 
 ```sh
-export ANDROID_SDK_ROOT=/tmp/jitong-android-sdk
+export ANDROID_SDK_ROOT="$HOME/Library/Android/sdk"
 export PATH="$ANDROID_SDK_ROOT/platform-tools:$PATH"
 
 cd android-app
@@ -214,7 +214,7 @@ printf 'GET /api/v1/system/health HTTP/1.0\r\nHost: 10.0.2.2\r\nConnection: clos
 重新设置 SDK 路径：
 
 ```sh
-export ANDROID_SDK_ROOT=/tmp/jitong-android-sdk
+export ANDROID_SDK_ROOT="$HOME/Library/Android/sdk"
 export PATH="$ANDROID_SDK_ROOT/emulator:$ANDROID_SDK_ROOT/platform-tools:$PATH"
 ```
 
@@ -267,7 +267,7 @@ printf 'GET /api/v1/system/health HTTP/1.0\r\nHost: 10.0.2.2\r\nConnection: clos
 
 - `~/.android/avd/jitong_api35.avd/`
 - `~/.android/avd/jitong_api35.ini`
-- `/tmp/jitong-android-sdk/`
+- `~/Library/Android/sdk/`
 - 模拟器运行数据和快照
 
 Git 中只记录本文和 Android 工程。这样可以避免提交数 GB 的系统镜像、用户数据、快照或机器相关路径，同时保留完整的重建参数。
