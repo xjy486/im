@@ -833,24 +833,26 @@ internal class MessageRepository(
     suspend fun loadMedia(
         message: LocalMessageEntity,
         thumbnail: Boolean,
-    ): ByteArray? {
+    ): ByteArray? = withContext(Dispatchers.IO) {
         if (message.state == "RECALLED") {
             deleteMessageMedia(message.mediaId, message.localMediaPath)
-            return null
+            return@withContext null
         }
-        val cache = mediaCache() ?: return null
+        val cache = mediaCache() ?: return@withContext null
         val mediaId = message.mediaId?.let(UUID::fromString)
-        if (mediaId == null) return cache.getByPath(message.localMediaPath)
+        if (mediaId == null) return@withContext cache.getByPath(message.localMediaPath)
         val cacheName = if (thumbnail) "$mediaId-thumb" else mediaId.toString()
-        cache.get(cacheName)?.let { return it }
+        cache.get(cacheName)?.let { return@withContext it }
         val response = mediaApi?.download(
             mediaId = mediaId,
             variant = if (thumbnail) "thumb" else "full",
-        ) ?: return null
-        if (!response.isSuccessful) return null
-        val bytes = response.body()?.bytes() ?: return null
+        ) ?: return@withContext null
+        if (!response.isSuccessful) return@withContext null
+        // The download is @Streaming, so bytes() reads the socket on the calling
+        // thread. Compose collects this from the main dispatcher.
+        val bytes = response.body()?.bytes() ?: return@withContext null
         cache.put(cacheName, bytes)
-        return bytes
+        bytes
     }
 
     fun setPendingSendScheduler(scheduler: (() -> Unit)?) {
